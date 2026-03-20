@@ -1,20 +1,20 @@
 # Agent Status — Vector OS Nano SDK
 
-**Session:** 2026-03-20 | **Phase:** ALL WAVES COMPLETE | **662 TESTS PASSING**
+**Session:** 2026-03-20 | **Phase:** ALL WAVES COMPLETE + HARDWARE INTEGRATION FIXES | **670 TESTS PASSING**
 
 ---
 
 ## Executive Summary
 
-All 4 waves complete including T12 dashboard. 662 tests passing (85%+ coverage). 13/13 tasks done. Ready for final review and release.
+All 4 waves complete. Hardware integration fixes applied by Beta: pick.py perception sampling (detect+track for 3D), Calibration.load() YAML support, z_offset constant aligned to v2 (0.10m), run.py camera connection, calibration YAML copied to config/. 670 tests passing (85%+ coverage). Ready for real hardware deployment.
 
 | Agent | Status      | Task      | Tests  | Branch                                    |
 |-------|-------------|-----------|--------|-------------------------------------------|
-| Alpha | DONE        | T1,T4,T7,T10,T12 | 255    | feat/alpha-textual-dashboard (latest)     |
-| Beta  | DONE        | T2,T5,T8,T11 | 233    | feat/beta-* (all complete)                |
-| Gamma | DONE        | T3,T6,T9,T13 | 174    | feat/gamma-* (all complete)               |
+| Alpha | DONE        | T1,T4,T7,T10,T12 + perception-hw-fixes | 255 | feat/alpha-textual-dashboard (latest) |
+| Beta  | DONE        | T2,T5,T8,T11 + T-HW-INT-FIX | 241 | feat/beta-hw-integration-fix            |
+| Gamma | DONE        | perception-integration | 662    | feat/gamma-perception-integration         |
 
-**Running Total:** 662/662 tests passing (100% success rate)
+**Running Total:** 670/670 tests passing (100% success rate)
 
 ---
 

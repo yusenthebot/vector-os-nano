@@ -271,13 +271,19 @@ class Calibration:
 
     @classmethod
     def load(cls, path: str) -> "Calibration":
-        """Load calibration from .npy file (+ optional RBF sidecar).
+        """Load calibration from a .npy file, .yaml/.yml file, or npz sidecar.
+
+        Supports two file formats:
+        - .npy (saved by Calibration.save()): 4x4 affine matrix, optional _rbf.npz sidecar.
+        - .yaml / .yml (workspace_calibration.yaml from vector_ws): must contain
+          ``transform_matrix`` key with a 4x4 list, and optionally ``points_camera``
+          and ``points_base`` lists for RBF fitting.
 
         Args:
-            path: File path previously created by save().
+            path: File path to load from.
 
         Returns:
-            Calibration instance with loaded matrix (and RBF if sidecar exists).
+            Calibration instance with loaded matrix (and RBF data if available).
 
         Raises:
             FileNotFoundError: If path does not exist.
@@ -286,6 +292,12 @@ class Calibration:
         p = Path(path)
         if not p.exists():
             raise FileNotFoundError(f"Calibration file not found: {path}")
+
+        suffix = p.suffix.lower()
+        if suffix in (".yaml", ".yml"):
+            return cls._load_from_yaml(p)
+
+        # .npy path (original format)
         matrix = np.load(str(p))
         if matrix.shape != (4, 4):
             raise ValueError(f"Expected (4, 4) matrix, got shape {matrix.shape}")
@@ -317,6 +329,76 @@ class Calibration:
                 cal._rbf_y = rbf_y
                 cal._cal_points_cam = rbf_x
                 cal._cal_points_base = rbf_y
+
+        return cal
+
+    @classmethod
+    def _load_from_yaml(cls, p: Path) -> "Calibration":
+        """Load from workspace_calibration.yaml (vector_ws format).
+
+        Reads ``transform_matrix`` (4x4 list) as the affine transform.
+        If ``points_camera`` and ``points_base`` are present, also stores
+        calibration point data for error statistics and optional RBF fitting.
+
+        Args:
+            p: Path to the YAML file.
+
+        Returns:
+            Calibration instance.
+
+        Raises:
+            ValueError: If transform_matrix key is missing or wrong shape.
+        """
+        import yaml  # stdlib-adjacent; standard in Python env with PyYAML
+
+        with open(str(p)) as f:
+            data = yaml.safe_load(f)
+
+        if "transform_matrix" not in data:
+            raise ValueError(
+                f"YAML calibration file {p} missing 'transform_matrix' key. "
+                "Expected workspace_calibration.yaml format from vector_ws."
+            )
+
+        matrix = np.array(data["transform_matrix"], dtype=np.float64)
+        if matrix.shape != (4, 4):
+            raise ValueError(
+                f"transform_matrix must be 4x4, got shape {matrix.shape}"
+            )
+
+        cal = cls()
+        cal._matrix = matrix
+        logger.info(
+            "Loaded calibration from YAML %s (mean_error=%.2f mm, n_points=%d)",
+            p,
+            data.get("mean_error_mm", float("nan")),
+            data.get("num_points", 0),
+        )
+
+        # Load calibration point data when available for error stats
+        pts_cam_raw = data.get("points_camera")
+        pts_base_raw = data.get("points_base")
+        if pts_cam_raw is not None and pts_base_raw is not None:
+            pts_cam = np.array(pts_cam_raw, dtype=np.float64)
+            pts_base = np.array(pts_base_raw, dtype=np.float64)
+            cal._cal_points_cam = pts_cam
+            cal._cal_points_base = pts_base
+            # Attempt RBF fitting on the stored point pairs
+            rbf_cls = _get_rbf_class()
+            if rbf_cls is not None and len(pts_cam) >= 4:
+                try:
+                    interp = rbf_cls(pts_cam, pts_base, kernel="thin_plate_spline")
+                    cal._rbf_interp = interp
+                    cal._rbf_x = pts_cam
+                    cal._rbf_y = pts_base
+                    cal._rbf_fitted = True
+                    logger.info(
+                        "RBF fitted from YAML calibration points (%d pts)", len(pts_cam)
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "RBF fitting from YAML points failed (%s) — using affine", exc
+                    )
 
         return cal
 

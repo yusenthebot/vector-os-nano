@@ -119,3 +119,115 @@ def test_solve_affine_minimum_points():
     for p, expected in zip(pts_cam, pts_base):
         result = cal.camera_to_base(p)
         assert np.allclose(result, expected, atol=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# test_calibration_load_yaml
+# ---------------------------------------------------------------------------
+
+def test_load_yaml_reads_transform_matrix():
+    """Calibration.load() can read a workspace_calibration.yaml file."""
+    import os
+    import tempfile
+    import yaml
+
+    T_expected = np.eye(4)
+    T_expected[0, 3] = 0.25   # known translation
+
+    data = {
+        "transform_matrix": T_expected.tolist(),
+        "mean_error_mm": 3.1,
+        "num_points": 5,
+    }
+
+    with tempfile.NamedTemporaryFile(
+        suffix=".yaml", mode="w", delete=False
+    ) as fh:
+        yaml.dump(data, fh)
+        path = fh.name
+
+    try:
+        from vector_os.perception.calibration import Calibration
+        cal = Calibration.load(path)
+        assert cal._matrix.shape == (4, 4)
+        assert np.allclose(cal._matrix, T_expected, atol=1e-9)
+    finally:
+        os.unlink(path)
+
+
+def test_load_yaml_with_point_correspondences():
+    """YAML with points_camera/points_base stores cal data for error stats."""
+    import os
+    import tempfile
+    import yaml
+
+    rng = np.random.default_rng(7)
+    pts_cam = rng.uniform(0.0, 0.3, (8, 3)).tolist()
+    pts_base = (np.array(pts_cam) + np.array([0.1, 0.0, 0.0])).tolist()
+
+    T = np.eye(4)
+    T[0, 3] = 0.1
+
+    data = {
+        "transform_matrix": T.tolist(),
+        "points_camera": pts_cam,
+        "points_base": pts_base,
+        "mean_error_mm": 2.0,
+        "num_points": 8,
+    }
+
+    with tempfile.NamedTemporaryFile(
+        suffix=".yaml", mode="w", delete=False
+    ) as fh:
+        yaml.dump(data, fh)
+        path = fh.name
+
+    try:
+        from vector_os.perception.calibration import Calibration
+        cal = Calibration.load(path)
+        assert cal._cal_points_cam is not None
+        assert cal._cal_points_cam.shape == (8, 3)
+        assert cal._cal_points_base is not None
+    finally:
+        os.unlink(path)
+
+
+def test_load_yaml_missing_transform_matrix_raises():
+    """YAML without transform_matrix key raises ValueError."""
+    import os
+    import tempfile
+    import yaml
+
+    data = {"some_other_key": 42}
+    with tempfile.NamedTemporaryFile(
+        suffix=".yaml", mode="w", delete=False
+    ) as fh:
+        yaml.dump(data, fh)
+        path = fh.name
+
+    try:
+        from vector_os.perception.calibration import Calibration
+        with pytest.raises(ValueError, match="transform_matrix"):
+            Calibration.load(path)
+    finally:
+        os.unlink(path)
+
+
+def test_load_workspace_calibration_yaml():
+    """Load the actual workspace_calibration.yaml from vector_os/config/."""
+    import os
+    from pathlib import Path
+
+    yaml_path = (
+        Path(__file__).parent.parent.parent
+        / "config"
+        / "workspace_calibration.yaml"
+    )
+    if not yaml_path.exists():
+        pytest.skip("workspace_calibration.yaml not present in config/")
+
+    from vector_os.perception.calibration import Calibration
+    cal = Calibration.load(str(yaml_path))
+    assert cal._matrix.shape == (4, 4)
+    # The last row must be [0, 0, 0, 1] for a valid homogeneous transform
+    assert np.allclose(cal._matrix[3, :], [0.0, 0.0, 0.0, 1.0], atol=1e-6)

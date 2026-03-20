@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Gripper height above table (z offset added to the raw calibrated position)
-_DEFAULT_Z_OFFSET: float = 0.12        # 12 cm (same as skill.pick.z_offset default in v2)
+_DEFAULT_Z_OFFSET: float = 0.10        # 10 cm (matches skill.pick.z_offset default in skill_node_v2.py)
 
 # Pre-grasp approach height above the target grasp point
 _DEFAULT_PRE_GRASP_HEIGHT: float = 0.06  # 6 cm (PRE_GRASP_HEIGHT in v2)
@@ -357,9 +357,12 @@ class PickSkill:
         Port of skill_node_v2._get_target_camera_pos(), then transforms to
         base frame using the calibration matrix from context.calibration.
 
-        Collects _DEFAULT_SAMPLE_COUNT readings, finds the densest cluster
-        within _DEFAULT_CLUSTER_THRESHOLD, returns the cluster mean.
-        The result is then transformed camera→base via the calibration matrix.
+        Step 1: detect() to get 2D bboxes, track() to initialise tracker and get
+                3D poses from depth projection (TrackedObject.pose).
+        Step 2: Collect _DEFAULT_SAMPLE_COUNT 3D position readings by calling
+                update() repeatedly at _DEFAULT_SAMPLE_INTERVAL intervals.
+        Step 3: Density cluster (1.5cm threshold) to find modal position.
+        Step 4: camera_to_base() using calibration transform.
         """
         query = params.get("object_label", "object")
         logger.info("[PICK] Sampling perception for %r ...", query)
@@ -369,27 +372,63 @@ class PickSkill:
         interval: float = cfg.get("sample_interval", _DEFAULT_SAMPLE_INTERVAL)
         threshold: float = cfg.get("cluster_threshold", _DEFAULT_CLUSTER_THRESHOLD)
 
+        # First: detect to get 2D bbox, then track to get 3D pose from depth
+        try:
+            detections = context.perception.detect(query)
+        except Exception as exc:
+            logger.warning("[PICK] Initial detect failed: %s", exc)
+            return None
+
+        if not detections:
+            logger.warning("[PICK] No detections found for %r", query)
+            return None
+
+        # Initialise tracker — this gives us TrackedObject with 3D pose
+        try:
+            tracked = context.perception.track(detections)
+        except Exception as exc:
+            logger.warning("[PICK] Track init failed: %s", exc)
+            return None
+
+        if not tracked:
+            logger.warning("[PICK] Tracker returned no objects")
+            return None
+
+        # Collect samples using update() loop (mirrors _get_target_camera_pos sampling)
         samples: list[np.ndarray] = []
-        for _ in range(n_samples):
+
+        # Add pose from initial track() result
+        t0 = tracked[0]
+        if t0.pose is not None:
+            samples.append(np.array([t0.pose.x, t0.pose.y, t0.pose.z], dtype=float))
+
+        # Collect remaining samples via update()
+        has_update = hasattr(context.perception, "update")
+        for _ in range(n_samples - len(samples)):
+            time.sleep(interval)
             try:
-                detections = context.perception.detect(query)
+                if has_update:
+                    updated = context.perception.update()
+                else:
+                    updated = context.perception.track(detections)
             except Exception as exc:
-                logger.warning("[PICK] Perception sample error: %s", exc)
-                time.sleep(interval)
+                logger.warning("[PICK] Perception update error: %s", exc)
                 continue
 
-            if detections:
-                det = detections[0]
-                # Detection.bbox is (x1,y1,x2,y2) in pixels; no 3D here.
-                # If perception provides a get_position() method use it.
-                pos = getattr(det, "position_3d", None)
-                if pos is not None:
-                    samples.append(np.array(pos, dtype=float))
-            time.sleep(interval)
+            if updated:
+                obj = updated[0]
+                if obj.pose is not None:
+                    samples.append(
+                        np.array([obj.pose.x, obj.pose.y, obj.pose.z], dtype=float)
+                    )
 
         if not samples:
-            logger.warning("[PICK] No valid position samples from perception")
+            logger.warning("[PICK] No valid 3D position samples from perception")
             return None
+
+        logger.info(
+            "[PICK] Collected %d/%d valid 3D samples", len(samples), n_samples
+        )
 
         arr = np.array(samples)
         if len(arr) < 3:

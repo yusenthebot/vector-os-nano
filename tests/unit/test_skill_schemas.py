@@ -269,3 +269,124 @@ class TestGetDefaultSkills:
     def test_unique_names(self):
         names = [s.name for s in self.skills]
         assert len(names) == len(set(names)), "Skill names must be unique"
+
+
+# ---------------------------------------------------------------------------
+# test_pick_sampling_from_perception
+# ---------------------------------------------------------------------------
+
+class TestPickPerceptionSampling:
+    """Tests for PickSkill._sample_from_perception() with mock perception."""
+
+    def _make_context(self, perception, world_model=None):
+        from vector_os.core.skill import SkillContext
+        from vector_os.core.world_model import WorldModel
+        from unittest.mock import MagicMock
+        import numpy as np
+        arm = MagicMock()
+        arm.get_joint_positions.return_value = [0.0, 0.0, 0.0, 0.0, 0.0]
+        arm.ik.return_value = [0.0, 0.0, 0.0, 0.0, 0.0]
+        arm.move_joints.return_value = True
+        gripper = MagicMock()
+        wm = world_model or WorldModel()
+        # identity calibration so camera=base
+        cal_matrix = np.eye(4)
+        return SkillContext(
+            arm=arm,
+            gripper=gripper,
+            perception=perception,
+            world_model=wm,
+            calibration={"transform_matrix": cal_matrix.tolist()},
+            config={},
+        )
+
+    def test_sample_uses_track_for_3d_position(self):
+        """_sample_from_perception() calls detect() then track() to get 3D pose."""
+        from unittest.mock import MagicMock
+        import numpy as np
+        from vector_os.core.types import Detection, Pose3D, TrackedObject
+        from vector_os.skills.pick import PickSkill
+
+        det = Detection(label="cup", bbox=(10.0, 10.0, 50.0, 50.0), confidence=0.9)
+        pose = Pose3D(x=0.25, y=0.0, z=0.22)
+        tracked = TrackedObject(track_id=1, label="cup", bbox_2d=(10, 10, 50, 50), pose=pose)
+
+        mock_perception = MagicMock()
+        mock_perception.detect.return_value = [det]
+        mock_perception.track.return_value = [tracked]
+        # update returns empty to limit sampling quickly
+        mock_perception.update.return_value = []
+
+        context = self._make_context(mock_perception)
+        skill = PickSkill()
+        # Override sample_count to 1 so we don't wait
+        context = context.__class__(
+            arm=context.arm,
+            gripper=context.gripper,
+            perception=context.perception,
+            world_model=context.world_model,
+            calibration=context.calibration,
+            config={"skills": {"pick": {"sample_count": 1}}},
+        )
+
+        result = skill._sample_from_perception({"object_label": "cup"}, context)
+        assert result is not None
+        # With identity calibration, camera pos == base pos
+        assert abs(result[0] - 0.25) < 1e-6
+        assert abs(result[2] - 0.22) < 1e-6
+        mock_perception.detect.assert_called_once()
+        mock_perception.track.assert_called_once()
+
+    def test_sample_returns_none_on_no_detections(self):
+        """_sample_from_perception() returns None when detect() finds nothing."""
+        from unittest.mock import MagicMock
+        from vector_os.skills.pick import PickSkill
+
+        mock_perception = MagicMock()
+        mock_perception.detect.return_value = []
+
+        context = self._make_context(mock_perception)
+        skill = PickSkill()
+        result = skill._sample_from_perception({"object_label": "cup"}, context)
+        assert result is None
+
+    def test_sample_returns_none_on_detect_exception(self):
+        """_sample_from_perception() returns None when detect() raises."""
+        from unittest.mock import MagicMock
+        from vector_os.skills.pick import PickSkill
+
+        mock_perception = MagicMock()
+        mock_perception.detect.side_effect = RuntimeError("No VLM")
+
+        context = self._make_context(mock_perception)
+        skill = PickSkill()
+        result = skill._sample_from_perception({"object_label": "cup"}, context)
+        assert result is None
+
+    def test_sample_returns_none_when_no_3d_pose(self):
+        """_sample_from_perception() returns None if tracked objects have no 3D pose."""
+        from unittest.mock import MagicMock
+        from vector_os.core.types import Detection, TrackedObject
+        from vector_os.skills.pick import PickSkill
+
+        det = Detection(label="cup", bbox=(10, 10, 50, 50))
+        # TrackedObject with pose=None (no depth data)
+        tracked = TrackedObject(track_id=1, label="cup", bbox_2d=(10, 10, 50, 50), pose=None)
+
+        mock_perception = MagicMock()
+        mock_perception.detect.return_value = [det]
+        mock_perception.track.return_value = [tracked]
+        mock_perception.update.return_value = []
+
+        context = self._make_context(mock_perception)
+        skill = PickSkill()
+        context = context.__class__(
+            arm=context.arm,
+            gripper=context.gripper,
+            perception=context.perception,
+            world_model=context.world_model,
+            calibration=context.calibration,
+            config={"skills": {"pick": {"sample_count": 1}}},
+        )
+        result = skill._sample_from_perception({"object_label": "cup"}, context)
+        assert result is None

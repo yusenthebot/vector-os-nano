@@ -227,11 +227,12 @@ class EdgeTAMTracker:
         )
         results = self._process_results(output, original_size)
 
-        # Free intermediate tensors every 10 frames (same as edge_tam.py)
+        # Free intermediate GPU tensors every 10 frames (same as edge_tam.py)
         if self._frame_count % 10 == 0:
             try:
                 import torch
-                torch.cuda.empty_cache()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             except Exception:
                 pass
 

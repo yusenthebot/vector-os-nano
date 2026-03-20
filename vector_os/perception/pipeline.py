@@ -222,7 +222,7 @@ class PerceptionPipeline:
 
         raw_tracks = self._tracker.init_track(color, bboxes=bboxes)  # type: ignore[union-attr]
         tracked_objects = self._build_tracked_objects(
-            raw_tracks, labels, depth, intrinsics
+            raw_tracks, labels, color, depth, intrinsics
         )
         with self._lock:
             self._tracked_objects = tracked_objects
@@ -270,7 +270,7 @@ class PerceptionPipeline:
         labels = [label_map.get(r.get("track_id", 0), "object") for r in raw_tracks]
 
         tracked_objects = self._build_tracked_objects(
-            raw_tracks, labels, depth, intrinsics
+            raw_tracks, labels, color, depth, intrinsics
         )
         with self._lock:
             self._tracked_objects = tracked_objects
@@ -284,6 +284,7 @@ class PerceptionPipeline:
         self,
         raw_tracks: list[dict],
         labels: list[str],
+        color: np.ndarray,
         depth: np.ndarray,
         intrinsics: CameraIntrinsics,
     ) -> list[TrackedObject]:
@@ -308,13 +309,13 @@ class PerceptionPipeline:
             if mask is not None:
                 refined_mask = self._refine_mask(mask)
 
-            # Project mask to 3D
+            # Project mask to 3D (mirrors track_3d.py rgbd_to_pointcloud_fast call)
             bbox_3d: BBox3D | None = None
             pose: Pose3D | None = None
             if refined_mask is not None and np.any(refined_mask):
                 points, _ = rgbd_to_pointcloud_fast(
                     depth,
-                    np.zeros((*depth.shape, 3), dtype=np.uint8),  # color not needed here
+                    color,
                     intrinsics,
                     depth_scale=self._depth_scale,
                     depth_trunc=self._depth_trunc,

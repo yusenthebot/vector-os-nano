@@ -32,7 +32,7 @@ perception:
   tracker_model: "yonigozlan/EdgeTAM-hf"
 
 calibration:
-  file: ""                     # empty = use defaults / auto-calibrate
+  file: "config/workspace_calibration.yaml"  # YAML from vector_ws calibration wizard
   method: "affine"             # affine | rbf | tps
   num_points: 25
 

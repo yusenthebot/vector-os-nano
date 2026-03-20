@@ -48,6 +48,12 @@ class Agent:
             defaults.
         config: Configuration override — a dict, a path to a YAML file, or
             None to use the built-in defaults.
+        auto_perception: When True and perception=None and config specifies
+            ``camera.type == "realsense"``, automatically construct a
+            RealSenseCamera + VLMDetector + EdgeTAMTracker + PerceptionPipeline.
+            Defaults to False because loading the VLM and tracker is slow and
+            consumes GPU memory — callers that want auto-setup must opt in
+            explicitly.
     """
 
     def __init__(
@@ -59,6 +65,7 @@ class Agent:
         llm_api_key: str | None = None,
         skills: list[Skill] | None = None,
         config: dict | str | None = None,
+        auto_perception: bool = False,
     ) -> None:
         # ---- Configuration --------------------------------------------------
         if isinstance(config, dict):
@@ -82,6 +89,29 @@ class Agent:
 
         # ---- Perception -----------------------------------------------------
         self._perception = perception
+
+        # Auto-create perception pipeline when caller opts in and no pipeline
+        # was supplied explicitly.  Heavy imports (torch, transformers, pyrealsense2)
+        # are deferred to here so normal Agent construction stays fast.
+        if auto_perception and self._perception is None:
+            cam_type = self._config.get("camera", {}).get("type", "")
+            if cam_type == "realsense":
+                try:
+                    from vector_os.perception.realsense import RealSenseCamera
+                    from vector_os.perception.vlm import VLMDetector
+                    from vector_os.perception.tracker import EdgeTAMTracker
+                    from vector_os.perception.pipeline import PerceptionPipeline
+
+                    cam = RealSenseCamera()
+                    cam.connect()
+                    vlm_det = VLMDetector()
+                    tracker = EdgeTAMTracker()
+                    self._perception = PerceptionPipeline(
+                        camera=cam, vlm=vlm_det, tracker=tracker
+                    )
+                    logger.info("Auto-created perception pipeline (RealSense + VLM + tracker)")
+                except Exception as exc:
+                    logger.warning("Could not auto-create perception pipeline: %s", exc)
 
         # ---- LLM provider ---------------------------------------------------
         # llm= takes priority over llm_api_key=
@@ -122,10 +152,34 @@ class Agent:
         # ---- Lazy-init state ------------------------------------------------
         self._ik_solver: Any = None
         self._calibration: Any = None
+        self._conversation_history: list[dict] = []
+
+        # ---- Sync world model with hardware ----------------------------------
+        self._sync_robot_state()
 
     # -------------------------------------------------------------------------
     # Public API — primary entry point
     # -------------------------------------------------------------------------
+
+    def _sync_robot_state(self) -> None:
+        """Sync world model robot state from hardware."""
+        if self._arm is None:
+            return
+        try:
+            joints = self._arm.get_joint_positions()
+            ee_pos = (0.0, 0.0, 0.0)
+            if self._ik_solver is not None:
+                try:
+                    pos, _ = self._ik_solver.fk(joints)
+                    ee_pos = tuple(pos)
+                except Exception:
+                    pass
+            self._world_model.update_robot_state(
+                joint_positions=tuple(joints),
+                ee_position=ee_pos,
+            )
+        except Exception as exc:
+            logger.debug("Could not sync robot state: %s", exc)
 
     def execute(self, instruction: str) -> ExecutionResult:
         """Execute a natural language instruction.
@@ -146,8 +200,17 @@ class Agent:
         Returns:
             ExecutionResult describing success/failure with trace.
         """
+        # Sync robot state before planning
+        self._sync_robot_state()
+
         if self._llm is None:
             return self._execute_direct(instruction)
+
+        # Track conversation for multi-turn context
+        self._conversation_history.append({"role": "user", "content": instruction})
+        # Keep last 20 messages
+        if len(self._conversation_history) > 20:
+            self._conversation_history = self._conversation_history[-20:]
 
         max_retries: int = (
             self._config.get("agent", {}).get("max_planning_retries", 3)
@@ -159,7 +222,10 @@ class Agent:
             world_state = self._world_model.to_dict()
             skill_schemas = self._skill_registry.to_schemas()
 
-            plan = self._llm.plan(instruction, world_state, skill_schemas, None)
+            plan = self._llm.plan(
+                instruction, world_state, skill_schemas,
+                self._conversation_history,
+            )
 
             if plan.requires_clarification:
                 return ExecutionResult(
@@ -171,7 +237,14 @@ class Agent:
             context = self._build_context()
             result = self._executor.execute(plan, self._skill_registry, context)
 
+            # Sync robot state after execution
+            self._sync_robot_state()
+
             if result.success:
+                self._conversation_history.append({
+                    "role": "assistant",
+                    "content": f"Executed: {[s.skill_name for s in plan.steps]} — success",
+                })
                 return result
 
             last_result = result
@@ -339,11 +412,21 @@ class Agent:
         # Lazy-init calibration
         if self._calibration is None:
             try:
+                from pathlib import Path
+
                 from vector_os.perception.calibration import Calibration  # lazy
 
                 cal_file: str = self._config.get("calibration", {}).get("file", "")
                 if cal_file:
-                    self._calibration = Calibration.load(cal_file)
+                    # Resolve relative paths: try ~/Desktop/vector_os/<cal_file> then cwd
+                    cal_path = Path(cal_file)
+                    if not cal_path.is_absolute():
+                        candidate = Path.home() / "Desktop" / "vector_os" / cal_path
+                        if not candidate.exists():
+                            candidate = Path.cwd() / cal_path
+                        if candidate.exists():
+                            cal_path = candidate
+                    self._calibration = Calibration.load(str(cal_path))
                 else:
                     self._calibration = Calibration()
             except Exception as exc:
