@@ -1,0 +1,78 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vector-os-nano"
+version = "0.1.0"
+description = "Natural language robot arm control SDK"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.10"
+authors = [{name = "Vector Robotics"}]
+keywords = ["robotics", "ros2", "robot-arm", "llm", "natural-language", "so-101"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Human Machine Interfaces",
+]
+
+dependencies = [
+    "numpy>=1.24",
+    "pyserial>=3.5",
+    "httpx>=0.25",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+perception = [
+    "pyrealsense2>=2.50",
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "transformers>=4.35",
+    "open3d>=0.17",
+    "opencv-python>=4.8",
+]
+gpu = [
+    "vector-os-nano[perception]",
+]
+ik = [
+    "pin>=2.6",
+]
+tui = [
+    "textual>=0.40",
+]
+sim = [
+    "pybullet>=3.2",
+]
+ros2 = [
+    # ROS2 deps installed via apt, not pip
+]
+all = [
+    "vector-os-nano[perception,ik,tui,sim]",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+]
+
+[project.scripts]
+vector-os = "vector_os.cli.simple:main"
+vector-os-dashboard = "vector_os.cli.dashboard:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["vector_os"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

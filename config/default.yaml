@@ -1,0 +1,54 @@
+# Vector OS Nano — Default Configuration
+# This file is shipped with the SDK. Users override via load_config(user_config=...).
+# Do NOT commit API keys here. Use environment variables or a separate user config file.
+
+agent:
+  max_planning_retries: 3
+  max_execution_retries: 2
+  planning_timeout_sec: 10.0
+
+llm:
+  provider: "claude"           # claude | openai | local
+  model: "claude-sonnet-4-6"   # for planning
+  api_base: "https://openrouter.ai/api/v1"
+  temperature: 0.0
+  max_tokens: 2048
+
+arm:
+  type: "so101"
+  port: "/dev/ttyACM0"         # or "COM3" on Windows
+  baudrate: 1000000
+
+camera:
+  type: "realsense"
+  serial: ""                   # empty = auto-detect
+  resolution: [640, 480]
+  fps: 30
+
+perception:
+  vlm_provider: "moondream"
+  vlm_model: "vikhyatk/moondream2"
+  tracker: "edgetam"
+  tracker_model: "yonigozlan/EdgeTAM-hf"
+
+calibration:
+  file: ""                     # empty = use defaults / auto-calibrate
+  method: "affine"             # affine | rbf | tps
+  num_points: 25
+
+skills:
+  pick:
+    z_offset: 0.12
+    pre_grasp_height: 0.06
+    max_retries: 2
+  place:
+    default_height: 0.05
+  home:
+    joint_values: [-0.014, -1.238, 0.562, 0.858, 0.311]
+
+ros2:
+  enabled: false               # auto-detected if rclpy available
+  namespace: ""
+  enable_moveit: false
+  enable_tf2: true
+  enable_dashboard: false
