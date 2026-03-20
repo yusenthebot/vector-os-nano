@@ -307,6 +307,11 @@ class SO101Arm:
         seed = current_joints
         if seed is None and self._connected:
             seed = self.get_joint_positions()
+        # IKSolver exposes ik_position() which returns (solution, residual)
+        if hasattr(self._ik_solver, 'ik_position'):
+            result, error = self._ik_solver.ik_position(target_xyz, seed)
+            return result
+        # Fallback for solvers with plain .ik() interface
         return self._ik_solver.ik(target_xyz, seed)
 
     def set_ik_solver(self, solver: Any) -> None:

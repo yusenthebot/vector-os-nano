@@ -1,8 +1,7 @@
 """DetectSkill — detect objects in workspace using perception backend.
 
-Ported from perception_skills._detect_all_cb() + the detect-all logic.
-The actual VLM/detector call is delegated to context.perception.detect(query)
-so the skill is decoupled from the specific perception implementation.
+Uses VLM for 2D detection, then tracker + depth for 3D position.
+Stores objects with 3D positions in the world model.
 
 No ROS2 imports.
 """
@@ -19,14 +18,14 @@ logger = logging.getLogger(__name__)
 
 
 class DetectSkill:
-    """Detect objects in the workspace using VLM perception.
+    """Detect objects using VLM + depth for 3D positions.
 
-    Calls context.perception.detect(query) and updates the world model
-    with the returned Detection objects.  If context.perception is None
-    (no camera / headless mode), the skill fails gracefully.
-
-    Parameters:
-        query (str, required): What to detect, e.g. "red cup" or "all objects".
+    Pipeline (mirrors vector_ws track_3d.py):
+    1. VLM detect(query) → 2D bounding boxes
+    2. tracker.init_track(image, bboxes) → masks
+    3. RGBD + mask → pointcloud → 3D centroid in camera frame
+    4. calibration → base frame position
+    5. Store in world model with 3D position
     """
 
     name: str = "detect"
@@ -40,26 +39,9 @@ class DetectSkill:
     }
     preconditions: list[str] = []
     postconditions: list[str] = []
-    effects: dict = {}  # World model updated inside execute via add_object
+    effects: dict = {}
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
-        """Run detection and populate the world model.
-
-        The world model is updated by calling add_object() for each Detection
-        returned by perception.  Existing objects with the same ID are
-        overwritten so that stale positions are refreshed.
-
-        Object IDs are synthesised as "<label>_<index>" (e.g. "red_cup_0").
-
-        Args:
-            params: must contain "query" key.
-            context: SkillContext providing perception and world_model access.
-
-        Returns:
-            SkillResult with result_data["objects"] listing detected labels
-            and confidences, or failure with error_message if no perception
-            backend is available.
-        """
         if context.perception is None:
             logger.warning("[DETECT] No perception backend available")
             return SkillResult(
@@ -70,6 +52,7 @@ class DetectSkill:
         query: str = params.get("query", "all objects")
         logger.info("[DETECT] Running detection for query: %r", query)
 
+        # Step 1: VLM 2D detection
         try:
             detections = context.perception.detect(query)
         except Exception as exc:
@@ -86,39 +69,80 @@ class DetectSkill:
                 result_data={"objects": [], "count": 0},
             )
 
+        logger.info("[DETECT] VLM found %d object(s), getting 3D positions...", len(detections))
+
+        # Step 2: Track to get 3D positions (tracker + depth → pointcloud → centroid)
+        tracked_objects = []
+        try:
+            tracked_objects = context.perception.track(detections)
+        except Exception as exc:
+            logger.warning("[DETECT] Tracking failed, storing 2D-only: %s", exc)
+
+        # Step 3: Store in world model
         now = time.time()
         object_summaries: list[dict] = []
 
         for idx, det in enumerate(detections):
-            # Synthesise a stable object_id from label + index
             safe_label = det.label.replace(" ", "_").lower()
             obj_id = f"{safe_label}_{idx}"
 
-            # Build ObjectState — bbox centre is used for 3D position when
-            # a 3D position is not available (bbox is 2D pixel coords here)
+            # Try to get 3D position from tracked object
+            x, y, z = 0.0, 0.0, 0.0
+            has_3d = False
+
+            if idx < len(tracked_objects) and tracked_objects[idx].pose is not None:
+                pose = tracked_objects[idx].pose
+                cam_pos = [pose.x, pose.y, pose.z]
+
+                # Apply calibration if available
+                if context.calibration is not None:
+                    try:
+                        import numpy as np
+                        base_pos = context.calibration.camera_to_base(
+                            np.array(cam_pos, dtype=float)
+                        )
+                        x, y, z = float(base_pos[0]), float(base_pos[1]), float(base_pos[2])
+                        has_3d = True
+                        logger.info(
+                            "[DETECT] %s: camera(%.3f,%.3f,%.3f) -> base(%.1f,%.1f,%.1f)cm",
+                            det.label, cam_pos[0], cam_pos[1], cam_pos[2],
+                            x * 100, y * 100, z * 100,
+                        )
+                    except Exception as exc:
+                        logger.warning("[DETECT] Calibration failed for %s: %s", det.label, exc)
+                        x, y, z = cam_pos[0], cam_pos[1], cam_pos[2]
+                        has_3d = True
+                else:
+                    # No calibration — store camera frame coords
+                    x, y, z = cam_pos[0], cam_pos[1], cam_pos[2]
+                    has_3d = True
+                    logger.info("[DETECT] %s: camera(%.3f,%.3f,%.3f) (no calibration)", det.label, x, y, z)
+
             obj = ObjectState(
                 object_id=obj_id,
                 label=det.label,
-                x=0.0,   # unknown until camera→base transform is applied
-                y=0.0,
-                z=0.0,
+                x=x,
+                y=y,
+                z=z,
                 confidence=det.confidence,
                 state="on_table",
                 last_seen=now,
             )
             context.world_model.add_object(obj)
 
-            object_summaries.append({
+            summary = {
                 "object_id": obj_id,
                 "label": det.label,
                 "confidence": round(det.confidence, 4),
-            })
-            logger.debug(
-                "[DETECT] Object %s: label=%r confidence=%.3f",
-                obj_id, det.label, det.confidence,
-            )
+                "has_3d": has_3d,
+            }
+            if has_3d:
+                summary["position_cm"] = [round(x * 100, 1), round(y * 100, 1), round(z * 100, 1)]
+            object_summaries.append(summary)
 
-        logger.info("[DETECT] Detected %d object(s)", len(detections))
+        logger.info("[DETECT] Detected %d object(s), %d with 3D positions",
+                    len(detections), sum(1 for s in object_summaries if s.get("has_3d")))
+
         return SkillResult(
             success=True,
             result_data={

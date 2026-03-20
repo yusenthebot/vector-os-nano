@@ -4,30 +4,88 @@ Step-by-step verification for developers and contributors. Run these tests in or
 
 ## Prerequisites
 
+See `docs/dependencies.md` for detailed version requirements and troubleshooting.
+
+### Quick Setup
+
 ```bash
+# Create isolated venv
+python3.10 -m venv ~/vector_os_nano
+source ~/vector_os_nano/bin/activate
+pip install --upgrade pip setuptools wheel
+
+# Install Vector OS Nano (core only, no GPU dependencies)
 cd ~/Desktop/vector_os
-python3 -m venv vector_os_nano
-source vector_os_nano/bin/activate
-pip install --upgrade pip
 pip install -e "."
-pip install pytest lark
+
+# For GPU support (RTX 5080 Blackwell — MUST use nightly)
+pip install --upgrade torch torchvision -i https://download.pytorch.org/whl/nightly/cu128
+
+# Install all optional features + dev tools
+pip install -e ".[all,dev]"
 ```
 
-For IK tests: `pip install pin`
-For Dashboard tests: `pip install textual`
-For hardware tests: copy `scservo_sdk` into your venv (not on PyPI).
+### Per-Feature Installation
+
+If you only need specific features (saves space/time):
+
+```bash
+# Perception only (camera + VLM)
+pip install -e ".[perception]"
+
+# IK solver only
+pip install -e ".[ik]"
+pip install pin>=3.9.0
+
+# Dashboard TUI only
+pip install -e ".[tui]"
+
+# PyBullet simulation only
+pip install -e ".[sim]"
+
+# Testing tools
+pip install -e ".[dev]"
+```
+
+### Critical GPU Setup for RTX 5080
+
+**Do NOT use stable PyTorch.** RTX 5080 requires CUDA sm_120 support, only in nightly.
+
+```bash
+# Correct (nightly with cu128):
+pip install --upgrade torch torchvision -i https://download.pytorch.org/whl/nightly/cu128
+
+# Verify installation
+python -c "import torch; print(torch.__version__)"
+# Expected: 2.12.0.dev20260320+cu128 (or newer nightly)
+```
+
+### Hardware Support
+
+For SO-101 arm control, scservo_sdk must be installed (NOT on PyPI):
+
+```bash
+# Copy from ROS2 workspace
+cp ~/ros2_ws/src/so101_hardware/scservo_sdk \
+   ~/vector_os_nano/lib/python3.10/site-packages/
+
+# Verify
+python -c "from scservo_sdk import ServoCommandBus; print('OK')"
+```
 
 ---
 
-## Test 1: Unit Tests
+## Test 1: Unit Tests (530+ tests)
 
-Runs 530+ tests covering types, config, world model, executor, skills, joint config, IK, LLM prompts, calibration.
+Runs unit tests covering types, config, world model, executor, skills, joint config, IK, LLM prompts, calibration.
 
 ```bash
 python -m pytest tests/unit/ -v --tb=short
 ```
 
-Expected: all pass, 0 failures. Some tests may skip if optional dependencies (scipy, textual, pybullet) are not installed.
+Expected: all pass, 0 failures. Some tests may skip if optional dependencies are not installed:
+- scipy, pybullet skipped if not installed
+- transformers tests skipped if transformers<4.57.6
 
 ---
 
@@ -62,7 +120,7 @@ Verify the agent initializes and handles missing hardware gracefully.
 python examples/test_agent_no_hardware.py
 ```
 
-Create this file:
+Create this file if missing:
 
 ```python
 # examples/test_agent_no_hardware.py
@@ -389,15 +447,87 @@ Expected: Textual TUI opens with tabs (Dashboard, Log, Skills, World). Use F1-F4
 
 ## Test Summary
 
-| # | Test | Requires | Validates |
-|---|------|----------|-----------|
-| 1 | Unit tests | pytest | Types, config, world model, executor, skills |
-| 2 | Core imports | nothing | Module structure |
-| 3 | Agent no hardware | nothing | Graceful degradation |
-| 4 | World model | nothing | Objects, predicates, spatial, state |
-| 5 | IK solver | pin | FK/IK accuracy, reachability |
-| 6 | LLM planning | API key | Task decomposition |
-| 7 | CLI interactive | API key | Command interface |
-| 8 | Hardware | SO-101 + scservo_sdk | Serial, joints, gripper |
-| 9 | Full pipeline | API key | Custom skills, LLM discovery |
-| 10 | Dashboard | textual | TUI panels |
+| # | Test | Requires | Validates | Time |
+|---|------|----------|-----------|------|
+| 1 | Unit tests | pytest | Types, config, world model, executor, skills | ~30s |
+| 2 | Core imports | — | Module structure | ~2s |
+| 3 | Agent no hardware | — | Graceful degradation | ~2s |
+| 4 | World model | — | Objects, predicates, spatial, state | ~5s |
+| 5 | IK solver | pin | FK/IK accuracy, reachability | ~10s |
+| 6 | LLM planning | API key | Task decomposition | ~5s |
+| 7 | CLI interactive | API key | Command interface | manual |
+| 8 | Hardware | SO-101 + scservo_sdk | Serial, joints, gripper | manual |
+| 9 | Full pipeline | API key | Custom skills, LLM discovery | ~10s |
+| 10 | Dashboard | textual | TUI panels | manual |
+
+**Total automated test time:** ~1 minute
+
+---
+
+## Dependency Verification
+
+After installation, verify critical versions:
+
+```bash
+# Core (always present)
+python -c "import numpy, pyserial, httpx, yaml; print('Core: OK')"
+
+# Perception (optional but common)
+python -c "
+try:
+    import torch, torchvision, transformers, timm, open3d, cv2
+    print(f'Perception: OK')
+    print(f'  torch: {torch.__version__}')
+    print(f'  transformers: {transformers.__version__} (must be 4.57.6)')
+    print(f'  timm: {timm.__version__}')
+except ImportError as e:
+    print(f'Perception: not installed ({e})')
+"
+
+# IK (optional)
+python -c "
+try:
+    import pinocchio as pin
+    print(f'IK: OK (pinocchio {pin.__version__})')
+except ImportError:
+    print('IK: not installed (optional)')
+"
+
+# TUI (optional)
+python -c "
+try:
+    from textual.app import App
+    print('TUI: OK')
+except ImportError:
+    print('TUI: not installed (optional)')
+"
+
+# ROS2 (optional, installed via apt)
+python -c "
+try:
+    from rclpy import init
+    print('ROS2: OK')
+except ImportError:
+    print('ROS2: not installed (optional, requires apt)')
+"
+```
+
+---
+
+## Troubleshooting
+
+See `docs/dependencies.md` for detailed troubleshooting including:
+- PyTorch on RTX 5080 (nightly requirement)
+- transformers version issues (4.57.6 pinning)
+- scservo_sdk installation
+- Pinocchio compatibility
+- ROS2 pytest plugins
+
+---
+
+## Next Steps
+
+After all tests pass:
+1. Read `docs/dependencies.md` for detailed version information
+2. Read `README.md` for architecture and usage examples
+3. Check `QUICKSTART.md` for end-user setup

@@ -99,11 +99,12 @@ class VLMDetector:
             ) from exc
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        # Use fp16 on CUDA (faster, lower memory), fp32 on CPU (fp16 unsupported)
-        dtype = torch.float16 if device == "cuda" else torch.float32
-        logger.info("Loading Moondream locally from %s on %s (dtype=%s)", model_id, device, dtype)
+        logger.info("Loading Moondream locally from %s on %s", model_id, device)
+
+        # Load model and move to device. Don't force dtype — let the model
+        # use its native format (bf16 on Blackwell/RTX 50xx, fp32 on CPU).
         self._client = AutoModelForCausalLM.from_pretrained(
-            model_id, trust_remote_code=True, dtype=dtype
+            model_id, trust_remote_code=True,
         ).to(device)
         self._local = True
         logger.info("Moondream loaded locally on %s", device)

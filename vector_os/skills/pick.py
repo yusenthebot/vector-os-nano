@@ -318,28 +318,29 @@ class PickSkill:
         Returns:
             (3,) numpy array in base frame metres, or None if unresolvable.
         """
-        # 1. object_id lookup
+        # 1. object_id lookup (only use if has valid 3D position)
         obj_id = params.get("object_id")
         if obj_id:
             obj = context.world_model.get_object(obj_id)
-            if obj is not None:
+            if obj is not None and (abs(obj.x) > 0.01 or abs(obj.y) > 0.01):
                 logger.info("[PICK] Resolved via world_model object_id=%s", obj_id)
                 return np.array([obj.x, obj.y, obj.z], dtype=float)
-            logger.warning("[PICK] object_id=%s not in world model", obj_id)
+            if obj is not None:
+                logger.info("[PICK] object_id=%s has no 3D position, will use perception", obj_id)
 
-        # 2. object_label lookup
+        # 2. object_label lookup (only use if has valid 3D position)
         label = params.get("object_label")
         if label:
             objects = context.world_model.get_objects_by_label(label)
-            if objects:
-                # Pick the closest object to the robot (minimum XY distance)
-                closest = min(objects, key=lambda o: o.x ** 2 + o.y ** 2)
+            valid = [o for o in objects if abs(o.x) > 0.01 or abs(o.y) > 0.01]
+            if valid:
+                closest = min(valid, key=lambda o: o.x ** 2 + o.y ** 2)
                 logger.info(
                     "[PICK] Resolved via world_model label=%r -> object_id=%s",
                     label, closest.object_id,
                 )
                 return np.array([closest.x, closest.y, closest.z], dtype=float)
-            logger.warning("[PICK] label=%r not in world model", label)
+            logger.warning("[PICK] label=%r not in world model with valid 3D", label)
 
         # 3. Perception sampling with density clustering
         if context.perception is not None:

@@ -226,6 +226,67 @@ def main() -> None:
     print()
 
     # -----------------------------------------------------------------------
+    # Live camera viewer (background thread)
+    # Shows raw feed + bounding box overlay in an OpenCV window
+    # -----------------------------------------------------------------------
+    camera_thread = None
+    stop_camera = None
+    if perception is not None and hasattr(perception, '_camera') and perception._camera is not None:
+        import threading
+        import cv2
+        import numpy as np
+
+        stop_camera = threading.Event()
+
+        def _camera_loop():
+            """Background thread: show live camera + detection overlay."""
+            cam = perception._camera
+            cv2.namedWindow("Vector OS - Camera", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Vector OS - Camera", 640, 480)
+
+            while not stop_camera.is_set():
+                try:
+                    color = cam.get_color_frame()
+                    if color is None:
+                        continue
+
+                    display = color.copy()
+
+                    # Draw bounding boxes from latest detections
+                    if hasattr(perception, '_last_detections') and perception._last_detections:
+                        for det in perception._last_detections:
+                            x1, y1, x2, y2 = [int(v) for v in det.bbox]
+                            cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                            label = f"{det.label} {det.confidence:.0%}"
+                            cv2.putText(display, label, (x1, y1 - 8),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+                    # Draw tracked object masks/bboxes
+                    if hasattr(perception, '_last_tracked') and perception._last_tracked:
+                        for obj in perception._last_tracked:
+                            if obj.bbox_2d:
+                                x1, y1, x2, y2 = [int(v) for v in obj.bbox_2d]
+                                cv2.rectangle(display, (x1, y1), (x2, y2), (255, 0, 255), 2)
+                                info = f"T{obj.track_id}: {obj.label}"
+                                if obj.pose:
+                                    info += f" ({obj.pose.x:.2f},{obj.pose.y:.2f},{obj.pose.z:.2f})"
+                                cv2.putText(display, info, (x1, y2 + 16),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
+
+                    cv2.imshow("Vector OS - Camera", display)
+                    key = cv2.waitKey(33)  # ~30fps
+                    if key == 27:  # ESC
+                        break
+                except Exception:
+                    pass
+
+            cv2.destroyAllWindows()
+
+        camera_thread = threading.Thread(target=_camera_loop, daemon=True)
+        camera_thread.start()
+        print("Camera viewer started (ESC to close window)")
+
+    # -----------------------------------------------------------------------
     # CLI
     # -----------------------------------------------------------------------
     from vector_os.cli.simple import SimpleCLI
@@ -237,6 +298,10 @@ def main() -> None:
         print("\nKeyboard interrupt received.")
     finally:
         print("Shutting down...")
+        if stop_camera is not None:
+            stop_camera.set()
+        if camera_thread is not None:
+            camera_thread.join(timeout=2.0)
         if arm is not None:
             try:
                 arm.disconnect()

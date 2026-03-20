@@ -90,6 +90,10 @@ class PerceptionPipeline:
         self._tracked_objects: list[TrackedObject] = []
         self._tracking_loss_time: float | None = None
 
+        # Exposed for camera viewer overlay (read by run.py camera thread)
+        self._last_detections: list[Detection] = []
+        self._last_tracked: list[TrackedObject] = []
+
         # Synthetic frame support (for testing without hardware)
         self._synthetic_color: np.ndarray | None = None
         self._synthetic_depth: np.ndarray | None = None
@@ -174,6 +178,7 @@ class PerceptionPipeline:
             raise RuntimeError("No VLM configured. Pass vlm=VLMDetector() to PerceptionPipeline")
         color = self.get_color_frame()
         detections: list[Detection] = self._vlm.detect(color, query)  # type: ignore[union-attr]
+        self._last_detections = detections
         logger.info("VLM detect('%s') -> %d detections", query, len(detections))
         return detections
 
@@ -226,6 +231,7 @@ class PerceptionPipeline:
         )
         with self._lock:
             self._tracked_objects = tracked_objects
+            self._last_tracked = tracked_objects
         return tracked_objects
 
     def get_tracked_objects(self) -> list[TrackedObject]:
@@ -274,6 +280,7 @@ class PerceptionPipeline:
         )
         with self._lock:
             self._tracked_objects = tracked_objects
+            self._last_tracked = tracked_objects
         return tracked_objects
 
     # ------------------------------------------------------------------

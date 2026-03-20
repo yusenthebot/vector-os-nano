@@ -33,32 +33,55 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Perception: Camera + VLM support
+# CRITICAL: Use PyTorch nightly (cu128) for RTX 5080 Blackwell support
+# transformers==4.57.6 is pinned because:
+#   - 4.44 lacks EdgeTAM model support
+#   - 5.x+ has tied_weights bug with Moondream (breaks VLM)
+# timm required by EdgeTAM (open-vocabulary detection)
 perception = [
     "pyrealsense2>=2.50",
     "torch>=2.0",
     "torchvision>=0.15",
-    "transformers>=4.35",
+    "transformers==4.57.6",
+    "timm>=1.0.25",
     "open3d>=0.17",
     "opencv-python>=4.8",
+    "safetensors>=0.7.0",
 ]
+
 gpu = [
     "vector-os-nano[perception]",
 ]
+
+# IK: Inverse kinematics solver
+# pin (Pinocchio) >=3.9.0 for SO-101 URDF compatibility
 ik = [
-    "pin>=2.6",
+    "pin>=3.9.0",
 ]
+
+# TUI: Dashboard terminal interface
 tui = [
     "textual>=0.40",
 ]
+
+# Simulation: PyBullet physics
 sim = [
     "pybullet>=3.2",
 ]
+
+# ROS2 integration (packages installed via apt, not pip)
 ros2 = [
-    # ROS2 deps installed via apt, not pip
+    # ros-humble-rclpy
+    # ros-humble-launch-ros
+    # ros-humble-sensor-msgs
 ]
+
 all = [
     "vector-os-nano[perception,ik,tui,sim]",
 ]
+
+# Development tools
 dev = [
     "pytest>=7.0",
     "pytest-cov",
