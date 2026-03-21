@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_Z_OFFSET: float = 0.10        # 10 cm — tuned empirically for SO-101 + D405
 
 # Pre-grasp approach height above the target grasp point
-_DEFAULT_PRE_GRASP_HEIGHT: float = 0.02  # 2 cm above grasp (v2 comment: "tiny descent minimizes XY drift")
+_DEFAULT_PRE_GRASP_HEIGHT: float = 0.06  # 6 cm above grasp — enough clearance for approach
 
 # Maximum pick attempts before reporting failure
 _DEFAULT_MAX_RETRIES: int = 2
