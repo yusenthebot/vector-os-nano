@@ -292,6 +292,12 @@ class PickSkill:
             context.gripper.open()
             time.sleep(0.3)
 
+        # Step 15: Clear world model — object has moved, stale data is dangerous
+        # Remove ALL objects so next pick forces fresh scan+detect
+        for obj in list(context.world_model.get_objects()):
+            context.world_model.remove_object(obj.object_id)
+        logger.info("[PICK] World model cleared (objects moved, stale data removed)")
+
         logger.info(
             "[PICK] Pick complete! Grasped at (%.1f, %.1f) cm",
             base_pos[0] * 100, base_pos[1] * 100,
