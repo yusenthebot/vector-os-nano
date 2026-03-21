@@ -228,17 +228,30 @@ class PickSkill:
             )
         q_pregrasp = list(q_pregrasp_result)
 
-        # Step 7: IK for grasp (warm-started from pre-grasp)
-        q_grasp_result = context.arm.ik(
-            (base_pos[0], base_pos[1], base_pos[2]),
-            q_pregrasp,
-        )
-        if q_grasp_result is None:
-            return SkillResult(
-                success=False,
-                error_message="IK failed for grasp position",
-            )
-        q_grasp = list(q_grasp_result)
+        # Step 7: Compute Cartesian descent waypoints (pre-grasp → grasp)
+        # Instead of one big joint-space jump, interpolate in Cartesian Z
+        # and solve IK for each point. This keeps gripper tip on a straight
+        # vertical path, preventing XY drift from arm reconfiguration.
+        n_descent_steps = 5
+        descent_waypoints = []
+        q_current = q_pregrasp
+        for i in range(n_descent_steps + 1):
+            frac = i / n_descent_steps
+            wp_z = pre_grasp_pos[2] - frac * pre_grasp_h  # interpolate Z only
+            wp = (base_pos[0], base_pos[1], wp_z)
+            q_wp = context.arm.ik(wp, q_current)
+            if q_wp is None:
+                if i == n_descent_steps:
+                    # Must reach grasp — try from pre-grasp directly
+                    q_wp = context.arm.ik((base_pos[0], base_pos[1], base_pos[2]), q_pregrasp)
+                    if q_wp is None:
+                        return SkillResult(success=False, error_message="IK failed for grasp position")
+                else:
+                    continue  # skip this waypoint
+            descent_waypoints.append(list(q_wp))
+            q_current = q_wp
+
+        q_grasp = descent_waypoints[-1] if descent_waypoints else q_pregrasp
 
         # Step 8: Open gripper
         logger.info("[PICK] Opening gripper ...")
@@ -250,10 +263,11 @@ class PickSkill:
         if not context.arm.move_joints(q_pregrasp, duration=_PREGRASP_DURATION):
             return SkillResult(success=False, error_message="Pre-grasp move failed")
 
-        # Step 10: Descend to grasp
-        logger.info("[PICK] Descending to grasp ...")
-        if not context.arm.move_joints(q_grasp, duration=_DESCENT_DURATION):
-            return SkillResult(success=False, error_message="Descent to grasp failed")
+        # Step 10: Cartesian descent to grasp (multiple waypoints)
+        logger.info("[PICK] Descending to grasp (%d waypoints) ...", len(descent_waypoints))
+        step_duration = _DESCENT_DURATION / max(len(descent_waypoints), 1)
+        for wp_joints in descent_waypoints:
+            context.arm.move_joints(wp_joints, duration=step_duration)
 
         # Step 11: Open → wait → Close gripper sequence
         # Open first to ensure full grip range, then close to grasp
@@ -265,9 +279,12 @@ class PickSkill:
                 context.gripper.close()
                 time.sleep(0.2)
 
-        # Step 12: Lift back to pre-grasp
+        # Step 12: Cartesian lift back to pre-grasp (reverse descent waypoints)
         logger.info("[PICK] Lifting ...")
-        context.arm.move_joints(q_pregrasp, duration=_LIFT_DURATION)
+        lift_waypoints = list(reversed(descent_waypoints[:-1])) + [q_pregrasp]
+        lift_step_duration = _LIFT_DURATION / max(len(lift_waypoints), 1)
+        for wp_joints in lift_waypoints:
+            context.arm.move_joints(wp_joints, duration=lift_step_duration)
 
         # Step 13: Return home
         logger.info("[PICK] Returning home ...")
