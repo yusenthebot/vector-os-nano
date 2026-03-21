@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Gripper height above table (z offset added to the raw calibrated position)
-_DEFAULT_Z_OFFSET: float = 0.07        # 7 cm — tuned empirically for SO-101 + D405
+_DEFAULT_Z_OFFSET: float = 0.08        # 8 cm — tuned empirically for SO-101 + D405
 
 # Pre-grasp approach height above the target grasp point
 _DEFAULT_PRE_GRASP_HEIGHT: float = 0.02  # 2 cm above grasp (v2 comment: "tiny descent minimizes XY drift")
@@ -185,14 +185,14 @@ class PickSkill:
         # Step 2: Apply z_offset (gripper height above table)
         base_pos[2] += z_offset
 
-        # Step 3: Position-dependent X offset (ported exactly from v2 lines 461-472)
+        # Step 3: Position-dependent X offset
         raw_y = base_pos[1]
         if -0.03 < raw_y < 0.03:
             # Center (±3cm): extra +2cm forward
             base_pos[0] += x_offset + 0.02
         elif raw_y < -0.02:
-            # Right side: extra +2cm forward
-            base_pos[0] += x_offset + 0.02
+            # Right side: no extra
+            base_pos[0] += x_offset
         else:
             # Left side: no extra
             base_pos[0] += x_offset
