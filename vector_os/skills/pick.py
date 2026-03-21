@@ -212,64 +212,64 @@ class PickSkill:
                 ),
             )
 
-        # Step 6: IK for pre-grasp (above target)
+        # Step 6: Tip-compensated IK
+        # IK solves for gripper_link, but we want gripper_tip at the target.
+        # Strategy: solve IK → check tip FK → compute offset → re-solve with corrected target.
         current_joints = context.arm.get_joint_positions()
-        pre_grasp_pos = base_pos.copy()
+        ik_solver = getattr(context.arm, '_ik_solver', None)
+
+        grasp_target = np.array([base_pos[0], base_pos[1], base_pos[2]])
+
+        # First pass: solve IK for gripper_link at target position
+        q_grasp_init = context.arm.ik(tuple(grasp_target), current_joints)
+        if q_grasp_init is None:
+            return SkillResult(success=False, error_message="IK failed for grasp position")
+
+        # Compute tip offset and correct (if IK solver supports fk_gripper_tip)
+        if ik_solver is not None and hasattr(ik_solver, 'fk_gripper_tip'):
+            link_pos, _ = ik_solver.fk(list(q_grasp_init))
+            tip_pos, _ = ik_solver.fk_gripper_tip(list(q_grasp_init))
+            # tip_offset = tip - link (how far tip is from link)
+            tip_offset = np.array(tip_pos) - np.array(link_pos)
+            # To get tip at target, link must be at: target - tip_offset
+            corrected_target = grasp_target - tip_offset
+            # Only correct XY — Z offset is handled by z_offset parameter
+            corrected_target[2] = grasp_target[2]
+
+            logger.info(
+                "[PICK] Tip compensation: tip_offset=(%.1f,%.1f,%.1f)cm, correcting IK target XY",
+                tip_offset[0]*100, tip_offset[1]*100, tip_offset[2]*100,
+            )
+
+            q_grasp_corrected = context.arm.ik(tuple(corrected_target), list(q_grasp_init))
+            if q_grasp_corrected is not None:
+                q_grasp_init = q_grasp_corrected
+                # Verify correction
+                tip2, _ = ik_solver.fk_gripper_tip(list(q_grasp_init))
+                logger.info(
+                    "[PICK] After correction: tip at (%.1f,%.1f,%.1f)cm, target was (%.1f,%.1f)cm",
+                    tip2[0]*100, tip2[1]*100, tip2[2]*100,
+                    grasp_target[0]*100, grasp_target[1]*100,
+                )
+
+        # Pre-grasp: same XY as corrected grasp, but higher Z
+        corrected_grasp_pos = grasp_target.copy()
+        if ik_solver is not None and hasattr(ik_solver, 'fk'):
+            # Use the corrected link position for pre-grasp
+            corrected_link, _ = ik_solver.fk(list(q_grasp_init))
+            corrected_grasp_pos[:2] = corrected_link[:2]
+            corrected_grasp_pos[2] = grasp_target[2]
+
+        pre_grasp_pos = corrected_grasp_pos.copy()
         pre_grasp_pos[2] += pre_grasp_h
 
-        q_pregrasp_result = context.arm.ik(
-            (pre_grasp_pos[0], pre_grasp_pos[1], pre_grasp_pos[2]),
-            current_joints,
-        )
+        q_pregrasp_result = context.arm.ik(tuple(pre_grasp_pos), list(q_grasp_init))
         if q_pregrasp_result is None:
-            return SkillResult(
-                success=False,
-                error_message="IK failed for pre-grasp position",
-            )
+            q_pregrasp_result = context.arm.ik(tuple(pre_grasp_pos), current_joints)
+            if q_pregrasp_result is None:
+                return SkillResult(success=False, error_message="IK failed for pre-grasp")
         q_pregrasp = list(q_pregrasp_result)
-
-        # Step 7: Compute Cartesian descent waypoints (pre-grasp → grasp)
-        # Instead of one big joint-space jump, interpolate in Cartesian Z
-        # and solve IK for each point. This keeps gripper tip on a straight
-        # vertical path, preventing XY drift from arm reconfiguration.
-        n_descent_steps = 5
-        descent_waypoints = []
-        q_current = q_pregrasp
-        for i in range(n_descent_steps + 1):
-            frac = i / n_descent_steps
-            wp_z = pre_grasp_pos[2] - frac * pre_grasp_h  # interpolate Z only
-            wp = (base_pos[0], base_pos[1], wp_z)
-            q_wp = context.arm.ik(wp, q_current)
-            if q_wp is None:
-                if i == n_descent_steps:
-                    # Must reach grasp — try from pre-grasp directly
-                    q_wp = context.arm.ik((base_pos[0], base_pos[1], base_pos[2]), q_pregrasp)
-                    if q_wp is None:
-                        return SkillResult(success=False, error_message="IK failed for grasp position")
-                else:
-                    continue  # skip this waypoint
-            descent_waypoints.append(list(q_wp))
-            q_current = q_wp
-
-        q_grasp = descent_waypoints[-1] if descent_waypoints else q_pregrasp
-
-        # FK verification: check where gripper actually ends up
-        try:
-            fk_pos, _ = context.arm.fk(q_grasp)
-            fk_tip, _ = context.arm.fk(q_grasp)  # gripper_link position
-            if hasattr(context.arm, '_ik_solver') and context.arm._ik_solver is not None:
-                fk_tip, _ = context.arm._ik_solver.fk_gripper_tip(q_grasp)
-            target = np.array([base_pos[0], base_pos[1], base_pos[2]])
-            error = np.linalg.norm(np.array(fk_pos) - target) * 1000
-            logger.info(
-                "[PICK] FK verify: target(%.1f,%.1f,%.1f)cm gripper_link(%.1f,%.1f,%.1f)cm tip(%.1f,%.1f,%.1f)cm err=%.1fmm",
-                target[0]*100, target[1]*100, target[2]*100,
-                fk_pos[0]*100, fk_pos[1]*100, fk_pos[2]*100,
-                fk_tip[0]*100, fk_tip[1]*100, fk_tip[2]*100,
-                error,
-            )
-        except Exception as e:
-            logger.debug("[PICK] FK verify failed: %s", e)
+        q_grasp = list(q_grasp_init)
 
         # Step 8: Open gripper
         logger.info("[PICK] Opening gripper ...")
@@ -281,11 +281,10 @@ class PickSkill:
         if not context.arm.move_joints(q_pregrasp, duration=_PREGRASP_DURATION):
             return SkillResult(success=False, error_message="Pre-grasp move failed")
 
-        # Step 10: Cartesian descent to grasp (multiple waypoints)
-        logger.info("[PICK] Descending to grasp (%d waypoints) ...", len(descent_waypoints))
-        step_duration = _DESCENT_DURATION / max(len(descent_waypoints), 1)
-        for wp_joints in descent_waypoints:
-            context.arm.move_joints(wp_joints, duration=step_duration)
+        # Step 10: Descend to grasp (single step — tip-compensated IK ensures accuracy)
+        logger.info("[PICK] Descending to grasp ...")
+        if not context.arm.move_joints(q_grasp, duration=_DESCENT_DURATION):
+            return SkillResult(success=False, error_message="Descent to grasp failed")
 
         # Step 11: Open → wait → Close gripper sequence
         # Open first to ensure full grip range, then close to grasp
