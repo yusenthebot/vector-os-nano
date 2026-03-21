@@ -162,7 +162,10 @@ class TaskExecutor:
             world_model.apply_skill_effects(step.skill_name, step.parameters, skill_result)
 
             # --- 5. Check postconditions ---
-            for pred in step.postconditions:
+            # Use SKILL-defined postconditions (authoritative), not LLM-generated ones.
+            # LLM may invent predicates like "scan_complete" that don't exist.
+            postconds = skill.postconditions if hasattr(skill, 'postconditions') else step.postconditions
+            for pred in postconds:
                 if not world_model.check_predicate(pred):
                     reason = f"Postcondition failed: {pred!r} in step {step.step_id!r}"
                     logger.warning("[Executor] %s", reason)

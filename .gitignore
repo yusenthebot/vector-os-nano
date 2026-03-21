@@ -22,3 +22,7 @@ vector_os_nano/
 test_run.py
 test_hardware.py
 test_llm.py
+test_cli.py
+test_full_pipeline.py
+test_agent_hardware.py
+test_ik.py

@@ -203,6 +203,11 @@ class Agent:
         # Sync robot state before planning
         self._sync_robot_state()
 
+        # Try direct commands FIRST (gripper, home, scan — no LLM needed)
+        direct_result = self._try_direct(instruction)
+        if direct_result is not None:
+            return direct_result
+
         if self._llm is None:
             return self._execute_direct(instruction)
 
@@ -332,6 +337,59 @@ class Agent:
     # -------------------------------------------------------------------------
     # Private helpers
     # -------------------------------------------------------------------------
+
+    def _try_direct(self, instruction: str) -> ExecutionResult | None:
+        """Try to execute simple commands directly WITHOUT LLM.
+
+        Returns ExecutionResult if handled, None if this command needs LLM.
+        Handles: gripper open/close, home, scan.
+        """
+        text = instruction.strip().lower()
+
+        # Gripper close
+        if text in ("close", "close grip", "close gripper", "grip", "clench",
+                     "close claw", "夹紧", "合上"):
+            if self._gripper is None:
+                return ExecutionResult(success=False, status="failed",
+                                       failure_reason="No gripper connected")
+            self._gripper.close()
+            self._world_model.update_robot_state(gripper_state="closed")
+            return ExecutionResult(success=True, status="completed",
+                                    steps_completed=1, steps_total=1)
+
+        # Gripper open
+        if text in ("open", "open grip", "open gripper", "release", "let go",
+                     "open claw", "drop", "张开", "松开"):
+            if self._gripper is None:
+                return ExecutionResult(success=False, status="failed",
+                                       failure_reason="No gripper connected")
+            self._gripper.open()
+            self._world_model.update_robot_state(gripper_state="open", held_object=None)
+            return ExecutionResult(success=True, status="completed",
+                                    steps_completed=1, steps_total=1)
+
+        # Simple single-word skills (no LLM overhead for basic commands)
+        if text == "home":
+            context = self._build_context()
+            skill = self._skill_registry.get("home")
+            if skill:
+                result = skill.execute({}, context)
+                self._world_model.apply_skill_effects("home", {}, result)
+                return ExecutionResult(success=result.success, status="completed" if result.success else "failed",
+                                        steps_completed=1 if result.success else 0, steps_total=1,
+                                        failure_reason=result.error_message if not result.success else None)
+
+        if text == "scan":
+            context = self._build_context()
+            skill = self._skill_registry.get("scan")
+            if skill:
+                result = skill.execute({}, context)
+                return ExecutionResult(success=result.success, status="completed" if result.success else "failed",
+                                        steps_completed=1 if result.success else 0, steps_total=1,
+                                        failure_reason=result.error_message if not result.success else None)
+
+        # Not a simple command — return None to let LLM handle it
+        return None
 
     def _execute_direct(self, instruction: str) -> ExecutionResult:
         """Execute a command without an LLM.
