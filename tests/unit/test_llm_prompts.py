@@ -1,4 +1,4 @@
-"""Unit tests for vector_os.llm.prompts.
+"""Unit tests for vector_os_nano.llm.prompts.
 
 TDD — written before implementation. Tests verify:
 - build_planning_prompt includes skill names and world state
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from vector_os.llm.prompts import (
+from vector_os_nano.llm.prompts import (
     PLANNING_SYSTEM_PROMPT,
     build_planning_prompt,
     build_tool_definitions,

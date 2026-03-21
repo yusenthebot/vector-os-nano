@@ -1,4 +1,4 @@
-"""Unit tests for vector_os.cli.simple — SimpleCLI.
+"""Unit tests for vector_os_nano.cli.simple — SimpleCLI.
 
 TDD: written before implementation.
 No ROS2 imports. All tests use mocks or no-agent mode.
@@ -23,7 +23,7 @@ def _make_mock_agent(skills=("pick", "place", "home"), held=None):
 
     # world model
     world = MagicMock()
-    from vector_os.core.world_model import ObjectState, RobotState, WorldModel
+    from vector_os_nano.core.world_model import ObjectState, RobotState, WorldModel
     obj1 = ObjectState(object_id="obj_001", label="cup", confidence=0.92)
     world.get_objects.return_value = [obj1]
     robot = RobotState(gripper_state="open", held_object=held)
@@ -32,7 +32,7 @@ def _make_mock_agent(skills=("pick", "place", "home"), held=None):
     agent.world = world
 
     # execute returns a successful ExecutionResult
-    from vector_os.core.types import ExecutionResult
+    from vector_os_nano.core.types import ExecutionResult
     result = ExecutionResult(
         success=True,
         status="completed",
@@ -49,7 +49,7 @@ def _make_mock_agent(skills=("pick", "place", "home"), held=None):
 # ---------------------------------------------------------------------------
 
 def test_cli_creation():
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     cli = SimpleCLI()
     assert cli._agent is None
     assert cli._verbose is False
@@ -61,7 +61,7 @@ def test_cli_creation():
 # ---------------------------------------------------------------------------
 
 def test_cli_creation_with_agent():
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     agent = _make_mock_agent()
     cli = SimpleCLI(agent=agent, verbose=True)
     assert cli._agent is agent
@@ -73,7 +73,7 @@ def test_cli_creation_with_agent():
 # ---------------------------------------------------------------------------
 
 def test_cli_handle_help(capsys):
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     cli = SimpleCLI()
     cli._handle_input("help")
     out = capsys.readouterr().out
@@ -85,7 +85,7 @@ def test_cli_handle_help(capsys):
 # ---------------------------------------------------------------------------
 
 def test_cli_handle_quit():
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     cli = SimpleCLI()
     cli._running = True
     cli._handle_input("quit")
@@ -97,7 +97,7 @@ def test_cli_handle_quit():
 # ---------------------------------------------------------------------------
 
 def test_cli_handle_exit():
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     cli = SimpleCLI()
     cli._running = True
     cli._handle_input("exit")
@@ -109,7 +109,7 @@ def test_cli_handle_exit():
 # ---------------------------------------------------------------------------
 
 def test_cli_handle_q():
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     cli = SimpleCLI()
     cli._running = True
     cli._handle_input("q")
@@ -121,7 +121,7 @@ def test_cli_handle_q():
 # ---------------------------------------------------------------------------
 
 def test_cli_handle_unknown(capsys):
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     cli = SimpleCLI(agent=None)
     cli._handle_input("frobnicate")
     out = capsys.readouterr().out
@@ -133,7 +133,7 @@ def test_cli_handle_unknown(capsys):
 # ---------------------------------------------------------------------------
 
 def test_cli_handle_status_no_agent(capsys):
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     cli = SimpleCLI(agent=None)
     cli._handle_input("status")
     out = capsys.readouterr().out
@@ -145,7 +145,7 @@ def test_cli_handle_status_no_agent(capsys):
 # ---------------------------------------------------------------------------
 
 def test_cli_handle_skills(capsys):
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     agent = _make_mock_agent(skills=("pick", "place", "home"))
     cli = SimpleCLI(agent=agent)
     cli._handle_input("skills")
@@ -160,7 +160,7 @@ def test_cli_handle_skills(capsys):
 # ---------------------------------------------------------------------------
 
 def test_cli_commands_dict():
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     expected = {"pick", "place", "home", "scan", "detect", "status", "skills",
                 "world", "help", "quit"}
     assert expected.issubset(set(SimpleCLI.COMMANDS.keys()))
@@ -171,7 +171,7 @@ def test_cli_commands_dict():
 # ---------------------------------------------------------------------------
 
 def test_cli_main_function_exists():
-    from vector_os.cli.simple import main
+    from vector_os_nano.cli.simple import main
     assert callable(main)
 
 
@@ -180,7 +180,7 @@ def test_cli_main_function_exists():
 # ---------------------------------------------------------------------------
 
 def test_cli_handle_status_with_agent(capsys):
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     agent = _make_mock_agent()
     cli = SimpleCLI(agent=agent)
     cli._handle_input("status")
@@ -193,7 +193,7 @@ def test_cli_handle_status_with_agent(capsys):
 # ---------------------------------------------------------------------------
 
 def test_cli_handle_world(capsys):
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     agent = _make_mock_agent()
     cli = SimpleCLI(agent=agent)
     cli._handle_input("world")
@@ -207,7 +207,7 @@ def test_cli_handle_world(capsys):
 # ---------------------------------------------------------------------------
 
 def test_cli_handle_world_no_agent(capsys):
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     cli = SimpleCLI(agent=None)
     cli._handle_input("world")
     out = capsys.readouterr().out
@@ -219,7 +219,7 @@ def test_cli_handle_world_no_agent(capsys):
 # ---------------------------------------------------------------------------
 
 def test_cli_unknown_command_calls_agent_execute(capsys):
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     agent = _make_mock_agent()
     cli = SimpleCLI(agent=agent)
     cli._handle_input("pick the cup")
@@ -231,8 +231,8 @@ def test_cli_unknown_command_calls_agent_execute(capsys):
 # ---------------------------------------------------------------------------
 
 def test_cli_print_result_success(capsys):
-    from vector_os.cli.simple import SimpleCLI
-    from vector_os.core.types import ExecutionResult
+    from vector_os_nano.cli.simple import SimpleCLI
+    from vector_os_nano.core.types import ExecutionResult
     cli = SimpleCLI()
     result = ExecutionResult(
         success=True,
@@ -250,8 +250,8 @@ def test_cli_print_result_success(capsys):
 # ---------------------------------------------------------------------------
 
 def test_cli_print_result_clarification(capsys):
-    from vector_os.cli.simple import SimpleCLI
-    from vector_os.core.types import ExecutionResult
+    from vector_os_nano.cli.simple import SimpleCLI
+    from vector_os_nano.core.types import ExecutionResult
     cli = SimpleCLI()
     result = ExecutionResult(
         success=False,
@@ -268,8 +268,8 @@ def test_cli_print_result_clarification(capsys):
 # ---------------------------------------------------------------------------
 
 def test_cli_print_result_failure(capsys):
-    from vector_os.cli.simple import SimpleCLI
-    from vector_os.core.types import ExecutionResult
+    from vector_os_nano.cli.simple import SimpleCLI
+    from vector_os_nano.core.types import ExecutionResult
     cli = SimpleCLI()
     result = ExecutionResult(
         success=False,
@@ -286,8 +286,8 @@ def test_cli_print_result_failure(capsys):
 # ---------------------------------------------------------------------------
 
 def test_cli_print_result_verbose_trace(capsys):
-    from vector_os.cli.simple import SimpleCLI
-    from vector_os.core.types import ExecutionResult, StepTrace
+    from vector_os_nano.cli.simple import SimpleCLI
+    from vector_os_nano.core.types import ExecutionResult, StepTrace
     cli = SimpleCLI(verbose=True)
     trace = [StepTrace(step_id="s1", skill_name="home", status="success", duration_sec=0.5)]
     result = ExecutionResult(
@@ -307,7 +307,7 @@ def test_cli_print_result_verbose_trace(capsys):
 # ---------------------------------------------------------------------------
 
 def test_cli_print_banner(capsys):
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     cli = SimpleCLI()
     cli._print_banner()
     out = capsys.readouterr().out
@@ -319,7 +319,7 @@ def test_cli_print_banner(capsys):
 # ---------------------------------------------------------------------------
 
 def test_cli_run_exits_on_eof():
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     cli = SimpleCLI()
     with patch("builtins.input", side_effect=EOFError):
         cli.run()
@@ -331,7 +331,7 @@ def test_cli_run_exits_on_eof():
 # ---------------------------------------------------------------------------
 
 def test_cli_run_exits_on_keyboard_interrupt():
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     cli = SimpleCLI()
     with patch("builtins.input", side_effect=KeyboardInterrupt):
         cli.run()
@@ -352,7 +352,7 @@ def test_readline_importable():
 # ---------------------------------------------------------------------------
 
 def test_cli_handle_skills_no_agent(capsys):
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     cli = SimpleCLI(agent=None)
     cli._handle_input("skills")
     out = capsys.readouterr().out
@@ -364,10 +364,10 @@ def test_cli_handle_skills_no_agent(capsys):
 # ---------------------------------------------------------------------------
 
 def test_cli_handle_status_shows_held_object(capsys):
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     agent = _make_mock_agent(held="obj_001")
     # override robot state to show held object
-    from vector_os.core.world_model import RobotState
+    from vector_os_nano.core.world_model import RobotState
     agent.world.get_robot.return_value = RobotState(
         gripper_state="closed", held_object="obj_001"
     )

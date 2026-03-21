@@ -1,4 +1,4 @@
-"""Unit tests for vector_os.cli.dashboard — DashboardApp (Textual TUI).
+"""Unit tests for vector_os_nano.cli.dashboard — DashboardApp (Textual TUI).
 
 TDD: written before implementation.
 Tests skip gracefully when textual is not installed.
@@ -21,18 +21,18 @@ def _make_mock_agent():
     agent = MagicMock()
     agent.skills = ["pick", "place", "home", "scan", "detect"]
 
-    from vector_os.core.skill import SkillRegistry
-    from vector_os.skills import get_default_skills
+    from vector_os_nano.core.skill import SkillRegistry
+    from vector_os_nano.skills import get_default_skills
     registry = SkillRegistry()
     for s in get_default_skills():
         registry.register(s)
     agent._skill_registry = registry
 
-    from vector_os.core.world_model import WorldModel
+    from vector_os_nano.core.world_model import WorldModel
     world = WorldModel()
     agent.world = world
 
-    from vector_os.core.types import ExecutionResult
+    from vector_os_nano.core.types import ExecutionResult
     agent.execute.return_value = ExecutionResult(
         success=True,
         status="completed",
@@ -47,7 +47,7 @@ def _make_mock_agent():
 # ---------------------------------------------------------------------------
 
 def test_dashboard_import():
-    from vector_os.cli.dashboard import DashboardApp
+    from vector_os_nano.cli.dashboard import DashboardApp
     assert DashboardApp is not None
 
 
@@ -56,7 +56,7 @@ def test_dashboard_import():
 # ---------------------------------------------------------------------------
 
 def test_dashboard_creation():
-    from vector_os.cli.dashboard import DashboardApp
+    from vector_os_nano.cli.dashboard import DashboardApp
     app = DashboardApp()
     assert app._agent is None
 
@@ -66,7 +66,7 @@ def test_dashboard_creation():
 # ---------------------------------------------------------------------------
 
 def test_dashboard_creation_with_agent():
-    from vector_os.cli.dashboard import DashboardApp
+    from vector_os_nano.cli.dashboard import DashboardApp
     agent = _make_mock_agent()
     app = DashboardApp(agent=agent)
     assert app._agent is agent
@@ -77,7 +77,7 @@ def test_dashboard_creation_with_agent():
 # ---------------------------------------------------------------------------
 
 def test_dashboard_main_exists():
-    from vector_os.cli.dashboard import main
+    from vector_os_nano.cli.dashboard import main
     assert callable(main)
 
 
@@ -86,7 +86,7 @@ def test_dashboard_main_exists():
 # ---------------------------------------------------------------------------
 
 def test_dashboard_css_not_empty():
-    from vector_os.cli.dashboard import DashboardApp
+    from vector_os_nano.cli.dashboard import DashboardApp
     assert DashboardApp.CSS.strip() != ""
 
 
@@ -95,7 +95,7 @@ def test_dashboard_css_not_empty():
 # ---------------------------------------------------------------------------
 
 def test_dashboard_bindings():
-    from vector_os.cli.dashboard import DashboardApp
+    from vector_os_nano.cli.dashboard import DashboardApp
     keys = {b.key for b in DashboardApp.BINDINGS}
     assert "f1" in keys
     assert "f2" in keys
@@ -111,7 +111,7 @@ def test_dashboard_bindings():
 
 @pytest.mark.asyncio
 async def test_dashboard_headless():
-    from vector_os.cli.dashboard import DashboardApp
+    from vector_os_nano.cli.dashboard import DashboardApp
     app = DashboardApp()
     async with app.run_test() as pilot:
         # Core panels must be present
@@ -129,7 +129,7 @@ async def test_dashboard_headless():
 
 @pytest.mark.asyncio
 async def test_dashboard_log_tab_present():
-    from vector_os.cli.dashboard import DashboardApp
+    from vector_os_nano.cli.dashboard import DashboardApp
     from textual.widgets import RichLog
     app = DashboardApp()
     async with app.run_test() as pilot:
@@ -143,7 +143,7 @@ async def test_dashboard_log_tab_present():
 
 @pytest.mark.asyncio
 async def test_dashboard_skills_tab_present():
-    from vector_os.cli.dashboard import DashboardApp
+    from vector_os_nano.cli.dashboard import DashboardApp
     from textual.widgets import DataTable
     app = DashboardApp()
     async with app.run_test() as pilot:
@@ -157,7 +157,7 @@ async def test_dashboard_skills_tab_present():
 
 @pytest.mark.asyncio
 async def test_dashboard_world_tab_present():
-    from vector_os.cli.dashboard import DashboardApp
+    from vector_os_nano.cli.dashboard import DashboardApp
     from textual.widgets import RichLog
     app = DashboardApp()
     async with app.run_test() as pilot:
@@ -171,7 +171,7 @@ async def test_dashboard_world_tab_present():
 
 @pytest.mark.asyncio
 async def test_dashboard_action_buttons():
-    from vector_os.cli.dashboard import DashboardApp
+    from vector_os_nano.cli.dashboard import DashboardApp
     from textual.widgets import Button
     app = DashboardApp()
     async with app.run_test() as pilot:
@@ -187,7 +187,7 @@ async def test_dashboard_action_buttons():
 
 @pytest.mark.asyncio
 async def test_dashboard_status_no_agent():
-    from vector_os.cli.dashboard import DashboardApp
+    from vector_os_nano.cli.dashboard import DashboardApp
     from textual.widgets import Static
     app = DashboardApp()
     async with app.run_test() as pilot:
@@ -204,7 +204,7 @@ async def test_dashboard_status_no_agent():
 
 @pytest.mark.asyncio
 async def test_dashboard_skills_table_populated():
-    from vector_os.cli.dashboard import DashboardApp
+    from vector_os_nano.cli.dashboard import DashboardApp
     from textual.widgets import DataTable
     agent = _make_mock_agent()
     app = DashboardApp(agent=agent)
@@ -219,7 +219,7 @@ async def test_dashboard_skills_table_populated():
 
 @pytest.mark.asyncio
 async def test_dashboard_f1_tab_switch():
-    from vector_os.cli.dashboard import DashboardApp
+    from vector_os_nano.cli.dashboard import DashboardApp
     from textual.widgets import TabbedContent
     app = DashboardApp()
     async with app.run_test() as pilot:
@@ -234,7 +234,7 @@ async def test_dashboard_f1_tab_switch():
 
 @pytest.mark.asyncio
 async def test_dashboard_f2_tab_switch():
-    from vector_os.cli.dashboard import DashboardApp
+    from vector_os_nano.cli.dashboard import DashboardApp
     from textual.widgets import TabbedContent
     app = DashboardApp()
     async with app.run_test() as pilot:
@@ -249,7 +249,7 @@ async def test_dashboard_f2_tab_switch():
 
 @pytest.mark.asyncio
 async def test_dashboard_estop_no_crash():
-    from vector_os.cli.dashboard import DashboardApp
+    from vector_os_nano.cli.dashboard import DashboardApp
     app = DashboardApp()
     async with app.run_test() as pilot:
         # Call action directly — key bindings for ctrl+e may be swallowed by
@@ -267,7 +267,7 @@ async def test_dashboard_estop_no_crash():
 
 @pytest.mark.asyncio
 async def test_dashboard_estop_calls_agent_stop():
-    from vector_os.cli.dashboard import DashboardApp
+    from vector_os_nano.cli.dashboard import DashboardApp
     agent = _make_mock_agent()
     app = DashboardApp(agent=agent)
     async with app.run_test() as pilot:
@@ -282,7 +282,7 @@ async def test_dashboard_estop_calls_agent_stop():
 
 @pytest.mark.asyncio
 async def test_dashboard_empty_command_no_execute():
-    from vector_os.cli.dashboard import DashboardApp
+    from vector_os_nano.cli.dashboard import DashboardApp
     agent = _make_mock_agent()
     app = DashboardApp(agent=agent)
     async with app.run_test() as pilot:
@@ -298,7 +298,7 @@ async def test_dashboard_empty_command_no_execute():
 # ---------------------------------------------------------------------------
 
 def test_dashboard_log_method_no_crash():
-    from vector_os.cli.dashboard import DashboardApp
+    from vector_os_nano.cli.dashboard import DashboardApp
     app = DashboardApp()
     # Should not raise even before mounting
     try:
@@ -312,5 +312,5 @@ def test_dashboard_log_method_no_crash():
 # ---------------------------------------------------------------------------
 
 def test_textual_available_flag():
-    from vector_os.cli.dashboard import TEXTUAL_AVAILABLE
+    from vector_os_nano.cli.dashboard import TEXTUAL_AVAILABLE
     assert TEXTUAL_AVAILABLE is True

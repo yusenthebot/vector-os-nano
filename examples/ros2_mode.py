@@ -16,7 +16,7 @@ Usage:
     python examples/ros2_mode.py
 """
 
-from vector_os.ros2 import ROS2_AVAILABLE
+from vector_os_nano.ros2 import ROS2_AVAILABLE
 
 if not ROS2_AVAILABLE:
     print(
@@ -27,7 +27,7 @@ if not ROS2_AVAILABLE:
     raise SystemExit(1)
 
 import rclpy
-from vector_os.ros2.nodes.hardware_bridge import HardwareBridgeNode
+from vector_os_nano.ros2.nodes.hardware_bridge import HardwareBridgeNode
 
 rclpy.init()
 

@@ -13,11 +13,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vector_os.llm.base import LLMProvider
-from vector_os.llm.claude import ClaudeProvider
-from vector_os.llm.openai_compat import OpenAIProvider
-from vector_os.llm.local import LocalProvider
-from vector_os.core.types import TaskPlan
+from vector_os_nano.llm.base import LLMProvider
+from vector_os_nano.llm.claude import ClaudeProvider
+from vector_os_nano.llm.openai_compat import OpenAIProvider
+from vector_os_nano.llm.local import LocalProvider
+from vector_os_nano.core.types import TaskPlan
 
 
 # ---------------------------------------------------------------------------

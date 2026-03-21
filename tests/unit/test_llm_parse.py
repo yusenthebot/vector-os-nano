@@ -1,7 +1,7 @@
 """Unit tests for LLM JSON response parsing.
 
 TDD — written before implementation. Tests verify that the parse_plan_response
-function in vector_os.llm.claude correctly:
+function in vector_os_nano.llm.claude correctly:
 - Parses valid JSON step arrays into TaskPlan
 - Handles requires_clarification responses
 - Gracefully handles malformed JSON (including markdown code fences)
@@ -14,8 +14,8 @@ import json
 
 import pytest
 
-from vector_os.llm.claude import parse_plan_response
-from vector_os.core.types import TaskPlan, TaskStep
+from vector_os_nano.llm.claude import parse_plan_response
+from vector_os_nano.core.types import TaskPlan, TaskStep
 
 
 # ---------------------------------------------------------------------------

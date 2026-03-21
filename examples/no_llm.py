@@ -10,7 +10,7 @@ Usage:
     python examples/no_llm.py
 """
 
-from vector_os import Agent, SO101
+from vector_os_nano import Agent, SO101
 
 arm = SO101(port="/dev/ttyACM0")
 

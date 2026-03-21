@@ -15,10 +15,10 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from vector_os.core.skill import SkillContext
-from vector_os.core.types import Detection, SkillResult
-from vector_os.core.world_model import ObjectState, WorldModel
-from vector_os.skills.pick import PickSkill
+from vector_os_nano.core.skill import SkillContext
+from vector_os_nano.core.types import Detection, SkillResult
+from vector_os_nano.core.world_model import ObjectState, WorldModel
+from vector_os_nano.skills.pick import PickSkill
 
 
 # ---------------------------------------------------------------------------

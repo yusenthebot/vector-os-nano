@@ -11,7 +11,7 @@ Usage:
     python examples/quickstart.py
 """
 
-from vector_os import Agent, SO101
+from vector_os_nano import Agent, SO101
 
 # Connect to SO-101 arm
 arm = SO101(port="/dev/ttyACM0")

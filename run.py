@@ -57,7 +57,7 @@ def _load_calibration_yaml(cal_file: str) -> "Calibration | None":
     try:
         import yaml
         import numpy as np
-        from vector_os.perception.calibration import Calibration
+        from vector_os_nano.perception.calibration import Calibration
 
         with open(cal_file, "r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh)
@@ -107,8 +107,8 @@ def _load_calibration_yaml(cal_file: str) -> "Calibration | None":
 
 def main() -> None:
     """Boot the full Vector OS Nano stack and start the interactive CLI."""
-    from vector_os.core.agent import Agent
-    from vector_os.core.config import load_config
+    from vector_os_nano.core.agent import Agent
+    from vector_os_nano.core.config import load_config
 
     cfg = load_config("config/user.yaml")
 
@@ -118,7 +118,7 @@ def main() -> None:
     arm = None
     gripper = None
     try:
-        from vector_os.hardware.so101 import SO101Arm, SO101Gripper
+        from vector_os_nano.hardware.so101 import SO101Arm, SO101Gripper
         port = cfg.get("arm", {}).get("port", "/dev/ttyACM0")
         arm = SO101Arm(port=port)
         print(f"Connecting arm on {port}...")
@@ -139,10 +139,10 @@ def main() -> None:
     # -----------------------------------------------------------------------
     perception = None
     try:
-        from vector_os.perception.realsense import RealSenseCamera
-        from vector_os.perception.vlm import VLMDetector
-        from vector_os.perception.tracker import EdgeTAMTracker
-        from vector_os.perception.pipeline import PerceptionPipeline
+        from vector_os_nano.perception.realsense import RealSenseCamera
+        from vector_os_nano.perception.vlm import VLMDetector
+        from vector_os_nano.perception.tracker import EdgeTAMTracker
+        from vector_os_nano.perception.pipeline import PerceptionPipeline
 
         # 1. Camera
         print("Connecting camera (RealSense D405)...")
@@ -192,7 +192,7 @@ def main() -> None:
         else:
             # .npy path — use Calibration.load() directly
             try:
-                from vector_os.perception.calibration import Calibration
+                from vector_os_nano.perception.calibration import Calibration
                 calibration = Calibration.load(cal_file)
             except Exception as exc:
                 print(f"Calibration load failed: {exc}")
@@ -350,7 +350,7 @@ def main() -> None:
     # -----------------------------------------------------------------------
     # CLI
     # -----------------------------------------------------------------------
-    from vector_os.cli.simple import SimpleCLI
+    from vector_os_nano.cli.simple import SimpleCLI
     cli = SimpleCLI(agent=agent, verbose=True)
 
     try:

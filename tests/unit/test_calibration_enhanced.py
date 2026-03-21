@@ -7,7 +7,7 @@ import tempfile
 import numpy as np
 import pytest
 
-from vector_os.perception.calibration import Calibration
+from vector_os_nano.perception.calibration import Calibration
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +155,7 @@ def test_z_variation_required_warns():
             warning_messages.append(record.getMessage())
 
     handler = _Handler(level=logging.WARNING)
-    calib_logger = logging.getLogger("vector_os.perception.calibration")
+    calib_logger = logging.getLogger("vector_os_nano.perception.calibration")
     calib_logger.addHandler(handler)
     calib_logger.setLevel(logging.WARNING)
     try:

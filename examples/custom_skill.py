@@ -10,9 +10,9 @@ Usage:
     python examples/custom_skill.py
 """
 
-from vector_os import Agent, SO101
-from vector_os.core.skill import SkillContext
-from vector_os.core.types import SkillResult
+from vector_os_nano import Agent, SO101
+from vector_os_nano.core.skill import SkillContext
+from vector_os_nano.core.types import SkillResult
 
 
 class WaveSkill:

@@ -7,7 +7,7 @@ import tempfile
 import numpy as np
 import pytest
 
-from vector_os.perception.calibration import Calibration
+from vector_os_nano.perception.calibration import Calibration
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +147,7 @@ def test_load_yaml_reads_transform_matrix():
         path = fh.name
 
     try:
-        from vector_os.perception.calibration import Calibration
+        from vector_os_nano.perception.calibration import Calibration
         cal = Calibration.load(path)
         assert cal._matrix.shape == (4, 4)
         assert np.allclose(cal._matrix, T_expected, atol=1e-9)
@@ -183,7 +183,7 @@ def test_load_yaml_with_point_correspondences():
         path = fh.name
 
     try:
-        from vector_os.perception.calibration import Calibration
+        from vector_os_nano.perception.calibration import Calibration
         cal = Calibration.load(path)
         assert cal._cal_points_cam is not None
         assert cal._cal_points_cam.shape == (8, 3)
@@ -206,7 +206,7 @@ def test_load_yaml_missing_transform_matrix_raises():
         path = fh.name
 
     try:
-        from vector_os.perception.calibration import Calibration
+        from vector_os_nano.perception.calibration import Calibration
         with pytest.raises(ValueError, match="transform_matrix"):
             Calibration.load(path)
     finally:
@@ -214,7 +214,7 @@ def test_load_yaml_missing_transform_matrix_raises():
 
 
 def test_load_workspace_calibration_yaml():
-    """Load the actual workspace_calibration.yaml from vector_os/config/."""
+    """Load the actual workspace_calibration.yaml from vector_os_nano/config/."""
     import os
     from pathlib import Path
 
@@ -226,7 +226,7 @@ def test_load_workspace_calibration_yaml():
     if not yaml_path.exists():
         pytest.skip("workspace_calibration.yaml not present in config/")
 
-    from vector_os.perception.calibration import Calibration
+    from vector_os_nano.perception.calibration import Calibration
     cal = Calibration.load(str(yaml_path))
     assert cal._matrix.shape == (4, 4)
     # The last row must be [0, 0, 0, 1] for a valid homogeneous transform

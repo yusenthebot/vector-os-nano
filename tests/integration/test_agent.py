@@ -1,4 +1,4 @@
-"""Integration tests for vector_os.core.agent.Agent.
+"""Integration tests for vector_os_nano.core.agent.Agent.
 
 Tests cover all public Agent methods with mock hardware/LLM objects.
 No real hardware or network calls are made.
@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import pytest
 
-from vector_os.core.types import ExecutionResult, TaskPlan, TaskStep, SkillResult
-from vector_os.core.skill import Skill, SkillContext, SkillRegistry
-from vector_os.core.world_model import WorldModel
+from vector_os_nano.core.types import ExecutionResult, TaskPlan, TaskStep, SkillResult
+from vector_os_nano.core.skill import Skill, SkillContext, SkillRegistry
+from vector_os_nano.core.world_model import WorldModel
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ class TestAgentCreation:
 
     def test_agent_creation_minimal(self):
         """Agent(arm=MockArm()) should succeed with no other args."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         arm = MockArm()
         agent = Agent(arm=arm)
@@ -161,29 +161,29 @@ class TestAgentCreation:
 
     def test_agent_creation_no_args(self):
         """Agent() with zero arguments should succeed."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent()
         assert agent is not None
 
     def test_agent_creation_with_llm(self):
         """Agent(arm=MockArm(), llm=MockLLM()) should succeed."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm(), llm=MockLLM())
         assert agent is not None
 
     def test_agent_creation_with_api_key(self):
         """Agent(llm_api_key='test') should create a ClaudeProvider internally."""
-        from vector_os.core.agent import Agent
-        from vector_os.llm.claude import ClaudeProvider
+        from vector_os_nano.core.agent import Agent
+        from vector_os_nano.llm.claude import ClaudeProvider
 
         agent = Agent(arm=MockArm(), llm_api_key="test-api-key")
         assert isinstance(agent._llm, ClaudeProvider)
 
     def test_agent_creation_with_gripper(self):
         """Explicit gripper should be stored on the agent."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         arm = MockArm()
         gripper = MockGripper()
@@ -192,7 +192,7 @@ class TestAgentCreation:
 
     def test_agent_creation_with_custom_config(self):
         """Agent accepts dict config without crashing."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         cfg = {"agent": {"max_planning_retries": 2}, "llm": {"provider": "claude"}}
         agent = Agent(arm=MockArm(), config=cfg)
@@ -200,7 +200,7 @@ class TestAgentCreation:
 
     def test_agent_creation_llm_overrides_api_key(self):
         """If both llm= and llm_api_key= are passed, llm= wins."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         mock_llm = MockLLM()
         agent = Agent(arm=MockArm(), llm=mock_llm, llm_api_key="ignored")
@@ -208,7 +208,7 @@ class TestAgentCreation:
 
     def test_agent_creation_no_arm(self):
         """Agent with no arm should set _arm to None."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent()
         assert agent._arm is None
@@ -224,7 +224,7 @@ class TestAgentExecuteDirect:
 
     def test_agent_execute_direct_home(self):
         """'home' command without LLM should succeed via HomeSkill."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm(), gripper=MockGripper())
         result = agent.execute("home")
@@ -233,7 +233,7 @@ class TestAgentExecuteDirect:
 
     def test_agent_execute_direct_scan(self):
         """'scan' command without LLM should succeed via ScanSkill."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm(), gripper=MockGripper())
         result = agent.execute("scan")
@@ -242,7 +242,7 @@ class TestAgentExecuteDirect:
 
     def test_agent_execute_direct_unknown(self):
         """Unknown command without LLM should return a failure result."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm())
         result = agent.execute("fly to the moon")
@@ -253,7 +253,7 @@ class TestAgentExecuteDirect:
 
     def test_agent_execute_direct_pick_with_arg(self):
         """'pick red_cup' should pass object_label to PickSkill params."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         arm = MockArm()
         gripper = MockGripper()
@@ -265,7 +265,7 @@ class TestAgentExecuteDirect:
 
     def test_agent_execute_direct_empty_string(self):
         """Empty instruction should return failure gracefully."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm())
         result = agent.execute("")
@@ -283,7 +283,7 @@ class TestAgentExecuteWithLLM:
 
     def test_agent_execute_with_llm(self):
         """With MockLLM, execute() should complete a 'home' plan."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm(), gripper=MockGripper(), llm=MockLLM())
         result = agent.execute("go home")
@@ -292,7 +292,7 @@ class TestAgentExecuteWithLLM:
 
     def test_agent_execute_with_llm_clarification(self):
         """When LLM requests clarification, result should have clarification_question."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm(), llm=MockLLMClarification())
         result = agent.execute("pick something")
@@ -304,7 +304,7 @@ class TestAgentExecuteWithLLM:
 
     def test_agent_execute_with_llm_failure(self):
         """Failed execution (unknown skill from LLM) should return failure result."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm(), llm=MockLLMFail())
         result = agent.execute("do something impossible")
@@ -313,7 +313,7 @@ class TestAgentExecuteWithLLM:
 
     def test_agent_execute_returns_execution_result(self):
         """execute() always returns an ExecutionResult, never raises."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm(), gripper=MockGripper(), llm=MockLLM())
         result = agent.execute("any instruction")
@@ -330,7 +330,7 @@ class TestAgentRegisterSkill:
 
     def test_agent_register_custom_skill(self):
         """Registered custom skill should appear in agent.skills."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm())
         agent.register_skill(AlwaysSucceedSkill())
@@ -338,7 +338,7 @@ class TestAgentRegisterSkill:
 
     def test_agent_skills_property_includes_defaults(self):
         """agent.skills should include all default built-in skills."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm())
         skill_names = agent.skills
@@ -350,7 +350,7 @@ class TestAgentRegisterSkill:
 
     def test_agent_register_overrides_existing(self):
         """Re-registering a skill with the same name should replace it."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm())
         agent.register_skill(AlwaysSucceedSkill())
@@ -359,7 +359,7 @@ class TestAgentRegisterSkill:
 
     def test_agent_execute_custom_skill_direct(self):
         """Custom skill registered before execute should be callable via direct mode."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm())
         agent.register_skill(AlwaysSucceedSkill())
@@ -377,14 +377,14 @@ class TestAgentWorldProperty:
 
     def test_agent_world_property(self):
         """agent.world should return the WorldModel instance."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm())
         assert isinstance(agent.world, WorldModel)
 
     def test_agent_world_is_same_instance(self):
         """Repeated access to agent.world returns the same object."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm())
         w1 = agent.world
@@ -402,7 +402,7 @@ class TestAgentSkillsProperty:
 
     def test_agent_skills_property(self):
         """agent.skills should return a list of strings."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm())
         skill_names = agent.skills
@@ -411,7 +411,7 @@ class TestAgentSkillsProperty:
 
     def test_agent_skills_not_empty(self):
         """Default skills should be non-empty."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm())
         assert len(agent.skills) > 0
@@ -427,7 +427,7 @@ class TestAgentHomeConvenience:
 
     def test_agent_home_convenience_returns_bool(self):
         """agent.home() should return True on success."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm(), gripper=MockGripper())
         result = agent.home()
@@ -436,7 +436,7 @@ class TestAgentHomeConvenience:
 
     def test_agent_home_convenience_returns_false_on_failure(self):
         """agent.home() should return False when no arm connected."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         # No arm → home skill fails with "No arm connected"
         agent = Agent(llm=MockLLMFail())
@@ -455,7 +455,7 @@ class TestAgentStop:
 
     def test_agent_stop_calls_arm_stop(self):
         """agent.stop() should call arm.stop()."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         calls = []
 
@@ -469,7 +469,7 @@ class TestAgentStop:
 
     def test_agent_stop_no_arm(self):
         """agent.stop() should not crash when arm is None."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent()
         agent.stop()  # Should not raise
@@ -485,7 +485,7 @@ class TestAgentConnectDisconnect:
 
     def test_agent_connect_calls_arm_connect(self):
         """agent.connect() should call arm.connect()."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         arm = MockArm()
         agent = Agent(arm=arm)
@@ -494,7 +494,7 @@ class TestAgentConnectDisconnect:
 
     def test_agent_disconnect_calls_arm_disconnect(self):
         """agent.disconnect() should call arm.disconnect()."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         arm = MockArm()
         agent = Agent(arm=arm)
@@ -504,14 +504,14 @@ class TestAgentConnectDisconnect:
 
     def test_agent_connect_no_arm(self):
         """agent.connect() should not crash when arm is None."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent()
         agent.connect()  # Should not raise
 
     def test_agent_disconnect_no_arm(self):
         """agent.disconnect() should not crash when arm is None."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         agent = Agent()
         agent.disconnect()  # Should not raise
@@ -527,7 +527,7 @@ class TestAgentContextManager:
 
     def test_agent_context_manager_connects_and_disconnects(self):
         """with Agent() as a: should connect on enter and disconnect on exit."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         arm = MockArm()
         with Agent(arm=arm) as a:
@@ -537,14 +537,14 @@ class TestAgentContextManager:
 
     def test_agent_context_manager_returns_agent(self):
         """The 'as' target should be the Agent instance."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         with Agent(arm=MockArm()) as a:
             assert isinstance(a, Agent)
 
     def test_agent_context_manager_disconnects_on_exception(self):
         """disconnect() should be called even if body raises an exception."""
-        from vector_os.core.agent import Agent
+        from vector_os_nano.core.agent import Agent
 
         arm = MockArm()
         try:

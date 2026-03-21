@@ -12,13 +12,13 @@ from unittest.mock import MagicMock, call, patch
 import numpy as np
 import pytest
 
-from vector_os.core.types import (
+from vector_os_nano.core.types import (
     BBox3D,
     CameraIntrinsics,
     Pose3D,
     TrackedObject,
 )
-from vector_os.perception.pipeline import PerceptionPipeline, _TRACKING_FRAME_STRIDE
+from vector_os_nano.perception.pipeline import PerceptionPipeline, _TRACKING_FRAME_STRIDE
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +240,7 @@ class TestTrackingLoopUpdates:
 class TestTrackAutoStartsLoop:
     def test_track_starts_background_thread(self):
         """Calling track() should automatically start the background thread."""
-        from vector_os.core.types import Detection
+        from vector_os_nano.core.types import Detection
         tracker = _make_tracker()
         pipeline = _make_pipeline(tracker=tracker)
 
@@ -258,7 +258,7 @@ class TestTrackAutoStartsLoop:
 
     def test_double_track_does_not_create_second_thread(self):
         """Calling track() twice must reuse the existing background thread."""
-        from vector_os.core.types import Detection
+        from vector_os_nano.core.types import Detection
         tracker = _make_tracker()
         pipeline = _make_pipeline(tracker=tracker)
 

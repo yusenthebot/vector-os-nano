@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from vector_os.cli.calibration_wizard import CalibrationWizard
+from vector_os_nano.cli.calibration_wizard import CalibrationWizard
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +63,7 @@ def test_wizard_add_point_list_input():
 
 def test_wizard_solve_with_enough_points():
     """Solving with 8+ points returns a Calibration and error stats."""
-    from vector_os.perception.calibration import Calibration
+    from vector_os_nano.perception.calibration import Calibration
 
     wiz = CalibrationWizard()
     rng = np.random.default_rng(0)
@@ -194,7 +194,7 @@ def test_wizard_warns_on_flat_z():
             warning_messages.append(record.getMessage())
 
     handler = _Handler(level=logging.WARNING)
-    wiz_logger = logging.getLogger("vector_os.cli.calibration_wizard")
+    wiz_logger = logging.getLogger("vector_os_nano.cli.calibration_wizard")
     wiz_logger.addHandler(handler)
     wiz_logger.setLevel(logging.WARNING)
     try:
@@ -213,7 +213,7 @@ def test_wizard_warns_on_flat_z():
 
 def test_wizard_textual_available_is_bool():
     """TEXTUAL_AVAILABLE is a bool (may be False if textual not installed)."""
-    from vector_os.cli import calibration_wizard
+    from vector_os_nano.cli import calibration_wizard
     assert isinstance(calibration_wizard.TEXTUAL_AVAILABLE, bool)
 
 
@@ -235,5 +235,5 @@ def test_wizard_no_import_error_without_textual(monkeypatch):
         return original_import(name, *args, **kwargs)
 
     # Just verify the module can be re-imported cleanly — import guard tested above
-    import vector_os.cli.calibration_wizard as cw
+    import vector_os_nano.cli.calibration_wizard as cw
     assert hasattr(cw, "TEXTUAL_AVAILABLE")

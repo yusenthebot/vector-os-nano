@@ -7,7 +7,7 @@ pip install vector-os-nano[all]
 ```
 
 ```python
-from vector_os import Agent, SO101
+from vector_os_nano import Agent, SO101
 
 arm = SO101(port="/dev/ttyACM0")
 agent = Agent(arm=arm, llm_api_key="sk-...")
@@ -83,7 +83,7 @@ The core SDK (arm driver, skills, LLM providers, world model) is fully compatibl
 ### Without LLM (direct skill execution)
 
 ```python
-from vector_os import Agent, SO101
+from vector_os_nano import Agent, SO101
 
 arm = SO101(port="/dev/ttyACM0")
 agent = Agent(arm=arm)  # no LLM key
@@ -99,7 +99,7 @@ Direct mode recognises skill names verbatim. No LLM call is made; the matching s
 ### With LLM (natural language)
 
 ```python
-from vector_os import Agent, SO101
+from vector_os_nano import Agent, SO101
 
 arm = SO101(port="/dev/ttyACM0")
 agent = Agent(arm=arm, llm_api_key="sk-ant-...")
@@ -117,7 +117,7 @@ The LLM (Claude by default) decomposes the request into a sequence of built-in s
 ### Context manager (auto-connect and disconnect)
 
 ```python
-from vector_os import Agent, SO101
+from vector_os_nano import Agent, SO101
 
 with Agent(arm=SO101(port="/dev/ttyACM0"), llm_api_key="sk-...") as agent:
     agent.execute("home")
@@ -128,9 +128,9 @@ with Agent(arm=SO101(port="/dev/ttyACM0"), llm_api_key="sk-...") as agent:
 ### Custom skills
 
 ```python
-from vector_os import Agent, SO101
-from vector_os.core.skill import SkillContext
-from vector_os.core.types import SkillResult
+from vector_os_nano import Agent, SO101
+from vector_os_nano.core.skill import SkillContext
+from vector_os_nano.core.types import SkillResult
 
 
 class WaveSkill:
@@ -286,7 +286,7 @@ The SO-101 is a 5-DOF open-source robot arm using Feetech STS3215 serial-bus ser
 Hand-eye calibration maps camera coordinates to robot base coordinates:
 
 ```python
-from vector_os.skills.calibration import load_calibration
+from vector_os_nano.skills.calibration import load_calibration
 cal = load_calibration("my_calibration.npy")
 ```
 

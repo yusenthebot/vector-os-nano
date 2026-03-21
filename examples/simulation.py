@@ -7,12 +7,12 @@ Requirements (future):
     pip install vector-os-nano[sim]
 
 Note:
-    This example will raise ImportError until vector_os.hardware.sim is
+    This example will raise ImportError until vector_os_nano.hardware.sim is
     implemented. Tracked in agents/devlog/tasks.md as T10/T11.
 """
 
 try:
-    from vector_os.hardware.sim import SimulatedArm
+    from vector_os_nano.hardware.sim import SimulatedArm
 except ImportError:
     print(
         "SimulatedArm is not yet available.\n"
@@ -21,7 +21,7 @@ except ImportError:
     )
     raise SystemExit(1)
 
-from vector_os import Agent
+from vector_os_nano import Agent
 
 # Create simulated arm (gui=True opens a PyBullet window)
 arm = SimulatedArm(gui=True)

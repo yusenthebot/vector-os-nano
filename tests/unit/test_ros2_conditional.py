@@ -1,7 +1,7 @@
 """Tests for ROS2 integration layer conditional import guard.
 
 These tests verify that:
-    1. `import vector_os.ros2` never crashes regardless of rclpy availability.
+    1. `import vector_os_nano.ros2` never crashes regardless of rclpy availability.
     2. `ROS2_AVAILABLE` is always a bool.
     3. If ROS2 is NOT available, node classes are NOT exported at package level.
     4. If ROS2 IS available, node classes ARE exported at package level.
@@ -22,12 +22,12 @@ import types
 
 
 def _reload_ros2_module() -> types.ModuleType:
-    """Force a fresh import of vector_os.ros2 by removing cached modules."""
+    """Force a fresh import of vector_os_nano.ros2 by removing cached modules."""
     # Remove cached submodules to allow re-evaluation of the guard
-    to_remove = [k for k in sys.modules if k.startswith("vector_os.ros2")]
+    to_remove = [k for k in sys.modules if k.startswith("vector_os_nano.ros2")]
     for key in to_remove:
         del sys.modules[key]
-    return importlib.import_module("vector_os.ros2")
+    return importlib.import_module("vector_os_nano.ros2")
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +36,7 @@ def _reload_ros2_module() -> types.ModuleType:
 
 
 class TestROS2ImportNoCrash:
-    """Importing vector_os.ros2 must never raise an exception."""
+    """Importing vector_os_nano.ros2 must never raise an exception."""
 
     def test_import_vector_os_ros2_no_crash(self) -> None:
         """Importing the ros2 sub-package must not raise."""
@@ -45,10 +45,10 @@ class TestROS2ImportNoCrash:
 
     def test_import_vector_os_top_level_no_crash(self) -> None:
         """Importing the top-level vector_os package must not raise."""
-        import vector_os  # noqa: F401
+        import vector_os_nano  # noqa: F401
 
     def test_reimport_is_safe(self) -> None:
-        """Re-importing vector_os.ros2 multiple times must not crash."""
+        """Re-importing vector_os_nano.ros2 multiple times must not crash."""
         for _ in range(3):
             mod = _reload_ros2_module()
             assert mod is not None
@@ -81,7 +81,7 @@ class TestROS2AvailableFlag:
 
 
 class TestROS2NodesGuardedWithoutROS2:
-    """When ROS2 is not installed, node classes must not be importable from vector_os.ros2."""
+    """When ROS2 is not installed, node classes must not be importable from vector_os_nano.ros2."""
 
     def _simulate_no_ros2(self) -> types.ModuleType:
         """Temporarily hide rclpy and reimport the ros2 module."""
@@ -144,7 +144,7 @@ class TestROS2NodeFiles:
     def _node_path(self, filename: str) -> str:
         import os
         base = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        return os.path.join(base, "vector_os", "ros2", "nodes", filename)
+        return os.path.join(base, "vector_os_nano", "ros2", "nodes", filename)
 
     def test_hardware_bridge_file_exists(self) -> None:
         import os
@@ -208,7 +208,7 @@ class TestROS2LaunchFile:
     def _launch_path(self) -> str:
         import os
         base = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        return os.path.join(base, "vector_os", "ros2", "launch", "nano.launch.py")
+        return os.path.join(base, "vector_os_nano", "ros2", "launch", "nano.launch.py")
 
     def test_launch_file_exists(self) -> None:
         import os

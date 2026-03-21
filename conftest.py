@@ -4,5 +4,5 @@
 import sys
 import os
 
-# Insert the repo root so `import vector_os` works in all test files
+# Insert the repo root so `import vector_os_nano` works in all test files
 sys.path.insert(0, os.path.dirname(__file__))

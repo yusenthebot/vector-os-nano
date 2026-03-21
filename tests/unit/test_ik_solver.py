@@ -1,4 +1,4 @@
-"""Unit tests for vector_os.hardware.so101.ik_solver — TDD RED phase.
+"""Unit tests for vector_os_nano.hardware.so101.ik_solver — TDD RED phase.
 
 Tests require pinocchio. If not installed, entire module is skipped.
 All tests use the SO-101 URDF from the known vector_ws location.
@@ -24,7 +24,7 @@ HOME_JOINTS = [-0.014, -1.238, 0.562, 0.858, 0.311]
 
 @pytest.fixture(scope="module")
 def ik():
-    from vector_os.hardware.so101.ik_solver import IKSolver
+    from vector_os_nano.hardware.so101.ik_solver import IKSolver
     return IKSolver(urdf_path=URDF_PATH)
 
 

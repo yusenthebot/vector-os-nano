@@ -4,12 +4,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from vector_os.perception.pointcloud import (
+from vector_os_nano.perception.pointcloud import (
     rgbd_to_pointcloud_fast,
     pointcloud_to_bbox3d_fast,
     remove_statistical_outliers,
 )
-from vector_os.core.types import CameraIntrinsics, BBox3D
+from vector_os_nano.core.types import CameraIntrinsics, BBox3D
 
 
 # ---------------------------------------------------------------------------

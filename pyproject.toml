@@ -89,11 +89,11 @@ dev = [
 ]
 
 [project.scripts]
-vector-os = "vector_os.cli.simple:main"
-vector-os-dashboard = "vector_os.cli.dashboard:main"
+vector-os = "vector_os_nano.cli.simple:main"
+vector-os-dashboard = "vector_os_nano.cli.dashboard:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["vector_os"]
+packages = ["vector_os_nano"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
