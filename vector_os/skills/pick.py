@@ -187,11 +187,7 @@ class PickSkill:
 
         # Step 3: Empirical X/Y offsets (from vector_ws hardware tuning)
         # These offsets absorb tip-to-link offset + servo errors + URDF inaccuracy
-        raw_y = base_pos[1]
-        if -0.03 < raw_y < 0.03:
-            base_pos[0] += x_offset + 0.02  # center: +2cm forward
-        else:
-            base_pos[0] += x_offset  # sides: no extra
+        base_pos[0] += x_offset + 0.02  # uniform +2cm forward (empirical)
 
         # Gripper asymmetry Y compensation (right jaw opens, left fixed)
         raw_y = base_pos[1] * y_scale
