@@ -185,10 +185,22 @@ class PickSkill:
         # Step 2: Apply z_offset (gripper height above table)
         base_pos[2] += z_offset
 
-        # Step 3: X/Y offsets (disabled for tuning — using raw calibrated position)
-        # TODO: re-enable after verifying raw calibration accuracy
-        base_pos[0] += x_offset  # x_offset defaults to 0
-        # No Y compensation — test raw calibration first
+        # Step 3: Empirical X/Y offsets (from vector_ws hardware tuning)
+        # These offsets absorb tip-to-link offset + servo errors + URDF inaccuracy
+        raw_y = base_pos[1]
+        if -0.03 < raw_y < 0.03:
+            base_pos[0] += x_offset + 0.02  # center: +2cm forward
+        else:
+            base_pos[0] += x_offset  # sides: no extra
+
+        # Gripper asymmetry Y compensation (right jaw opens, left fixed)
+        raw_y = base_pos[1] * y_scale
+        if raw_y > 0.02:
+            base_pos[1] = raw_y + 0.03 + raw_y * 0.3  # left: +3cm + 30% proportional
+        elif raw_y < -0.02:
+            base_pos[1] = raw_y + 0.01  # right: +1cm
+        else:
+            base_pos[1] = raw_y + 0.02  # center: +2cm
 
         logger.info(
             "[PICK] Raw base: (%.1f, %.1f, %.1f) cm, z_offset=%.0fcm, pre_grasp_h=%.0fcm",
@@ -212,59 +224,37 @@ class PickSkill:
                 ),
             )
 
-        # Step 6: Iterative tip-compensated IK
-        # IK solves for gripper_link, but we want gripper_tip at the target.
-        # Iterate: solve IK → FK tip → compute error → adjust target → re-solve
-        # until tip converges to target (max 5 iterations, 5mm threshold).
+        # Step 6: Simple IK — solve for gripper_link directly
+        # The calibration matrix + z_offset already account for real-world errors.
+        # Do NOT try tip compensation — the URDF model doesn't match the real arm
+        # accurately enough for model-based tip correction to help.
         current_joints = context.arm.get_joint_positions()
-        ik_solver = getattr(context.arm, '_ik_solver', None)
 
-        grasp_target_xy = np.array([base_pos[0], base_pos[1]])
-        grasp_z = base_pos[2]
-        ik_target = np.array([base_pos[0], base_pos[1], grasp_z])
+        # Pre-grasp position (higher Z)
+        pre_grasp_pos = base_pos.copy()
+        pre_grasp_pos[2] += pre_grasp_h
 
-        q_solution = context.arm.ik(tuple(ik_target), current_joints)
-        if q_solution is None:
-            return SkillResult(success=False, error_message="IK failed for grasp position")
-
-        if ik_solver is not None and hasattr(ik_solver, 'fk_gripper_tip'):
-            for iteration in range(5):
-                tip_pos, _ = ik_solver.fk_gripper_tip(list(q_solution))
-                tip_xy = np.array([tip_pos[0], tip_pos[1]])
-                error_xy = grasp_target_xy - tip_xy
-                error_mm = np.linalg.norm(error_xy) * 1000
-
-                logger.info(
-                    "[PICK] Tip iter %d: tip(%.1f,%.1f)cm target(%.1f,%.1f)cm err=%.1fmm",
-                    iteration, tip_xy[0]*100, tip_xy[1]*100,
-                    grasp_target_xy[0]*100, grasp_target_xy[1]*100, error_mm,
-                )
-
-                if error_mm < 5.0:  # converged
-                    break
-
-                # Adjust IK target: push link in the direction of the error
-                ik_target[0] += error_xy[0]
-                ik_target[1] += error_xy[1]
-                q_new = context.arm.ik(tuple(ik_target), list(q_solution))
-                if q_new is None:
-                    break  # can't improve further
-                q_solution = q_new
-        else:
-            logger.warning("[PICK] No tip FK available — using gripper_link position")
-
-        q_grasp = list(q_solution)
-
-        # Pre-grasp: same link XY as grasp solution, higher Z
-        link_pos_final, _ = ik_solver.fk(q_grasp) if ik_solver else (ik_target, None)
-        pre_grasp_pos = np.array([link_pos_final[0], link_pos_final[1], grasp_z + pre_grasp_h])
-
-        q_pregrasp_result = context.arm.ik(tuple(pre_grasp_pos), q_grasp)
+        q_pregrasp_result = context.arm.ik(
+            (pre_grasp_pos[0], pre_grasp_pos[1], pre_grasp_pos[2]),
+            current_joints,
+        )
         if q_pregrasp_result is None:
-            q_pregrasp_result = context.arm.ik(tuple(pre_grasp_pos), current_joints)
-            if q_pregrasp_result is None:
-                return SkillResult(success=False, error_message="IK failed for pre-grasp")
+            return SkillResult(success=False, error_message="IK failed for pre-grasp")
         q_pregrasp = list(q_pregrasp_result)
+
+        # Grasp position (warm-started from pre-grasp for minimal joint change)
+        q_grasp_result = context.arm.ik(
+            (base_pos[0], base_pos[1], base_pos[2]),
+            q_pregrasp,
+        )
+        if q_grasp_result is None:
+            return SkillResult(success=False, error_message="IK failed for grasp position")
+        q_grasp = list(q_grasp_result)
+
+        logger.info(
+            "[PICK] IK solved: pre-grasp Z=%.1fcm, grasp Z=%.1fcm",
+            pre_grasp_pos[2] * 100, base_pos[2] * 100,
+        )
 
         # Step 8: Open gripper
         logger.info("[PICK] Opening gripper ...")
