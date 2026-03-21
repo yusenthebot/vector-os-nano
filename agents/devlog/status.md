@@ -10,8 +10,8 @@ All 4 waves complete. Hardware integration fixes applied by Beta: pick.py percep
 
 | Agent | Status      | Task      | Tests  | Branch                                    |
 |-------|-------------|-----------|--------|-------------------------------------------|
-| Alpha | DONE        | T1,T4,T7,T10,T12 + perception-hw-fixes | 255 | feat/alpha-textual-dashboard (latest) |
-| Beta  | DONE        | T2,T5,T8,T11 + T-HW-INT-FIX | 241 | feat/beta-hw-integration-fix            |
+| Alpha | DONE        | llm-prompt-fix: action-oriented prompt, history reset, gripper cmds | 669/670 | feat/alpha-llm-prompt-fix |
+| Beta  | DONE        | continuous-background-edgetam-tracking | 695+26 | feat/beta-continuous-tracking        |
 | Gamma | DONE        | perception-integration | 662    | feat/gamma-perception-integration         |
 
 **Running Total:** 670/670 tests passing (100% success rate)

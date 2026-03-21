@@ -206,11 +206,9 @@ class Agent:
         if self._llm is None:
             return self._execute_direct(instruction)
 
-        # Track conversation for multi-turn context
-        self._conversation_history.append({"role": "user", "content": instruction})
-        # Keep last 20 messages
-        if len(self._conversation_history) > 20:
-            self._conversation_history = self._conversation_history[-20:]
+        # Each execute() call starts a fresh one-shot context so that previous
+        # failures do not pollute the planner's reasoning for the new command.
+        self._conversation_history = [{"role": "user", "content": instruction}]
 
         max_retries: int = (
             self._config.get("agent", {}).get("max_planning_retries", 3)
@@ -352,8 +350,44 @@ class Agent:
         parts = instruction.strip().lower().split(None, 1)
         command = parts[0] if parts else ""
         arg = parts[1] if len(parts) > 1 else ""
+        full_cmd = instruction.strip().lower()
 
         context = self._build_context()
+
+        # ---- Gripper shorthand commands (no LLM required) -------------------
+        _CLOSE_PATTERNS = {"close", "close grip", "close gripper", "grip", "grasp"}
+        _OPEN_PATTERNS = {"open", "open grip", "open gripper", "release", "drop"}
+        if full_cmd in _CLOSE_PATTERNS or (command == "close" and "grip" in full_cmd):
+            if self._gripper is not None:
+                ok = self._gripper.close()
+                return ExecutionResult(
+                    success=bool(ok),
+                    status="completed" if ok else "failed",
+                    steps_completed=1 if ok else 0,
+                    steps_total=1,
+                    failure_reason=None if ok else "Gripper close failed",
+                )
+            return ExecutionResult(
+                success=False,
+                status="failed",
+                failure_reason="No gripper configured",
+            )
+        if full_cmd in _OPEN_PATTERNS or (command == "open" and "grip" in full_cmd):
+            if self._gripper is not None:
+                ok = self._gripper.open()
+                return ExecutionResult(
+                    success=bool(ok),
+                    status="completed" if ok else "failed",
+                    steps_completed=1 if ok else 0,
+                    steps_total=1,
+                    failure_reason=None if ok else "Gripper open failed",
+                )
+            return ExecutionResult(
+                success=False,
+                status="failed",
+                failure_reason="No gripper configured",
+            )
+
         skill = self._skill_registry.get(command)
 
         if skill is None:

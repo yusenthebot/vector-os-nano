@@ -302,6 +302,11 @@ def main() -> None:
             stop_camera.set()
         if camera_thread is not None:
             camera_thread.join(timeout=2.0)
+        if perception is not None and hasattr(perception, "stop_continuous_tracking"):
+            try:
+                perception.stop_continuous_tracking()
+            except Exception as exc:
+                logger.warning("Error stopping background tracking: %s", exc)
         if arm is not None:
             try:
                 arm.disconnect()

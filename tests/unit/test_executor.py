@@ -179,12 +179,12 @@ class TestPostconditions:
     def test_postcondition_failure_on_success_skill(self, world_model):
         from vector_os.core.executor import TaskExecutor
         # Skill succeeds but world model doesn't have the postcondition satisfied
-        skill = make_skill("pick", success=True,
+        skill = make_skill("custom_grab", success=True,
                            postconditions=["gripper_holding_any"])
         registry = make_registry(skill)
         context = make_context(world_model)
-        # postcondition: gripper_holding_any — but we don't update world model
-        step = make_step("s0", "pick", postconditions=["gripper_holding_any"])
+        # postcondition: gripper_holding_any — but custom_grab has no auto-effects
+        step = make_step("s0", "custom_grab", postconditions=["gripper_holding_any"])
         plan = make_plan([step])
 
         result = TaskExecutor().execute(plan, registry, context)

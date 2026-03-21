@@ -18,6 +18,7 @@ Performance constants from track_3d.py:
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from threading import Lock
 from typing import Optional
@@ -46,6 +47,10 @@ _BBOX_MAX_POINTS = 2000
 _TRACKING_TIMEOUT_S = 20.0
 _MASK_OPEN_KERNEL_SIZE = 5
 _MASK_ERODE_KERNEL_SIZE = 7
+
+# Background tracking loop: process every Nth frame for 3D to reduce GPU load.
+# At 20fps camera rate, stride=4 gives 5Hz 3D updates (plenty for pick & place).
+_TRACKING_FRAME_STRIDE = 4
 
 
 class PerceptionPipeline:
@@ -93,6 +98,10 @@ class PerceptionPipeline:
         # Exposed for camera viewer overlay (read by run.py camera thread)
         self._last_detections: list[Detection] = []
         self._last_tracked: list[TrackedObject] = []
+
+        # Background tracking thread state
+        self._tracking_thread: threading.Thread | None = None
+        self._stop_tracking: threading.Event | None = None
 
         # Synthetic frame support (for testing without hardware)
         self._synthetic_color: np.ndarray | None = None
@@ -232,6 +241,11 @@ class PerceptionPipeline:
         with self._lock:
             self._tracked_objects = tracked_objects
             self._last_tracked = tracked_objects
+
+        # Mirror track_3d.py: start continuous background loop so the camera
+        # viewer overlay updates at ~20fps without explicit update() calls.
+        self.start_continuous_tracking()
+
         return tracked_objects
 
     def get_tracked_objects(self) -> list[TrackedObject]:
@@ -282,6 +296,146 @@ class PerceptionPipeline:
             self._tracked_objects = tracked_objects
             self._last_tracked = tracked_objects
         return tracked_objects
+
+    # ------------------------------------------------------------------
+    # Continuous background tracking (mirrors track_3d.py _color_callback loop)
+    # ------------------------------------------------------------------
+
+    def start_continuous_tracking(self) -> None:
+        """Start background thread that continuously processes camera frames through EdgeTAM.
+
+        Updates _last_tracked with fresh masks/bboxes at ~15-20fps.
+        Call after tracker has been initialized via track().
+
+        The thread is daemon=True so it dies automatically with the main process.
+        Calling this method when a thread is already running is a no-op.
+        """
+        if self._tracking_thread is not None and self._tracking_thread.is_alive():
+            return  # already running
+        self._stop_tracking = threading.Event()
+        self._tracking_thread = threading.Thread(
+            target=self._tracking_loop, daemon=True, name="bg-edgetam-tracking"
+        )
+        self._tracking_thread.start()
+        logger.info("Background tracking thread started")
+
+    def stop_continuous_tracking(self) -> None:
+        """Stop the background tracking thread and wait for it to exit (max 2s)."""
+        if self._stop_tracking is not None:
+            self._stop_tracking.set()
+        if self._tracking_thread is not None:
+            self._tracking_thread.join(timeout=2.0)
+            self._tracking_thread = None
+        self._stop_tracking = None
+        logger.info("Background tracking thread stopped")
+
+    def _tracking_loop(self) -> None:
+        """Background thread: process frames through EdgeTAM, update tracked objects.
+
+        Design mirrors track_3d.py _color_callback / rgbd_callback:
+          - Every color frame triggers process_image() on EdgeTAM.
+          - 3D projection runs every _TRACKING_FRAME_STRIDE frames to reduce GPU load.
+          - _last_tracked is updated atomically under _lock after each batch.
+        """
+        logger.info("Background tracking loop running")
+        frame_counter = 0
+
+        while not self._stop_tracking.is_set():  # type: ignore[union-attr]
+            try:
+                if self._tracker is None or not self._tracker.is_tracking():  # type: ignore[union-attr]
+                    time.sleep(0.1)
+                    continue
+
+                color = self.get_color_frame()
+                depth = self.get_depth_frame()
+                if color is None or depth is None:
+                    time.sleep(0.05)
+                    continue
+
+                # Process through EdgeTAM — propagates masks to current frame
+                raw_tracks = self._tracker.process_image(color)  # type: ignore[union-attr]
+                if not raw_tracks:
+                    time.sleep(0.05)
+                    continue
+
+                frame_counter += 1
+                do_3d = (frame_counter % _TRACKING_FRAME_STRIDE == 0) or (frame_counter == 1)
+
+                # Preserve labels from current tracked objects
+                with self._lock:
+                    label_map = {t.track_id: t.label for t in self._tracked_objects}
+
+                labels = [label_map.get(r.get("track_id", 0), "object") for r in raw_tracks]
+                intrinsics = self.get_intrinsics()
+
+                if do_3d:
+                    tracked = self._build_tracked_objects(
+                        raw_tracks, labels, color, depth, intrinsics
+                    )
+                else:
+                    # Lightweight update: refresh 2D bbox/mask without 3D projection.
+                    # Reuses existing pose/bbox_3d from the last full 3D frame.
+                    with self._lock:
+                        old_map = {t.track_id: t for t in self._tracked_objects}
+                    tracked = self._build_tracked_objects_2d(
+                        raw_tracks, labels, old_map
+                    )
+
+                with self._lock:
+                    self._tracked_objects = tracked
+                    self._last_tracked = tracked
+
+            except Exception as exc:
+                logger.debug("Tracking loop error: %s", exc)
+                time.sleep(0.1)
+
+        logger.info("Background tracking loop exited")
+
+    def _build_tracked_objects_2d(
+        self,
+        raw_tracks: list[dict],
+        labels: list[str],
+        old_map: dict[int, TrackedObject],
+    ) -> list[TrackedObject]:
+        """Lightweight frame update: refresh mask/bbox_2d, reuse existing 3D data.
+
+        Used on non-stride frames to avoid repeated GPU pointcloud projection.
+        The existing pose and bbox_3d from the previous full frame are carried forward.
+        """
+        result: list[TrackedObject] = []
+        for i, raw in enumerate(raw_tracks):
+            track_id = int(raw.get("track_id", i + 1))
+            mask = raw.get("mask")
+            bbox_2d_raw = raw.get("bbox", [0, 0, 0, 0])
+            score = float(raw.get("score", 1.0))
+            label = labels[i] if i < len(labels) else "object"
+
+            bbox_2d: tuple[float, float, float, float] = (
+                float(bbox_2d_raw[0]),
+                float(bbox_2d_raw[1]),
+                float(bbox_2d_raw[2]),
+                float(bbox_2d_raw[3]),
+            )
+
+            refined_mask: np.ndarray | None = None
+            if mask is not None:
+                refined_mask = self._refine_mask(mask)
+
+            # Carry forward 3D data from previous frame for this track_id
+            old = old_map.get(track_id)
+            pose = old.pose if old is not None else None
+            bbox_3d = old.bbox_3d if old is not None else None
+
+            result.append(TrackedObject(
+                track_id=track_id,
+                label=label,
+                bbox_2d=bbox_2d,
+                pose=pose,
+                bbox_3d=bbox_3d,
+                confidence=score,
+                mask=refined_mask,
+            ))
+        return result
 
     # ------------------------------------------------------------------
     # Private helpers
