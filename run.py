@@ -235,8 +235,39 @@ def main() -> None:
         import threading
         import cv2
         import numpy as np
+        from PIL import Image as PILImage, ImageDraw, ImageFont
 
         stop_camera = threading.Event()
+
+        # Load a font that supports Chinese
+        _pil_font = None
+        for font_path in [
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        ]:
+            if os.path.exists(font_path):
+                try:
+                    _pil_font = ImageFont.truetype(font_path, 16)
+                    break
+                except Exception:
+                    pass
+        if _pil_font is None:
+            try:
+                _pil_font = ImageFont.load_default()
+            except Exception:
+                pass
+
+        def _put_text_pil(img, text, pos, color=(0, 255, 0)):
+            """Draw text with PIL (supports Unicode/Chinese)."""
+            if _pil_font is None:
+                cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                return img
+            pil_img = PILImage.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            draw = ImageDraw.Draw(pil_img)
+            draw.text(pos, text, font=_pil_font, fill=color)
+            return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
         def _camera_loop():
             """Background thread: show live camera + detection overlay."""
@@ -258,18 +289,16 @@ def main() -> None:
                             if obj.bbox_2d:
                                 x1, y1, x2, y2 = [int(v) for v in obj.bbox_2d]
                                 cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                                label = obj.label
+                                lbl = obj.label
                                 if obj.pose:
-                                    label += f" ({obj.pose.x:.2f},{obj.pose.y:.2f},{obj.pose.z:.2f})"
-                                cv2.putText(display, label, (x1, y1 - 8),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                                    lbl += f" ({obj.pose.x:.2f},{obj.pose.y:.2f},{obj.pose.z:.2f})"
+                                display = _put_text_pil(display, lbl, (x1, max(y1 - 20, 0)))
                     # Fallback: show VLM detections only if no tracking active
                     elif hasattr(perception, '_last_detections') and perception._last_detections:
                         for det in perception._last_detections:
                             x1, y1, x2, y2 = [int(v) for v in det.bbox]
                             cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                            cv2.putText(display, det.label, (x1, y1 - 8),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                            display = _put_text_pil(display, det.label, (x1, max(y1 - 20, 0)))
 
                     cv2.imshow("Vector OS - Camera", display)
                     key = cv2.waitKey(33)  # ~30fps

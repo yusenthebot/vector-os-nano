@@ -195,7 +195,8 @@ class WorldModel:
         p = predicate.strip()
 
         if p == "gripper_empty":
-            return self._robot.gripper_state == "open" and self._robot.held_object is None
+            # Empty = not holding anything. Closed-but-empty counts as empty.
+            return self._robot.held_object is None
 
         if p == "gripper_holding_any":
             return self._robot.held_object is not None
