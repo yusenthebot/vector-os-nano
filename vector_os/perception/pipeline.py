@@ -483,16 +483,17 @@ class PerceptionPipeline:
                     mask=refined_mask,
                 )
                 if len(points) >= 4:
-                    sampled = self._sample_points(points, self._bbox_max_points)
+                    # 1. Remove statistical outliers (depth noise, edge bleeding)
+                    clean = self._remove_depth_outliers(points)
+                    if len(clean) < 4:
+                        clean = points
+
+                    sampled = self._sample_points(clean, self._bbox_max_points)
                     bbox_3d = pointcloud_to_bbox3d_fast(sampled)
-                    # Use median of pointcloud for grasp center (more robust than bbox center)
-                    # Median resists outliers from mask edges and depth noise
-                    median_xyz = np.median(sampled, axis=0)
-                    pose = Pose3D(
-                        x=float(median_xyz[0]),
-                        y=float(median_xyz[1]),
-                        z=float(median_xyz[2]),
-                    )
+
+                    # 2. Compute robust centroid using trimmed mean
+                    # Trim 10% extremes on each axis to remove edge artifacts
+                    pose = self._robust_centroid(sampled)
 
             result.append(TrackedObject(
                 track_id=track_id,
@@ -528,7 +529,7 @@ class PerceptionPipeline:
             cv2.MORPH_ELLIPSE,
             (_MASK_ERODE_KERNEL_SIZE, _MASK_ERODE_KERNEL_SIZE),
         )
-        mask_u8 = cv2.erode(mask_u8, erode_kernel, iterations=1)
+        mask_u8 = cv2.erode(mask_u8, erode_kernel, iterations=2)  # 2x erode for cleaner edges
         return (mask_u8 > 0).astype(np.uint8)
 
     @staticmethod
@@ -538,3 +539,56 @@ class PerceptionPipeline:
             return points
         idx = np.linspace(0, len(points) - 1, num=max_points, dtype=np.int32)
         return points[idx]
+
+    @staticmethod
+    def _remove_depth_outliers(points: np.ndarray) -> np.ndarray:
+        """Remove depth outliers using IQR on Z axis.
+
+        Mask edges produce depth bleed — points that are far behind or in front
+        of the actual object surface. IQR filtering removes these.
+        """
+        if len(points) < 10:
+            return points
+        z = points[:, 2]
+        q1, q3 = np.percentile(z, [25, 75])
+        iqr = q3 - q1
+        if iqr < 1e-6:
+            return points
+        lower = q1 - 1.5 * iqr
+        upper = q3 + 1.5 * iqr
+        mask = (z >= lower) & (z <= upper)
+        filtered = points[mask]
+        return filtered if len(filtered) >= 4 else points
+
+    @staticmethod
+    def _robust_centroid(points: np.ndarray) -> Pose3D:
+        """Compute centroid using trimmed mean (10% trim on each axis).
+
+        More robust than median or mean:
+        - Mean is sensitive to outliers
+        - Median ignores point density
+        - Trimmed mean balances both: removes 10% extremes, averages the rest
+        """
+        if len(points) < 10:
+            c = np.median(points, axis=0)
+            return Pose3D(x=float(c[0]), y=float(c[1]), z=float(c[2]))
+
+        trim_frac = 0.10
+        n = len(points)
+        trim_n = max(1, int(n * trim_frac))
+
+        cx, cy, cz = 0.0, 0.0, 0.0
+        for axis in range(3):
+            sorted_vals = np.sort(points[:, axis])
+            trimmed = sorted_vals[trim_n: n - trim_n]
+            if len(trimmed) == 0:
+                trimmed = sorted_vals
+            val = float(np.mean(trimmed))
+            if axis == 0:
+                cx = val
+            elif axis == 1:
+                cy = val
+            else:
+                cz = val
+
+        return Pose3D(x=cx, y=cy, z=cz)
