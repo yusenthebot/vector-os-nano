@@ -17,8 +17,16 @@ import sys
 import logging
 
 # Suppress Qt font warnings from OpenCV
-os.environ["QT_LOGGING_RULES"] = "qt.qpa.fonts=false"
+os.environ["QT_LOGGING_RULES"] = "*=false"
 os.environ["OPENCV_LOG_LEVEL"] = "ERROR"
+
+# Pre-import cv2 with stderr suppressed to catch Qt font warnings
+_stderr = sys.stderr
+try:
+    sys.stderr = open(os.devnull, "w")
+    import cv2 as _cv2_preload  # noqa: F401 — triggers Qt init
+finally:
+    sys.stderr = _stderr
 
 logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
 logger = logging.getLogger("vector_os")
@@ -273,98 +281,71 @@ def main() -> None:
             draw.text(pos, text, font=_pil_font, fill=color)
             return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
-        def _camera_loop():
-            """Background thread: show live camera + detection overlay."""
+        def _viewer_loop():
+            """Single background thread: RGB + depth side by side."""
             cam = perception._camera
-            cv2.namedWindow("Vector OS - Camera", cv2.WINDOW_NORMAL)
-            cv2.resizeWindow("Vector OS - Camera", 640, 480)
+            cv2.namedWindow("Vector OS", cv2.WINDOW_NORMAL)
+            cv2.resizeWindow("Vector OS", 1280, 480)
 
             while not stop_camera.is_set():
                 try:
                     color = cam.get_color_frame()
-                    if color is None:
+                    depth = cam.get_depth_frame()
+                    if color is None or depth is None:
                         continue
 
-                    display = color.copy()
-
-                    # Draw tracked objects (live EdgeTAM bounding boxes)
+                    # --- Left: RGB + tracking overlay ---
+                    rgb_display = color.copy()
                     if hasattr(perception, '_last_tracked') and perception._last_tracked:
                         for obj in perception._last_tracked:
                             if obj.bbox_2d:
                                 x1, y1, x2, y2 = [int(v) for v in obj.bbox_2d]
-                                cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                                cv2.rectangle(rgb_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
                                 lbl = obj.label
                                 if obj.pose:
                                     lbl += f" ({obj.pose.x:.2f},{obj.pose.y:.2f},{obj.pose.z:.2f})"
-                                display = _put_text_pil(display, lbl, (x1, max(y1 - 20, 0)))
-                    # Fallback: show VLM detections only if no tracking active
+                                rgb_display = _put_text_pil(rgb_display, lbl, (x1, max(y1 - 20, 0)))
                     elif hasattr(perception, '_last_detections') and perception._last_detections:
                         for det in perception._last_detections:
                             x1, y1, x2, y2 = [int(v) for v in det.bbox]
-                            cv2.rectangle(display, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                            display = _put_text_pil(display, det.label, (x1, max(y1 - 20, 0)))
+                            cv2.rectangle(rgb_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                            rgb_display = _put_text_pil(rgb_display, det.label, (x1, max(y1 - 20, 0)))
 
-                    cv2.imshow("Vector OS - Camera", display)
-                    key = cv2.waitKey(33)  # ~30fps
-                    if key == 27:  # ESC
+                    # --- Right: Depth colormap + mask + centroid ---
+                    depth_f = np.clip(depth.astype(np.float32), 0, 500)
+                    depth_u8 = (depth_f / 500.0 * 255).astype(np.uint8)
+                    depth_colored = cv2.applyColorMap(depth_u8, cv2.COLORMAP_JET)
+
+                    if hasattr(perception, '_last_tracked') and perception._last_tracked:
+                        for obj in perception._last_tracked:
+                            if obj.mask is not None and obj.mask.shape == depth_colored.shape[:2]:
+                                contours, _ = cv2.findContours(
+                                    obj.mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                                )
+                                cv2.drawContours(depth_colored, contours, -1, (255, 255, 255), 2)
+                            if obj.pose and obj.bbox_2d:
+                                cx = int((obj.bbox_2d[0] + obj.bbox_2d[2]) / 2)
+                                cy = int((obj.bbox_2d[1] + obj.bbox_2d[3]) / 2)
+                                cv2.circle(depth_colored, (cx, cy), 6, (0, 255, 0), -1)
+                                cv2.circle(depth_colored, (cx, cy), 8, (255, 255, 255), 2)
+                                info = f"{obj.pose.x:.3f},{obj.pose.y:.3f},{obj.pose.z:.3f}"
+                                cv2.putText(depth_colored, info, (cx + 10, cy),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+                    # --- Combine side by side ---
+                    combined = np.hstack([rgb_display, depth_colored])
+                    cv2.imshow("Vector OS", combined)
+                    key = cv2.waitKey(33)
+                    if key == 27:
                         break
                 except Exception:
                     pass
 
             cv2.destroyAllWindows()
 
-        def _depth_loop():
-            """Background thread: show depth + pointcloud projection overlay."""
-            cam = perception._camera
-            cv2.namedWindow("Vector OS - Depth/Pointcloud", cv2.WINDOW_NORMAL)
-            cv2.resizeWindow("Vector OS - Depth/Pointcloud", 640, 480)
-
-            while not stop_camera.is_set():
-                try:
-                    depth = cam.get_depth_frame()
-                    color = cam.get_color_frame()
-                    if depth is None or color is None:
-                        continue
-
-                    # Normalize depth for display (0-255)
-                    depth_display = depth.copy().astype(np.float32)
-                    depth_display = np.clip(depth_display, 0, 500)  # 0-50cm range
-                    depth_display = (depth_display / 500.0 * 255).astype(np.uint8)
-                    depth_colored = cv2.applyColorMap(depth_display, cv2.COLORMAP_JET)
-
-                    # Overlay tracked object mask + centroid
-                    if hasattr(perception, '_last_tracked') and perception._last_tracked:
-                        for obj in perception._last_tracked:
-                            # Draw mask outline on depth
-                            if obj.mask is not None and obj.mask.shape == depth_colored.shape[:2]:
-                                contours, _ = cv2.findContours(
-                                    obj.mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-                                )
-                                cv2.drawContours(depth_colored, contours, -1, (255, 255, 255), 2)
-
-                            # Draw centroid (median point projected to 2D)
-                            if obj.pose and obj.bbox_2d:
-                                cx = int((obj.bbox_2d[0] + obj.bbox_2d[2]) / 2)
-                                cy = int((obj.bbox_2d[1] + obj.bbox_2d[3]) / 2)
-                                cv2.circle(depth_colored, (cx, cy), 6, (0, 255, 0), -1)
-                                cv2.circle(depth_colored, (cx, cy), 8, (255, 255, 255), 2)
-                                # Show 3D coordinates
-                                info = f"{obj.pose.x:.3f},{obj.pose.y:.3f},{obj.pose.z:.3f}"
-                                cv2.putText(depth_colored, info, (cx + 10, cy),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-
-                    cv2.imshow("Vector OS - Depth/Pointcloud", depth_colored)
-                    cv2.waitKey(33)
-                except Exception:
-                    pass
-
-            cv2.destroyWindow("Vector OS - Depth/Pointcloud")
-
-        camera_thread = threading.Thread(target=_camera_loop, daemon=True)
-        depth_thread = threading.Thread(target=_depth_loop, daemon=True)
+        camera_thread = threading.Thread(target=_viewer_loop, daemon=True)
         camera_thread.start()
-        depth_thread.start()
-        print("Camera + Depth viewers started (ESC to close)")
+        print("Viewer started: RGB + Depth side-by-side (ESC to close)")
 
     # -----------------------------------------------------------------------
     # CLI
