@@ -314,3 +314,146 @@ def test_dashboard_log_method_no_crash():
 def test_textual_available_flag():
     from vector_os_nano.cli.dashboard import TEXTUAL_AVAILABLE
     assert TEXTUAL_AVAILABLE is True
+
+
+# ---------------------------------------------------------------------------
+# T21 — Camera tab: #camera-rgb and #camera-depth widgets present
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_camera_tab_exists():
+    from vector_os_nano.cli.dashboard import DashboardApp
+    from textual.widgets import Static
+    app = DashboardApp()
+    async with app.run_test() as pilot:
+        rgb_panel = app.query_one("#camera-rgb", Static)
+        depth_panel = app.query_one("#camera-depth", Static)
+        assert rgb_panel is not None
+        assert depth_panel is not None
+
+
+# ---------------------------------------------------------------------------
+# T22 — F5 key switches to camera tab
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_dashboard_f5_tab_switch():
+    from vector_os_nano.cli.dashboard import DashboardApp
+    from textual.widgets import TabbedContent
+    app = DashboardApp()
+    async with app.run_test() as pilot:
+        await pilot.press("f5")
+        tc = app.query_one(TabbedContent)
+        assert tc.active == "camera"
+
+
+# ---------------------------------------------------------------------------
+# T23 — F5 and F6 bindings present in BINDINGS
+# ---------------------------------------------------------------------------
+
+def test_dashboard_camera_bindings():
+    from vector_os_nano.cli.dashboard import DashboardApp
+    keys = {b.key for b in DashboardApp.BINDINGS}
+    assert "f5" in keys
+    assert "f6" in keys
+
+
+# ---------------------------------------------------------------------------
+# T24 — action_open_fullscreen_camera logs warning when no agent
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_fullscreen_camera_no_agent():
+    from vector_os_nano.cli.dashboard import DashboardApp
+    app = DashboardApp()
+    async with app.run_test() as pilot:
+        # Should not raise; logs a yellow warning instead
+        app.action_open_fullscreen_camera()
+        from textual.widgets import RichLog
+        log_view = app.query_one("#log-view", RichLog)
+        assert log_view is not None
+
+
+# ---------------------------------------------------------------------------
+# T25 — logo banner widget present after mount
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_logo_banner_present():
+    from vector_os_nano.cli.dashboard import DashboardApp
+    app = DashboardApp()
+    async with app.run_test() as pilot:
+        banner = app.query_one("#logo-banner")
+        assert banner is not None
+
+
+# ---------------------------------------------------------------------------
+# T26 — command input present and not docked (dock fix)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_command_input_present():
+    from vector_os_nano.cli.dashboard import DashboardApp
+    from textual.widgets import Input
+    app = DashboardApp()
+    async with app.run_test() as pilot:
+        inp = app.query_one("#command-input", Input)
+        assert inp is not None
+
+
+# ---------------------------------------------------------------------------
+# T27 — action_focus_command does not crash
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_focus_command_action():
+    from vector_os_nano.cli.dashboard import DashboardApp
+    app = DashboardApp()
+    async with app.run_test() as pilot:
+        # Must not raise
+        app.action_focus_command()
+
+
+# ---------------------------------------------------------------------------
+# T28 — connected agent shows green dot in status output
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_status_dots_green():
+    from vector_os_nano.cli.dashboard import DashboardApp
+    from unittest.mock import MagicMock
+    agent = _make_mock_agent()
+    agent._arm = MagicMock()
+    agent._perception = MagicMock()
+    agent._llm = MagicMock()
+    app = DashboardApp(agent=agent)
+    async with app.run_test() as pilot:
+        status_text = app._render_status()
+        assert "[green]●[/green]" in status_text
+
+
+# ---------------------------------------------------------------------------
+# T29 — last-result widget present on Dashboard tab
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_last_result_widget_present():
+    from vector_os_nano.cli.dashboard import DashboardApp
+    from textual.widgets import Static
+    app = DashboardApp()
+    async with app.run_test() as pilot:
+        widget = app.query_one("#last-result", Static)
+        assert widget is not None
+
+
+# ---------------------------------------------------------------------------
+# T25 — _update_camera_panel is a no-op when agent is None
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_camera_panel_no_agent_no_crash():
+    from vector_os_nano.cli.dashboard import DashboardApp
+    app = DashboardApp()
+    async with app.run_test() as pilot:
+        # Calling directly must not raise
+        app._update_camera_panel()

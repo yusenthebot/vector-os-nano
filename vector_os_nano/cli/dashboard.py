@@ -38,6 +38,32 @@ logger = logging.getLogger(__name__)
 
 _VERSION = "0.1.0"
 
+# ---------------------------------------------------------------------------
+# ASCII logo — Rich markup, teal color matching Catppuccin Mocha palette
+# ---------------------------------------------------------------------------
+
+_LOGO_RICH = """\
+[bold #00b4b4]██╗   ██╗███████╗ ██████╗████████╗ ██████╗ ██████╗ [/bold #00b4b4]
+[bold #00b4b4]██║   ██║██╔════╝██╔════╝╚══██╔══╝██╔═══██╗██╔══██╗[/bold #00b4b4]
+[bold #00b4b4]██║   ██║█████╗  ██║        ██║   ██║   ██║██████╔╝[/bold #00b4b4]
+[bold #00b4b4]╚██╗ ██╔╝██╔══╝  ██║        ██║   ██║   ██║██╔══██╗[/bold #00b4b4]
+[bold #00b4b4] ╚████╔╝ ███████╗╚██████╗   ██║   ╚██████╔╝██║  ██║[/bold #00b4b4]
+[bold #00b4b4]  ╚═══╝  ╚══════╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝[/bold #00b4b4]
+[dim]           O S   N A N O  —  v0.1.0[/dim]"""
+
+# Bar width for joint angle visualization
+_BAR_WIDTH = 16
+
+# Joint rad ranges (from joint_config.py — duplicated to avoid hardware import)
+_JOINT_RANGES: dict[str, tuple[float, float]] = {
+    "shoulder_pan":  (-1.91986,  1.91986),
+    "shoulder_lift": (-1.74533,  1.74533),
+    "elbow_flex":    (-1.69,     1.69),
+    "wrist_flex":    (-1.65806,  1.65806),
+    "wrist_roll":    (-2.74385,  2.84121),
+    "gripper":       (-1.0,      1.74533),
+}
+
 
 # ---------------------------------------------------------------------------
 # Logging bridge: routes Python logging → RichLog widget
@@ -101,6 +127,12 @@ if TEXTUAL_AVAILABLE:
             background: #181825;
             color: #6c7086;
         }
+        #logo-banner {
+            text-align: center;
+            height: auto;
+            max-height: 9;
+            padding: 0 1;
+        }
         TabbedContent {
             height: 1fr;
         }
@@ -138,6 +170,13 @@ if TEXTUAL_AVAILABLE:
             padding: 0 1;
             margin-bottom: 1;
         }
+        #last-result {
+            height: auto;
+            min-height: 2;
+            border: solid #585b70;
+            padding: 0 1;
+            margin-bottom: 1;
+        }
         #joint-panel {
             height: auto;
             min-height: 8;
@@ -167,10 +206,15 @@ if TEXTUAL_AVAILABLE:
             border: solid #585b70;
         }
         #command-input {
-            dock: bottom;
             height: 3;
             border: solid #45475a;
             background: #181825;
+        }
+        #camera-rgb, #camera-depth {
+            width: 1fr;
+            height: 1fr;
+            border: solid #585b70;
+            overflow: hidden;
         }
         Button {
             margin: 0 1;
@@ -190,14 +234,21 @@ if TEXTUAL_AVAILABLE:
             Binding("f2", "switch_tab('log')", "Log"),
             Binding("f3", "switch_tab('skills')", "Skills"),
             Binding("f4", "switch_tab('world')", "World"),
+            Binding("f5", "switch_tab('camera')", "Camera"),
+            Binding("f6", "open_fullscreen_camera", "Fullscreen Cam"),
             Binding("ctrl+e", "estop", "E-STOP"),
             Binding("ctrl+c", "quit", "Quit"),
+            Binding("slash", "focus_command", "Command"),
+            Binding("escape", "focus_command", "Command"),
         ]
 
         def __init__(self, agent: Any = None) -> None:
             super().__init__()
             self._agent = agent
             self._log_handler: _RichLogHandler | None = None
+            self._current_skill: str = ""
+            self._skill_progress: tuple[int, int] = (0, 0)
+            self._last_result: str = ""
 
         # ------------------------------------------------------------------
         # Compose
@@ -205,6 +256,7 @@ if TEXTUAL_AVAILABLE:
 
         def compose(self) -> ComposeResult:
             yield Header(show_clock=True)
+            yield Static(_LOGO_RICH, id="logo-banner")
             with TabbedContent():
                 with TabPane("Dashboard", id="dashboard"):
                     with Horizontal(id="dashboard-layout"):
@@ -218,6 +270,11 @@ if TEXTUAL_AVAILABLE:
                             yield Static(
                                 self._render_skill(),
                                 id="skill-panel",
+                            )
+                            yield Label("LAST RESULT", classes="panel-title")
+                            yield Static(
+                                "[dim]none[/dim]",
+                                id="last-result",
                             )
                             with Horizontal(id="action-buttons"):
                                 yield Button("Home", id="btn-home", variant="primary")
@@ -241,6 +298,13 @@ if TEXTUAL_AVAILABLE:
                     yield DataTable(id="skills-table")
                 with TabPane("World", id="world"):
                     yield RichLog(id="world-view", highlight=True, markup=True)
+                with TabPane("Camera", id="camera"):
+                    with Horizontal():
+                        yield Static("[dim]RGB Feed[/dim]", id="camera-rgb-label", classes="panel-title")
+                        yield Static("[dim]Depth Map[/dim]", id="camera-depth-label", classes="panel-title")
+                    with Horizontal():
+                        yield Static("[dim]No camera connected[/dim]", id="camera-rgb")
+                        yield Static("[dim]No camera connected[/dim]", id="camera-depth")
             yield Input(
                 placeholder="vector> type command or natural language...",
                 id="command-input",
@@ -314,6 +378,7 @@ if TEXTUAL_AVAILABLE:
             self._update_skill_panel()
             self._update_world_panel()
             self._update_world_tab()
+            self._update_camera_panel()
 
         def _update_status_panel(self) -> None:
             try:
@@ -351,50 +416,99 @@ if TEXTUAL_AVAILABLE:
             except Exception:
                 pass
 
+        def _update_camera_panel(self) -> None:
+            """Update camera tab with half-block rendered frames.
+
+            Only runs when the Camera tab is active to avoid wasting CPU/GPU
+            converting frames that are not currently visible.
+            """
+            if self._agent is None or self._agent._perception is None:
+                return
+
+            # Only update when Camera tab is visible
+            try:
+                tabs = self.query_one(TabbedContent)
+                if tabs.active != "camera":
+                    return
+            except Exception:
+                return
+
+            try:
+                from vector_os_nano.cli.frame_renderer import (
+                    annotated_frame,
+                    depth_to_rich_text,
+                    frame_to_rich_text,
+                )
+
+                cam = self._agent._perception._camera
+                color = cam.get_color_frame()
+                depth = cam.get_depth_frame()
+
+                if color is not None:
+                    tracked = getattr(self._agent._perception, "_last_tracked", [])
+                    if tracked:
+                        rgb_text = annotated_frame(color, tracked, width=55, height=25)
+                    else:
+                        rgb_text = frame_to_rich_text(color, width=55, height=25)
+                    self.query_one("#camera-rgb", Static).update(rgb_text)
+
+                if depth is not None:
+                    depth_text = depth_to_rich_text(depth, width=55, height=25)
+                    self.query_one("#camera-depth", Static).update(depth_text)
+            except Exception:
+                pass
+
         # ------------------------------------------------------------------
         # Render helpers (return Rich markup strings)
         # ------------------------------------------------------------------
 
         def _render_status(self) -> str:
-            """Render the system status panel content."""
+            """Render the system status panel content with colored dots."""
             if self._agent is None:
                 return (
-                    "  Arm:      [red]not connected[/red]\n"
-                    "  Camera:   [red]not connected[/red]\n"
-                    "  LLM:      [yellow]none[/yellow]\n"
-                    "  Tracking: [dim]idle[/dim]\n"
-                    "  Objects:  [dim]0 detected[/dim]"
+                    "  [red]●[/red] Arm disconnected\n"
+                    "  [red]●[/red] Camera disconnected\n"
+                    "  [yellow]●[/yellow] LLM not configured\n"
+                    "  [dim]●[/dim] Tracking: idle\n"
+                    "  [dim]●[/dim] Objects: 0 detected"
                 )
             try:
-                arm_status = (
-                    "[green]connected[/green]"
-                    if self._agent._arm is not None
-                    else "[red]disconnected[/red]"
-                )
-                cam_status = (
-                    "[green]connected[/green]"
-                    if self._agent._perception is not None
-                    else "[red]disconnected[/red]"
-                )
-                llm_status = (
-                    "[green]configured[/green]"
-                    if self._agent._llm is not None
-                    else "[yellow]none[/yellow]"
-                )
+                arm_dot = "[green]●[/green]" if self._agent._arm is not None else "[red]●[/red]"
+                arm_label = "Arm connected" if self._agent._arm is not None else "Arm disconnected"
+
+                cam_dot = "[green]●[/green]" if self._agent._perception is not None else "[red]●[/red]"
+                cam_label = "Camera connected" if self._agent._perception is not None else "Camera disconnected"
+
+                llm_dot = "[green]●[/green]" if self._agent._llm is not None else "[yellow]●[/yellow]"
+                llm_label = "LLM configured" if self._agent._llm is not None else "LLM not configured"
+
                 objects = self._agent.world.get_objects()
                 obj_count = len(objects)
                 return (
-                    f"  Arm:      {arm_status}\n"
-                    f"  Camera:   {cam_status}\n"
-                    f"  LLM:      {llm_status}\n"
-                    f"  Tracking: [dim]idle[/dim]\n"
-                    f"  Objects:  {obj_count} detected"
+                    f"  {arm_dot} {arm_label}\n"
+                    f"  {cam_dot} {cam_label}\n"
+                    f"  {llm_dot} {llm_label}\n"
+                    f"  [dim]●[/dim] Tracking: idle\n"
+                    f"  [dim]●[/dim] Objects: {obj_count} detected"
                 )
             except Exception as exc:
                 return f"  [red]Status error: {exc}[/red]"
 
+        @staticmethod
+        def _make_bar(value: float, rad_min: float, rad_max: float, width: int = _BAR_WIDTH) -> str:
+            """Return a Rich markup horizontal bar for the given joint value."""
+            span = rad_max - rad_min
+            if span <= 0:
+                ratio = 0.5
+            else:
+                ratio = max(0.0, min(1.0, (value - rad_min) / span))
+            filled = int(round(ratio * width))
+            empty = width - filled
+            bar = f"[cyan]{'█' * filled}[/cyan][dim]{'░' * empty}[/dim]"
+            return f"|{bar}|"
+
         def _render_joints(self) -> str:
-            """Render the joint states panel content."""
+            """Render the joint states panel with bar visualization."""
             joint_names = [
                 "shoulder_pan",
                 "shoulder_lift",
@@ -406,8 +520,10 @@ if TEXTUAL_AVAILABLE:
             if self._agent is None or self._agent._arm is None:
                 lines = []
                 for name in joint_names[:-1]:
-                    lines.append(f"  {name:<16} [dim]N/A[/dim]")
-                lines.append(f"  {'gripper':<16} [dim]N/A[/dim]")
+                    bar = self._make_bar(0.0, *_JOINT_RANGES.get(name, (-1.0, 1.0)))
+                    lines.append(f"  {name:<16} {bar}  [dim]N/A[/dim]")
+                bar = self._make_bar(0.0, *_JOINT_RANGES["gripper"])
+                lines.append(f"  {'gripper':<16} {bar}  [dim]N/A[/dim]")
                 return "\n".join(lines)
 
             try:
@@ -418,33 +534,42 @@ if TEXTUAL_AVAILABLE:
                 for i, name in enumerate(joint_names[:-1]):
                     if i < len(positions):
                         val = positions[i]
-                        lines.append(f"  {name:<16} [cyan]{val:>8.3f} rad[/cyan]")
+                        rad_min, rad_max = _JOINT_RANGES.get(name, (-3.14, 3.14))
+                        bar = self._make_bar(val, rad_min, rad_max)
+                        lines.append(f"  {name:<16} {bar}  [cyan]{val:>8.3f} rad[/cyan]")
                     else:
                         lines.append(f"  {name:<16} [dim]N/A[/dim]")
                 # Gripper state
                 if self._agent._gripper is not None:
                     g_pos = self._agent._gripper.get_position()
                     g_state = "OPEN" if g_pos > 0.5 else "CLOSED"
-                    lines.append(f"  {'gripper':<16} [green]{g_state}[/green]")
+                    rad_min, rad_max = _JOINT_RANGES["gripper"]
+                    bar = self._make_bar(g_pos, rad_min, rad_max)
+                    lines.append(f"  {'gripper':<16} {bar}  [green]{g_state}[/green]")
                 else:
-                    lines.append(f"  {'gripper':<16} [dim]N/A[/dim]")
+                    bar = self._make_bar(0.0, *_JOINT_RANGES["gripper"])
+                    lines.append(f"  {'gripper':<16} {bar}  [dim]N/A[/dim]")
                 return "\n".join(lines)
             except Exception as exc:
                 return f"  [red]Joint read error: {exc}[/red]"
 
         def _render_skill(self) -> str:
-            """Render the skill execution panel content."""
-            if self._agent is None:
+            """Render the skill execution panel with progress bar."""
+            if not self._current_skill:
+                return "  [dim]●[/dim] Idle"
+
+            steps_done, steps_total = self._skill_progress
+            if steps_total > 0:
+                bar_width = 8
+                filled = int(round(steps_done / steps_total * bar_width))
+                empty = bar_width - filled - 1
+                arrow = ">" if steps_done < steps_total else "="
+                progress_bar = "[" + "=" * filled + arrow + " " * max(0, empty) + "]"
                 return (
-                    "  Current:  [dim]idle[/dim]\n"
-                    "  Last:     [dim]none[/dim]\n"
-                    "  Steps:    0/0"
+                    f"  [cyan]●[/cyan] {self._current_skill} — "
+                    f"[cyan]{progress_bar}[/cyan] {steps_done}/{steps_total} steps"
                 )
-            return (
-                "  Current:  [dim]idle[/dim]\n"
-                "  Last:     [dim]none[/dim]\n"
-                "  Steps:    0/0"
-            )
+            return f"  [cyan]●[/cyan] {self._current_skill} — [dim]running...[/dim]"
 
         def _render_world_summary(self) -> str:
             """Render the world model summary panel content."""
@@ -491,23 +616,45 @@ if TEXTUAL_AVAILABLE:
 
         async def _execute_command(self, text: str) -> None:
             """Execute a command via the agent (runs in a Textual worker)."""
+            self._current_skill = text
+            self._skill_progress = (0, 0)
+            self._update_skill_panel()
             try:
                 result = self._agent.execute(text)
                 if result.success:
-                    self._log(
-                        f"[green]OK[/green] "
-                        f"({result.steps_completed}/{result.steps_total} steps)"
-                    )
+                    steps_done = getattr(result, "steps_completed", 1)
+                    steps_total = getattr(result, "steps_total", 1)
+                    self._skill_progress = (steps_done, steps_total)
+                    self._update_skill_panel()
+                    msg = f"[green]OK[/green] ({steps_done}/{steps_total} steps)"
+                    self._last_result = msg
+                    self._log(msg)
                 else:
                     status = result.status or "failed"
                     if status == "clarification_needed":
-                        self._log(
-                            f"[yellow]Question:[/yellow] {result.clarification_question}"
-                        )
+                        msg = f"[yellow]Question:[/yellow] {result.clarification_question}"
                     else:
-                        self._log(f"[red]FAILED[/red]: {result.failure_reason}")
+                        msg = f"[red]FAILED[/red]: {result.failure_reason}"
+                    self._last_result = msg
+                    self._log(msg)
             except Exception as exc:
-                self._log(f"[red]Error: {exc}[/red]")
+                msg = f"[red]Error: {exc}[/red]"
+                self._last_result = msg
+                self._log(msg)
+            finally:
+                self._current_skill = ""
+                self._skill_progress = (0, 0)
+                self._update_skill_panel()
+                self._update_last_result()
+
+        def _update_last_result(self) -> None:
+            """Update the #last-result widget on the Dashboard tab."""
+            try:
+                self.query_one("#last-result", Static).update(
+                    self._last_result if self._last_result else "[dim]none[/dim]"
+                )
+            except Exception:
+                pass
 
         # ------------------------------------------------------------------
         # Button handlers
@@ -546,6 +693,93 @@ if TEXTUAL_AVAILABLE:
                 self.query_one(TabbedContent).active = tab_id
             except Exception:
                 pass
+
+        def action_focus_command(self) -> None:
+            """Focus the command input bar."""
+            try:
+                self.query_one("#command-input", Input).focus()
+            except Exception:
+                pass
+
+        def action_open_fullscreen_camera(self) -> None:
+            """Launch the OpenCV RGB+Depth side-by-side viewer in a background thread.
+
+            Mirrors the camera viewer loop from run.py.  Only one viewer thread is
+            started — calling again while a viewer is running is a no-op.
+            """
+            if self._agent is None or self._agent._perception is None:
+                self._log("[yellow]No camera available for fullscreen view[/yellow]")
+                return
+
+            if getattr(self, "_cv_viewer_active", False):
+                self._log("[dim]Fullscreen viewer already running[/dim]")
+                return
+
+            try:
+                import threading
+                import cv2
+                import numpy as np
+
+                perception = self._agent._perception
+                self._cv_viewer_active = True
+
+                def _viewer_loop() -> None:
+                    try:
+                        cam = perception._camera
+                        cv2.namedWindow("Vector OS", cv2.WINDOW_NORMAL)
+                        cv2.resizeWindow("Vector OS", 1280, 480)
+
+                        while True:
+                            try:
+                                color = cam.get_color_frame()
+                                depth = cam.get_depth_frame()
+                                if color is None or depth is None:
+                                    continue
+
+                                # RGB with bounding box overlay
+                                rgb_display = color.copy()
+                                last_tracked = getattr(perception, "_last_tracked", [])
+                                for obj in last_tracked:
+                                    if obj.bbox_2d:
+                                        x1, y1, x2, y2 = [int(v) for v in obj.bbox_2d]
+                                        cv2.rectangle(
+                                            rgb_display, (x1, y1), (x2, y2), (0, 255, 0), 2
+                                        )
+                                        label = getattr(obj, "label", "object")
+                                        cv2.putText(
+                                            rgb_display,
+                                            label,
+                                            (x1, max(y1 - 5, 0)),
+                                            cv2.FONT_HERSHEY_SIMPLEX,
+                                            0.5,
+                                            (0, 255, 0),
+                                            1,
+                                        )
+
+                                # Depth colormap
+                                depth_f = np.clip(depth.astype(np.float32), 0, 500)
+                                depth_u8 = (depth_f / 500.0 * 255).astype(np.uint8)
+                                depth_colored = cv2.applyColorMap(
+                                    depth_u8, cv2.COLORMAP_JET
+                                )
+
+                                combined = np.hstack([rgb_display, depth_colored])
+                                cv2.imshow("Vector OS", combined)
+                                key = cv2.waitKey(33)
+                                if key == 27:  # ESC
+                                    break
+                            except Exception:
+                                pass
+                    finally:
+                        cv2.destroyAllWindows()
+                        self._cv_viewer_active = False
+
+                thread = threading.Thread(target=_viewer_loop, daemon=True)
+                thread.start()
+                self._log("[green]Fullscreen camera viewer started (ESC to close)[/green]")
+            except Exception as exc:
+                self._cv_viewer_active = False
+                self._log(f"[red]Fullscreen viewer error: {exc}[/red]")
 
         # ------------------------------------------------------------------
         # Log helper

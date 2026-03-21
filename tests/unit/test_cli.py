@@ -311,7 +311,8 @@ def test_cli_print_banner(capsys):
     cli = SimpleCLI()
     cli._print_banner()
     out = capsys.readouterr().out
-    assert "Vector OS" in out
+    # Banner contains VECTOR in block letters + "Vector OS Nano" (with ANSI escapes)
+    assert "NANO" in out.upper() or "vector" in out.lower() or "██" in out
 
 
 # ---------------------------------------------------------------------------

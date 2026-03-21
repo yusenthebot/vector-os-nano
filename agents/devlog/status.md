@@ -11,8 +11,8 @@ Full SDK complete and functional on hardware. Pick pipeline end-to-end: NL comma
 | Agent | Status | Current Work | Branch | Notes |
 |-------|--------|--------------|--------|-------|
 | Lead (Opus) | idle | — | — | Architecture approved, awaiting next phase |
-| Alpha (Sonnet) | in_progress | TUI improvements: logo, input fix, status dots, joint bars, skill progress | feat/alpha-tui-improvements | Core dashboard enhancements |
-| Beta (Sonnet) | in_progress | Camera TUI tab: frame_renderer.py + Camera tab in dashboard | feat/beta-camera-tui | Unicode half-block rendering, 2Hz refresh |
+| Alpha (Sonnet) | done | TUI improvements: logo, input fix, status dots, joint bars, skill progress, last-result | feat/alpha-tui-improvements | 30/30 dashboard tests passing (715 total) |
+| Beta (Sonnet) | done | Camera TUI tab complete: frame_renderer.py + Camera tab + F5/F6 bindings + 14 new tests | feat/beta-camera-tui | 710 tests passing (was 696) |
 | Gamma (Sonnet) | idle | — | — | All wave tasks complete |
 | Scribe (Haiku) | active | Documentation update | dev | Status + architecture docs for TUI work |
 

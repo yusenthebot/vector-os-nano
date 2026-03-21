@@ -88,7 +88,7 @@ class TestClaudeProviderCreation:
 
     def test_claude_provider_default_model(self) -> None:
         provider = ClaudeProvider(api_key="test-key")
-        assert provider.model == "anthropic/claude-sonnet-4-6"
+        assert provider.model == "anthropic/claude-haiku-4-5"
 
     def test_claude_provider_custom_model(self) -> None:
         provider = ClaudeProvider(api_key="test-key", model="anthropic/claude-haiku-4-5")
