@@ -266,55 +266,7 @@ class PickSkill:
         if not context.arm.move_joints(q_pregrasp, duration=_PREGRASP_DURATION):
             return SkillResult(success=False, error_message="Pre-grasp move failed")
 
-        # Step 10: Look-then-move correction at pre-grasp
-        # Camera is now close to the object (~16cm). Re-detect to get a precise
-        # position delta, then adjust the grasp target.
-        if context.perception is not None:
-            time.sleep(0.5)  # let arm settle + camera get fresh frames
-            logger.info("[PICK] Look-then-move: re-detecting from pre-grasp ...")
-            try:
-                # Get fresh 3D position from current camera view
-                tracked = context.perception.get_tracked_objects()
-                if tracked and tracked[0].pose is not None:
-                    fresh_cam = np.array([
-                        tracked[0].pose.x, tracked[0].pose.y, tracked[0].pose.z
-                    ])
-                    # Transform to base frame
-                    T = _get_calibration_matrix(context)
-                    fresh_base = camera_to_base(fresh_cam, T)
-
-                    # Compute correction delta (fresh vs original)
-                    delta_x = fresh_base[0] - base_pos_result[0]  # compare to raw base (before offsets)
-                    delta_y = fresh_base[1] - base_pos_result[1]
-                    delta_mm = np.sqrt(delta_x**2 + delta_y**2) * 1000
-
-                    logger.info(
-                        "[PICK] Correction: delta=(%.1f,%.1f)mm from pre-grasp view",
-                        delta_x * 1000, delta_y * 1000,
-                    )
-
-                    # Apply correction if significant (>3mm) but not crazy (>50mm)
-                    if 3.0 < delta_mm < 50.0:
-                        corrected_grasp = base_pos.copy()
-                        corrected_grasp[0] += delta_x
-                        corrected_grasp[1] += delta_y
-                        q_corrected = context.arm.ik(
-                            tuple(corrected_grasp), q_pregrasp
-                        )
-                        if q_corrected is not None:
-                            q_grasp = list(q_corrected)
-                            logger.info("[PICK] Grasp target corrected by (%.1f,%.1f)mm",
-                                        delta_x * 1000, delta_y * 1000)
-                        else:
-                            logger.warning("[PICK] IK failed for corrected target, using original")
-                    else:
-                        logger.info("[PICK] Correction too small or too large (%.1fmm), skipping", delta_mm)
-                else:
-                    logger.info("[PICK] No tracked object at pre-grasp, skipping correction")
-            except Exception as exc:
-                logger.warning("[PICK] Look-then-move failed: %s", exc)
-
-        # Step 11: Descend to grasp
+        # Step 10: Descend to grasp
         logger.info("[PICK] Descending to grasp ...")
         if not context.arm.move_joints(q_grasp, duration=_DESCENT_DURATION):
             return SkillResult(success=False, error_message="Descent to grasp failed")
