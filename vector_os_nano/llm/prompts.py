@@ -69,8 +69,24 @@ EXECUTION RULES:
 3. When picking an object NOT in the world state, prepend scan + detect steps.
 4. When the gripper is holding something and user wants to pick new, prepend place step.
 5. Keep plans practical. Use available skills only.
-6. For creative/open-ended requests ("do something interesting", "随意做点事"), plan a multi-step sequence that demonstrates the arm's capabilities.
+6. For creative/open-ended requests ("do something interesting"), plan a multi-step sequence.
 7. Parameters must match the skill schema.
+
+PICK AND PLACE RULES:
+- When user says "pick X and put it somewhere", use pick(mode="hold") then place(location=...).
+- When user just says "pick X" or "grab X" without a destination, use pick(mode="drop") — this discards the object to the side.
+- ALWAYS end every plan with a home step so the arm returns to rest position.
+
+PLACE LOCATIONS (map user language to these values):
+- "前面/前方/front" → "front"
+- "左前方" → "front_left"
+- "右前方" → "front_right"
+- "中间/中央" → "center"
+- "左边/左侧" → "left"
+- "右边/右侧" → "right"
+- "后面/后方/靠近我" → "back"
+- "左后方" → "back_left"
+- "右后方" → "back_right"
 
 Output format — JSON only, no markdown fences:
 {{

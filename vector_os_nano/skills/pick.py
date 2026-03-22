@@ -85,17 +85,23 @@ class PickSkill:
     """
 
     name: str = "pick"
-    description: str = "Pick up an object from the workspace"
+    description: str = "Pick up an object. Use mode='hold' to keep it, mode='drop' to discard it to the side."
     parameters: dict = {
         "object_id": {
             "type": "string",
             "required": False,
-            "description": "ID of the object in the world model (e.g. 'red_cup_0')",
+            "description": "ID of the object in the world model",
         },
         "object_label": {
             "type": "string",
             "required": False,
-            "description": "Label of the object to pick (e.g. 'red cup')",
+            "description": "Label of the object to pick (e.g. 'mug', 'banana')",
+        },
+        "mode": {
+            "type": "string",
+            "required": False,
+            "default": "drop",
+            "description": "'hold' = grasp and hold at home (for subsequent place), 'drop' = grasp and discard to side",
         },
     }
     preconditions: list[str] = ["gripper_empty"]
@@ -284,33 +290,37 @@ class PickSkill:
         logger.info("[PICK] Lifting ...")
         context.arm.move_joints(q_pregrasp, duration=_LIFT_DURATION)
 
-        # Step 13: Return home
+        # Step 13: Return home (holding object)
         logger.info("[PICK] Returning home ...")
         if not context.arm.move_joints(home_joints, duration=_HOME_DURATION):
             return SkillResult(success=False, error_message="Return home after pick failed")
 
-        # Step 14: Place — rotate 90deg to drop object outside workspace
-        drop_joints = list(home_joints)
-        drop_joints[0] = drop_joints[0] + 1.57  # shoulder_pan +90deg
-        logger.info("[PICK] Rotating to drop position ...")
-        context.arm.move_joints(drop_joints, duration=_HOME_DURATION)
+        # Step 14: Mode-dependent behavior
+        pick_mode = params.get("mode", cfg.get("default_mode", "drop"))
 
-        # Step 15: Open gripper to drop object, then close to rest state
-        logger.info("[PICK] Dropping object ...")
-        if context.gripper is not None:
-            context.gripper.open()
-            time.sleep(0.5)
-            context.gripper.close()
+        if pick_mode == "hold":
+            # Hold mode: keep object in gripper, ready for place command
+            logger.info("[PICK] Holding object (mode=hold)")
+        else:
+            # Drop mode: rotate 90deg and drop outside workspace
+            drop_joints = list(home_joints)
+            drop_joints[0] = drop_joints[0] + 1.57  # shoulder_pan +90deg
+            logger.info("[PICK] Rotating to drop position ...")
+            context.arm.move_joints(drop_joints, duration=_HOME_DURATION)
 
-        # Step 16: Return home
-        logger.info("[PICK] Returning home ...")
-        context.arm.move_joints(home_joints, duration=_HOME_DURATION)
+            logger.info("[PICK] Dropping object ...")
+            if context.gripper is not None:
+                context.gripper.open()
+                time.sleep(0.5)
+                context.gripper.close()
 
-        # Step 15: Clear world model — object has moved, stale data is dangerous
-        # Remove ALL objects so next pick forces fresh scan+detect
+            logger.info("[PICK] Returning home ...")
+            context.arm.move_joints(home_joints, duration=_HOME_DURATION)
+
+        # Clear world model — object has moved, stale data is dangerous
         for obj in list(context.world_model.get_objects()):
             context.world_model.remove_object(obj.object_id)
-        logger.info("[PICK] World model cleared (objects moved, stale data removed)")
+        logger.info("[PICK] World model cleared")
 
         logger.info(
             "[PICK] Pick complete! Grasped at (%.1f, %.1f) cm",

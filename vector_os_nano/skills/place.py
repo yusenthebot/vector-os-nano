@@ -25,52 +25,64 @@ from vector_os_nano.core.types import SkillResult
 
 logger = logging.getLogger(__name__)
 
-# Default place target (metres, base frame) — from skill_node_v2 parameters
-_DEFAULT_PLACE_X: float = 0.25
-_DEFAULT_PLACE_Y: float = 0.0
-_DEFAULT_PLACE_Z: float = 0.05
+# Named location map — from robot's perspective
+# x+ = forward (away from base), y+ = left, y- = right
+_LOCATION_MAP: dict[str, tuple[float, float]] = {
+    "front":        (0.30, 0.00),
+    "front_left":   (0.30, 0.12),
+    "front_right":  (0.30, -0.12),
+    "center":       (0.22, 0.00),
+    "left":         (0.22, 0.12),
+    "right":        (0.22, -0.12),
+    "back":         (0.12, 0.00),
+    "back_left":    (0.12, 0.12),
+    "back_right":   (0.12, -0.12),
+}
 
-# Pre-grasp height above the place target (matches skill_node_v2 pre_grasp_height)
-_DEFAULT_PRE_GRASP_HEIGHT: float = 0.06  # 6 cm
-
-# Motion durations (seconds)
+_DEFAULT_PLACE_Z: float = 0.04
+_DEFAULT_PRE_GRASP_HEIGHT: float = 0.06
 _APPROACH_DURATION: float = 3.0
 _DESCEND_DURATION: float = 2.0
 _LIFT_DURATION: float = 2.0
+_HOME_DURATION: float = 3.0
+_DEFAULT_HOME_JOINTS: list[float] = [-0.014, -1.238, 0.562, 0.858, 0.311]
 
 
 class PlaceSkill:
-    """Place a held object at a specified position in the workspace.
+    """Place a held object at a named location or coordinates.
 
-    The skill moves above the target, descends, opens the gripper, and lifts.
-    Target position is specified in base_link frame metres.
+    Accepts either a named location (front, left, back_right, etc.)
+    or explicit x, y, z coordinates in metres.
 
     Parameters:
-        x (float, optional): target X in metres (default 0.25).
-        y (float, optional): target Y in metres (default 0.0).
-        z (float, optional): target Z in metres (default 0.05).
+        location (str, optional): Named position — front, front_left, front_right,
+            center, left, right, back, back_left, back_right.
+        x, y, z (float, optional): Explicit coordinates (override location).
     """
 
     name: str = "place"
-    description: str = "Place a held object at a target position"
+    description: str = "Place held object at a location: front, left, right, center, back, front_left, front_right, back_left, back_right"
     parameters: dict = {
+        "location": {
+            "type": "string",
+            "required": False,
+            "default": "front",
+            "description": "Named position: front, front_left, front_right, center, left, right, back, back_left, back_right",
+        },
         "x": {
             "type": "float",
             "required": False,
-            "default": _DEFAULT_PLACE_X,
-            "description": "Target X in metres (base frame)",
+            "description": "Target X in metres (overrides location)",
         },
         "y": {
             "type": "float",
             "required": False,
-            "default": _DEFAULT_PLACE_Y,
-            "description": "Target Y in metres (base frame)",
+            "description": "Target Y in metres (overrides location)",
         },
         "z": {
             "type": "float",
             "required": False,
-            "default": _DEFAULT_PLACE_Z,
-            "description": "Target Z in metres (base frame)",
+            "description": "Target Z in metres",
         },
     }
     preconditions: list[str] = ["gripper_holding_any"]
@@ -100,12 +112,24 @@ class PlaceSkill:
         cfg_place = context.config.get("skills", {}).get("place", {})
         pre_grasp_h: float = (
             context.config.get("skills", {})
-            .get("pick", {})  # shared with pick config
+            .get("pick", {})
             .get("pre_grasp_height", _DEFAULT_PRE_GRASP_HEIGHT)
         )
+        home_joints: list[float] = (
+            context.config.get("skills", {}).get("home", {}).get(
+                "joint_values", _DEFAULT_HOME_JOINTS
+            )
+        )
 
-        tx = float(params.get("x", cfg_place.get("x", _DEFAULT_PLACE_X)))
-        ty = float(params.get("y", cfg_place.get("y", _DEFAULT_PLACE_Y)))
+        # Resolve target coordinates from location name or explicit params
+        if "x" in params and "y" in params:
+            tx = float(params["x"])
+            ty = float(params["y"])
+        else:
+            location = params.get("location", "front")
+            loc_xy = _LOCATION_MAP.get(location, _LOCATION_MAP["front"])
+            tx, ty = loc_xy
+            logger.info("[PLACE] Location '%s' → (%.3f, %.3f)", location, tx, ty)
         tz = float(params.get("z", cfg_place.get("z", _DEFAULT_PLACE_Z)))
 
         logger.info("[PLACE] Target: (%.3f, %.3f, %.3f) m", tx, ty, tz)
@@ -159,6 +183,13 @@ class PlaceSkill:
         logger.info("[PLACE] Lifting ...")
         if not context.arm.move_joints(q_above, duration=_LIFT_DURATION):
             return SkillResult(success=False, error_message="Place lift failed")
+
+        # Close gripper and return home
+        if context.gripper is not None:
+            context.gripper.close()
+
+        logger.info("[PLACE] Returning home ...")
+        context.arm.move_joints(home_joints, duration=_HOME_DURATION)
 
         logger.info("[PLACE] Place complete!")
         return SkillResult(
