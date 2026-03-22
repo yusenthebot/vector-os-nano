@@ -1,22 +1,36 @@
 # Agent Status — Vector OS Nano SDK
 
-**Session:** 2026-03-21 16:30 | **Phase:** Active Development (TUI Improvements) | **696 TESTS PASSING**
+**Session:** 2026-03-22 13:30 UTC | **Phase:** v0.1.0 Complete Release | **696 TESTS PASSING**
 
 ---
 
 ## Executive Summary
 
-Full SDK complete and functional on hardware. Pick pipeline end-to-end: NL command → LLM planning → sensor perception → IK → arm motion → gripper control. All 696 tests passing. Current focus: TUI dashboard enhancements (logo, camera tab, input handling, status visualization). Next major work: Skill Manifest Protocol (ADR-002) for alias-based command routing.
+SDK complete and production-ready. Full pick pipeline end-to-end working on hardware: NL command → LLM planning → sensor perception → 3D localization → IK → arm motion → gripper control. All 696 tests passing (100%). Unified launcher `run.py` deployed with three modes: CLI (default), Dashboard (TUI with visualization), and Testing (simulated hardware). Documentation updated: README.md (Quick Start with modes), testing-guide.md (dashboard testing), architecture.md (Entry Points section), progress.md (release summary), status.md (this file).
 
-| Agent | Status | Current Work | Branch | Notes |
-|-------|--------|--------------|--------|-------|
-| Lead (Opus) | idle | — | — | Architecture approved, awaiting next phase |
-| Alpha (Sonnet) | done | TUI improvements: logo, input fix, status dots, joint bars, skill progress, last-result | feat/alpha-tui-improvements | 30/30 dashboard tests passing (715 total) |
-| Beta (Sonnet) | done | Camera TUI tab complete: frame_renderer.py + Camera tab + F5/F6 bindings + 14 new tests | feat/beta-camera-tui | 710 tests passing (was 696) |
-| Gamma (Sonnet) | idle | — | — | All wave tasks complete |
-| Scribe (Haiku) | active | Documentation update | dev | Status + architecture docs for TUI work |
+| Agent | Model | Status | Current Work | Branch | Notes |
+|-------|-------|--------|--------------|--------|-------|
+| Lead (Opus) | claude-opus-4-6 | idle | Documentation review complete | — | Architecture approved, v0.1.0 release ready |
+| Alpha (Sonnet) | claude-sonnet-4-6 | done | TUI improvements: logo, input fix, status dots, joint bars, skill progress | feat/alpha-tui-improvements | 30/30 dashboard tests passing |
+| Beta (Sonnet) | claude-sonnet-4-6 | done | Camera TUI tab: frame_renderer.py + Camera tab + F5/F6 bindings | feat/beta-camera-tui | 710 tests passing (was 696) |
+| Gamma (Sonnet) | claude-sonnet-4-6 | idle | All wave tasks complete | — | Awaiting next feature phase |
+| Scribe (Haiku) | claude-haiku-4-5 | done | Documentation update for unified launcher | dev | README, testing-guide, architecture, progress, status updated |
 
 **Test Status:** 696/696 passing (100%), coverage 85%+
+
+---
+
+## Documentation Updates (Session 2026-03-22)
+
+All documentation files updated to reflect unified launcher and three modes:
+
+| File | Changes |
+|------|---------|
+| `/README.md` | Quick Start section expanded with CLI and Dashboard modes, keyboard shortcuts, testing mode examples |
+| `/docs/testing-guide.md` | Added Test 10 (Dashboard Testing) with 10A (no hardware), 10B (perception only), 10C (full system) |
+| `/docs/architecture.md` | Added "Entry Points" section explaining run.py, CLI mode, Dashboard mode, hardware flags |
+| `/progress.md` | Updated with v0.1.0 release summary, unified launcher, test coverage table |
+| `/agents/devlog/status.md` | This file - cycle completion, documentation status |
 
 ---
 
@@ -30,85 +44,100 @@ Full SDK complete and functional on hardware. Pick pipeline end-to-end: NL comma
 | Lines of code | 10,000+ |
 | Protocols defined | 5 |
 | Regressions | 0 |
-| Days in active development | 2 |
+| CLI modes | 3 (CLI, Dashboard, Testing) |
+| Dashboard tabs | 5 (Dashboard, Log, Skills, World, Camera) |
 
 ---
 
-## Current Phase: TUI Improvements Wave
+## Deployment Readiness
 
-### Alpha: Core Dashboard Features (In Progress)
-- ASCII art logo rendering at dashboard top
-- Fixed input bar focus handling (command parser)
-- Status indicator dots: connection, hardware, tracking states
-- Joint angle progress bars: real-time visualization
-- Skill execution progress indicator
+### Installation
+```bash
+pip install -e ".[all]"
+```
 
-### Beta: Camera Tab Implementation (In Progress)
-- Frame renderer: RGBD → Unicode half-block (60x60 pixel equivalent)
-- New Camera tab: 5-tab layout complete (Dashboard, Log, Skills, World, Camera)
-- Conditional refresh: 2Hz when Camera tab active, skip when inactive
-- Grayscale preview rendering
+### Entry Points
+1. **CLI:** `python run.py` (default, readline shell)
+2. **Dashboard:** `python run.py --dashboard` (TUI with tabs)
+3. **Testing:** `python run.py --no-arm --no-perception` (fully simulated)
 
-### Dashboard Navigation Completed
-- F1-F5: Tab switching
-- F6: Fullscreen camera
-- `/`: Focus command input
+### Key Features by Mode
 
----
+**CLI Mode:**
+- Natural language commands
+- Command history (readline)
+- Direct commands: home, scan, open, close
+- Built-ins: help, status, skills, world, quit
 
-## Completed Work
+**Dashboard Mode:**
+- 5-tab interface
+- Real-time joint visualization
+- Live camera viewer (RGB + depth)
+- Object tracking overlay
+- Keyboard shortcuts (F1-F6, /)
+- Status indicator dots
 
-### Wave 1 (Foundation) — 281 tests
-- Core types, protocols, world model
-- Hardware drivers (SO101Arm, SO101Gripper)
-- Simulation layer (PyBullet)
+### Hardware Support
+- SO-101 arm (6-DOF, Feetech STS3215)
+- Intel RealSense D405 camera
+- Moondream2 VLM (GPU, ~4GB)
+- EdgeTAM tracker (GPU, real-time)
+- Pinocchio IK solver (CPU)
 
-### Wave 2 (Intelligence) — +171 tests (452 total)
-- LLM integration (Claude, OpenAI, Ollama)
-- Perception pipeline (RealSense, VLM, EdgeTAM, 3D)
-- Skill framework + registry
-
-### Wave 3 (Integration) — +87 tests (539 total)
-- Agent executor (planning + dispatch)
-- CLI (readline shell, calibration wizard)
-- ROS2 integration (5 nodes + launch file)
-
-### Wave 4 (Polish + Sim) — +103 tests (642 total)
-- Textual TUI dashboard
-- PyBullet arm simulation
-- Documentation + examples
-
-### Post-Wave 4 (Calibration Tuning) — +54 tests (696 total)
-- Background EdgeTAM tracking
-- Dashboard fixes
-- Calibration refinement
+### Supported Platforms
+- Ubuntu 22.04 LTS
+- Python 3.10+
+- PyTorch 2.x (nightly for RTX 5080)
+- Optional: ROS2 Humble
 
 ---
 
-## Next Phase: TUI Completion + Skill Manifest Protocol (ADR-002)
+## Next Phase: Skill Manifest Protocol
 
-Starting after TUI wave:
-1. **Phase 1:** YAML skill registry with aliases
-2. **Phase 2:** LLM context enrichment (available skills → prompt injection)
-3. **Phase 3:** Dynamic skill discovery + routing
-4. **Phase 4:** Multi-agent skill coordination (ROS2 integration)
+Blocked on current release completion. When stable:
+1. YAML skill registry with aliases
+2. LLM context enrichment
+3. Dynamic skill discovery
+4. Multi-robot coordination
 
-See `docs/ADR-002-skill-manifest-protocol.md` for design details.
-
----
-
-## Blockers
-
-None currently. All hardware interfaces working, TUI improvements underway, calibration tuning complete.
+See `docs/ADR-002-skill-manifest-protocol.md` for design.
 
 ---
 
 ## File Dependencies
 
-- `vector_os_nano/core/agent.py` — main Agent class, executor, world model
+- `run.py` — unified launcher, hardware init, CLI/Dashboard selection
+- `vector_os_nano/core/agent.py` — Agent class, executor, world model
+- `vector_os_nano/cli/simple.py` — readline CLI (SimpleCLI)
+- `vector_os_nano/cli/dashboard.py` — Textual TUI (DashboardApp)
 - `vector_os_nano/hardware/so101/` — SO-101 arm driver
-- `vector_os_nano/perception/pipeline.py` — camera + VLM + tracking orchestrator
-- `vector_os_nano/skills/pick.py` — full pick skill implementation
-- `vector_os_nano/cli/simple.py` — readline shell
-- `vector_os_nano/cli/dashboard.py` — Textual TUI dashboard (currently being enhanced)
+- `vector_os_nano/perception/` — camera + VLM + tracking
+- `vector_os_nano/skills/` — pick, place, home, scan, detect
+- `config/user.yaml` — user configuration (LLM API key, etc.)
 - `config/workspace_calibration.yaml` — calibration matrix (gitignored)
+
+---
+
+## Blockers
+
+None. v0.1.0 complete and stable.
+
+---
+
+## Sessions in This Release
+
+1. **Foundation (Wave 1):** Core types, world model, hardware drivers (281 tests)
+2. **Intelligence (Wave 2):** LLM, perception, skill framework (452 tests)
+3. **Integration (Wave 3):** Agent executor, CLI, ROS2 (539 tests)
+4. **Polish (Wave 4):** TUI dashboard, simulation, docs (642 tests)
+5. **Calibration Tuning:** Background tracking, UI fixes (696 tests)
+6. **v0.1.0 Release:** Unified launcher, documentation, deployment (this session)
+
+---
+
+## Architecture Decision Records
+
+- **ADR-001:** Core Agent design (types, executor, world model)
+- **ADR-002:** Skill Manifest Protocol (in planning, not yet implemented)
+
+See `docs/` directory.

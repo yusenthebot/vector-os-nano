@@ -163,14 +163,16 @@ llm:
 ```
 Get your key at: https://openrouter.ai/keys
 
-### 4. Run
+### 4. Launch System
 
+Choose your interface:
+
+**CLI Mode (default) — readline shell with command history:**
 ```bash
 python run.py
 ```
 
-### 5. Use
-
+Type commands naturally:
 ```
 vector> pick battery              # Pick up a battery
 vector> grab the red cup          # Natural language pick
@@ -180,6 +182,7 @@ vector> open                      # Open gripper (instant, no LLM)
 vector> close                     # Close gripper (instant, no LLM)
 vector> detect all objects        # Detect everything on table
 vector> world                     # Show world model state
+vector> help                      # Show all commands
 ```
 
 Chinese works too:
@@ -187,6 +190,30 @@ Chinese works too:
 vector> 抓电池
 vector> 看看桌上有什么
 vector> 抓蛋白棒
+```
+
+**Dashboard Mode — TUI with live visualization:**
+```bash
+python -m vector_os_nano.cli.dashboard
+```
+
+Rich terminal UI with 5 tabs (Dashboard, Log, Skills, World, Camera), real-time joint angles, camera preview, and tracking visualization.
+
+Keyboard shortcuts:
+- `F1-F5`: Switch tabs
+- `F6`: Fullscreen camera
+- `/`: Focus command input
+
+**Testing without hardware:**
+```bash
+# No arm
+python run.py --no-arm
+
+# No camera + perception
+python run.py --no-perception
+
+# Fully simulated (useful for development)
+python run.py --no-arm --no-perception
 ```
 
 ## Custom Skills

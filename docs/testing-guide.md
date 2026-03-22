@@ -15,7 +15,7 @@ source ~/vector_os_nano/bin/activate
 pip install --upgrade pip setuptools wheel
 
 # Install Vector OS Nano (core only, no GPU dependencies)
-cd ~/Desktop/vector_os
+cd ~/Desktop/vector_os_nano
 pip install -e "."
 
 # For GPU support (RTX 5080 Blackwell — MUST use nightly)
@@ -95,14 +95,14 @@ Verify all SDK modules load correctly.
 
 ```bash
 python -c "
-from vector_os.core.agent import Agent
-from vector_os.core.types import Pose3D, Detection, TaskPlan, ExecutionResult
-from vector_os.core.world_model import WorldModel
-from vector_os.core.executor import TaskExecutor
-from vector_os.core.config import load_config
-from vector_os.llm import ClaudeProvider, OpenAIProvider, LocalProvider
-from vector_os.hardware.so101.joint_config import JOINT_CONFIG, ARM_JOINT_NAMES
-from vector_os.ros2 import ROS2_AVAILABLE
+from vector_os_nano.core.agent import Agent
+from vector_os_nano.core.types import Pose3D, Detection, TaskPlan, ExecutionResult
+from vector_os_nano.core.world_model import WorldModel
+from vector_os_nano.core.executor import TaskExecutor
+from vector_os_nano.core.config import load_config
+from vector_os_nano.llm import ClaudeProvider, OpenAIProvider, LocalProvider
+from vector_os_nano.hardware.so101.joint_config import JOINT_CONFIG, ARM_JOINT_NAMES
+from vector_os_nano.ros2 import ROS2_AVAILABLE
 print('All imports OK')
 print(f'ROS2 available: {ROS2_AVAILABLE}')
 "
@@ -124,7 +124,7 @@ Create this file if missing:
 
 ```python
 # examples/test_agent_no_hardware.py
-from vector_os.core.agent import Agent
+from vector_os_nano.core.agent import Agent
 
 agent = Agent()
 print(f"Skills: {agent.skills}")
@@ -151,9 +151,9 @@ python examples/test_world_model.py
 ```python
 # examples/test_world_model.py
 import time
-from vector_os.core.agent import Agent
-from vector_os.core.world_model import ObjectState
-from vector_os.core.types import SkillResult
+from vector_os_nano.core.agent import Agent
+from vector_os_nano.core.world_model import ObjectState
+from vector_os_nano.core.types import SkillResult
 
 agent = Agent()
 wm = agent.world
@@ -200,7 +200,7 @@ python examples/test_ik_solver.py
 ```python
 # examples/test_ik_solver.py
 import numpy as np
-from vector_os.hardware.so101.ik_solver import IKSolver
+from vector_os_nano.hardware.so101.ik_solver import IKSolver
 
 solver = IKSolver()
 home = [-0.014, -1.238, 0.562, 0.858, 0.311]
@@ -253,11 +253,11 @@ python examples/test_llm_planning.py
 ```python
 # examples/test_llm_planning.py
 import time
-from vector_os.core.config import load_config
-from vector_os.core.world_model import WorldModel, ObjectState
-from vector_os.core.skill import SkillRegistry
-from vector_os.skills import get_default_skills
-from vector_os.llm.claude import ClaudeProvider
+from vector_os_nano.core.config import load_config
+from vector_os_nano.core.world_model import WorldModel, ObjectState
+from vector_os_nano.core.skill import SkillRegistry
+from vector_os_nano.skills import get_default_skills
+from vector_os_nano.llm.claude import ClaudeProvider
 
 cfg = load_config("config/user.yaml")
 llm = ClaudeProvider(api_key=cfg["llm"]["api_key"], model=cfg["llm"]["model"],
@@ -303,10 +303,10 @@ python examples/test_cli_interactive.py
 ```python
 # examples/test_cli_interactive.py
 import time
-from vector_os.core.agent import Agent
-from vector_os.core.config import load_config
-from vector_os.core.world_model import ObjectState
-from vector_os.cli.simple import SimpleCLI
+from vector_os_nano.core.agent import Agent
+from vector_os_nano.core.config import load_config
+from vector_os_nano.core.world_model import ObjectState
+from vector_os_nano.cli.simple import SimpleCLI
 
 cfg = load_config("config/user.yaml")
 agent = Agent(llm_api_key=cfg["llm"]["api_key"], config="config/user.yaml")
@@ -346,7 +346,7 @@ if not os.path.exists(port):
     print(f"ERROR: {port} not found. Is the SO-101 connected?")
     sys.exit(1)
 
-from vector_os.hardware.so101 import SO101Arm, SO101Gripper
+from vector_os_nano.hardware.so101 import SO101Arm, SO101Gripper
 
 arm = SO101Arm(port=port)
 arm.connect()
@@ -391,11 +391,11 @@ python examples/test_full_pipeline.py
 ```python
 # examples/test_full_pipeline.py
 import time
-from vector_os.core.agent import Agent
-from vector_os.core.config import load_config
-from vector_os.core.world_model import ObjectState
-from vector_os.core.types import SkillResult
-from vector_os.core.skill import SkillContext
+from vector_os_nano.core.agent import Agent
+from vector_os_nano.core.config import load_config
+from vector_os_nano.core.world_model import ObjectState
+from vector_os_nano.core.types import SkillResult
+from vector_os_nano.core.skill import SkillContext
 
 cfg = load_config("config/user.yaml")
 agent = Agent(llm_api_key=cfg["llm"]["api_key"], config="config/user.yaml")
@@ -422,7 +422,7 @@ print(f"Skills: {agent.skills}")
 # Expected: ['home', 'scan', 'detect', 'pick', 'place', 'wave']
 
 # LLM should find and use wave skill
-from vector_os.llm.claude import ClaudeProvider
+from vector_os_nano.llm.claude import ClaudeProvider
 llm = ClaudeProvider(api_key=cfg["llm"]["api_key"], model=cfg["llm"]["model"],
                      api_base=cfg["llm"]["api_base"])
 plan = llm.plan("wave 5 times", agent.world.to_dict(), agent._skill_registry.to_schemas())
@@ -432,18 +432,68 @@ print(f"LLM plan for 'wave 5 times': {[(s.skill_name, s.parameters) for s in pla
 
 ---
 
-## Test 10: Dashboard TUI (requires textual)
+## Test 10: Dashboard Testing
 
-Launch the Textual developer dashboard.
+Test the Textual TUI dashboard with various hardware configurations.
+
+### Test 10A: Dashboard Without Hardware (safest for testing)
+
+Recommended for development and UI testing.
 
 ```bash
-pip install textual
-python -m vector_os.cli.dashboard --no-arm
+# Core + TUI
+pip install -e ".[tui]"
+
+# Launch dashboard without arm or camera
+python -m vector_os_nano.cli.dashboard --no-arm --no-perception
 ```
 
-Expected: Textual TUI opens with tabs (Dashboard, Log, Skills, World). Use F1-F4 to switch tabs. Ctrl+C to quit.
+Expected: Dashboard opens with 5 tabs (Dashboard, Log, Skills, World, Camera). All features available except hardware-dependent skills (pick, place, home). Use for:
+- Testing UI/UX changes
+- Iterating command input
+- Verifying world model updates
+- Camera tab displays grayscale test pattern (no live camera)
 
----
+Keyboard shortcuts:
+- `F1-F5`: Switch between tabs (Dashboard, Log, Skills, World, Camera)
+- `F6`: Toggle fullscreen camera
+- `/`: Focus command input
+- `Ctrl+C`: Quit
+
+### Test 10B: Dashboard With Perception Only (no arm)
+
+For testing perception pipeline without arm control.
+
+```bash
+# Full install with perception + TUI
+pip install -e ".[all]"
+
+# Launch dashboard with camera + perception, no arm
+python -m vector_os_nano.cli.dashboard --no-arm
+```
+
+Expected: Dashboard fully functional. Camera tab shows live D405 RGB/depth feed. Skills requiring arm motion (pick, place, home) fail gracefully with "No arm connected". Use for:
+- Testing perception pipeline
+- Verifying VLM detection in Camera tab
+- Testing EdgeTAM tracking visualization
+- LLM planning without hardware
+
+### Test 10C: Full System Dashboard (all hardware)
+
+End-to-end system test with all hardware connected.
+
+```bash
+# Connect SO-101 arm and RealSense D405 camera
+python -m vector_os_nano.cli.dashboard
+```
+
+Expected: Full system operational. All skills available. Camera shows live tracking overlays. Monitor:
+- Joint angles update in Dashboard tab (real-time progress bars)
+- Camera tab shows object tracking (EdgeTAM masks)
+- World model updates after detect/pick commands
+- Skill execution logs in Log tab
+- Status dots show connection state
+
 
 ## Test Summary
 
@@ -458,76 +508,6 @@ Expected: Textual TUI opens with tabs (Dashboard, Log, Skills, World). Use F1-F4
 | 7 | CLI interactive | API key | Command interface | manual |
 | 8 | Hardware | SO-101 + scservo_sdk | Serial, joints, gripper | manual |
 | 9 | Full pipeline | API key | Custom skills, LLM discovery | ~10s |
-| 10 | Dashboard | textual | TUI panels | manual |
+| 10 | Dashboard | textual | TUI, tabs, keyboard shortcuts | manual |
 
 **Total automated test time:** ~1 minute
-
----
-
-## Dependency Verification
-
-After installation, verify critical versions:
-
-```bash
-# Core (always present)
-python -c "import numpy, pyserial, httpx, yaml; print('Core: OK')"
-
-# Perception (optional but common)
-python -c "
-try:
-    import torch, torchvision, transformers, timm, open3d, cv2
-    print(f'Perception: OK')
-    print(f'  torch: {torch.__version__}')
-    print(f'  transformers: {transformers.__version__} (must be 4.57.6)')
-    print(f'  timm: {timm.__version__}')
-except ImportError as e:
-    print(f'Perception: not installed ({e})')
-"
-
-# IK (optional)
-python -c "
-try:
-    import pinocchio as pin
-    print(f'IK: OK (pinocchio {pin.__version__})')
-except ImportError:
-    print('IK: not installed (optional)')
-"
-
-# TUI (optional)
-python -c "
-try:
-    from textual.app import App
-    print('TUI: OK')
-except ImportError:
-    print('TUI: not installed (optional)')
-"
-
-# ROS2 (optional, installed via apt)
-python -c "
-try:
-    from rclpy import init
-    print('ROS2: OK')
-except ImportError:
-    print('ROS2: not installed (optional, requires apt)')
-"
-```
-
----
-
-## Troubleshooting
-
-See `docs/dependencies.md` for detailed troubleshooting including:
-- PyTorch on RTX 5080 (nightly requirement)
-- transformers version issues (4.57.6 pinning)
-- scservo_sdk installation
-- Pinocchio compatibility
-- ROS2 pytest plugins
-
----
-
-## Next Steps
-
-After all tests pass:
-1. Read `docs/dependencies.md` for detailed version information
-2. Read `README.md` for architecture and usage examples
-3. Check `QUICKSTART.md` for end-user setup

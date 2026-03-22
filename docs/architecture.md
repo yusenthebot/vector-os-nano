@@ -83,6 +83,81 @@
 
 ---
 
+## Entry Points
+
+Vector OS Nano provides two separate command-line entry points:
+
+### CLI Mode: `python run.py`
+
+Interactive readline shell for natural language commands.
+
+**Features:**
+- Natural language input: `pick battery`, `grab the red cup`
+- Direct commands (bypass LLM): `home`, `scan`, `open`, `close`
+- Built-in commands: `help`, `status`, `skills`, `world`, `quit`
+- Chinese + English supported
+- Command history via readline
+- Simple, fast startup
+
+**Entry point code:** `vector_os_nano/cli/simple.py` — SimpleCLI class
+
+**Use for:** Quick testing, scripting, headless operation
+
+### Dashboard Mode: `python -m vector_os_nano.cli.dashboard`
+
+Rich Textual TUI with tabs, real-time visualization, and monitoring.
+
+**Features:**
+- 5-tab interface: Dashboard (status + joint angles), Log (execution history), Skills (available), World (objects), Camera (live feed)
+- Real-time joint angle progress bars
+- Live camera viewer with RGB/depth and EdgeTAM tracking overlay
+- Status indicator dots (connection, hardware, tracking state)
+- ASCII logo + system summary
+- Interactive command input with full LLM integration
+
+**Keyboard shortcuts:**
+- `F1-F5`: Switch between tabs
+- `F6`: Toggle fullscreen camera
+- `/`: Focus command input
+- `Ctrl+C`: Quit
+
+**Entry point code:** `vector_os_nano/cli/dashboard.py` — DashboardApp class + main()
+
+**Use for:** Development, monitoring, debugging, camera inspection
+
+### Testing Modes
+
+Both entry points support flags to simulate missing hardware:
+
+```bash
+# No arm (e.g., perception testing on CPU without serial hardware)
+python run.py --no-arm
+python -m vector_os_nano.cli.dashboard --no-arm
+
+# No camera + perception (e.g., control testing without GPU)
+python run.py --no-perception
+python -m vector_os_nano.cli.dashboard --no-perception
+
+# Fully simulated (e.g., development without any hardware)
+python run.py --no-arm --no-perception
+python -m vector_os_nano.cli.dashboard --no-arm --no-perception
+```
+
+If a hardware component fails to initialize, that component is marked unavailable and dependent skills degrade gracefully (return `ExecutionResult(success=False, reason="...")`).
+
+### Hardware Initialization Order
+
+Both entry points initialize hardware in this order:
+1. **SO-101 arm** (serial connection to `/dev/ttyACM0` or configured port)
+2. **RealSense D405 camera** (USB 3.x)
+3. **Moondream VLM** (GPU inference, ~1.8GB download on first run)
+4. **EdgeTAM tracker** (GPU inference, real-time segmentation)
+5. **Calibration** (YAML file from `config/workspace_calibration.yaml`, optional)
+6. **Agent initialization** + skill registry assembly
+
+Failure at any step logs a warning and continues with that component disabled.
+
+
 ## Data Flow
 
 ### User Command → Hardware Motion
