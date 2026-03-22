@@ -36,7 +36,7 @@ except ImportError:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-_VERSION = "0.1.0"
+from vector_os_nano.version import __version__ as _VERSION
 
 # ---------------------------------------------------------------------------
 # ASCII logo — Rich markup, teal color matching Catppuccin Mocha palette
@@ -975,116 +975,32 @@ else:  # pragma: no cover
 def main() -> None:
     """Entry point for 'vector-os-dashboard' console script.
 
-    Boots the full stack (arm + camera + VLM + tracker + calibration + LLM)
-    then launches the Textual TUI. Same hardware init as run.py.
+    Delegates to run.py with --dashboard to avoid duplicating hardware init.
     """
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Vector OS Nano Dashboard")
-    parser.add_argument("--port", default="/dev/ttyACM0", help="Serial port")
-    parser.add_argument("--no-arm", action="store_true", help="No arm hardware")
-    parser.add_argument("--no-perception", action="store_true", help="No camera/VLM")
-    parser.add_argument("--llm-key", default=None, help="LLM API key")
-    parser.add_argument("--config", default=None, help="Config YAML path")
-    args = parser.parse_args()
-
-    if not TEXTUAL_AVAILABLE:
-        print("ERROR: textual not installed. pip install 'vector-os-nano[tui]'")
-        sys.exit(1)
-
-    from vector_os_nano.core.agent import Agent
-    from vector_os_nano.core.config import load_config
-
-    cfg = load_config(args.config or "config/user.yaml")
-
-    # --- Arm ---
-    arm = None
-    gripper = None
-    if not args.no_arm:
-        try:
-            from vector_os_nano.hardware.so101 import SO101Arm, SO101Gripper
-            port = args.port or cfg.get("arm", {}).get("port", "/dev/ttyACM0")
-            arm = SO101Arm(port=port)
-            print(f"Connecting arm on {port}...")
-            arm.connect()
-            gripper = SO101Gripper(arm._bus)
-            print(f"Arm connected. Joints: {[round(j,2) for j in arm.get_joint_positions()]}")
-        except Exception as exc:
-            print(f"Arm not available: {exc}")
-
-    # --- Perception ---
-    perception = None
-    if not args.no_perception:
-        try:
-            from vector_os_nano.perception.realsense import RealSenseCamera
-            from vector_os_nano.perception.vlm import VLMDetector
-            from vector_os_nano.perception.tracker import EdgeTAMTracker
-            from vector_os_nano.perception.pipeline import PerceptionPipeline
-
-            print("Connecting camera...")
-            camera = RealSenseCamera()
-            camera.connect()
-            print("Camera connected.")
-
-            vlm_model = cfg.get("perception", {}).get("vlm_model") or os.environ.get("MOONDREAM_MODEL", "vikhyatk/moondream2")
-            os.environ.setdefault("MOONDREAM_MODEL", vlm_model)
-            print(f"Loading VLM ({vlm_model})...")
-            vlm = VLMDetector()
-            print("VLM loaded.")
-
-            print("Loading tracker (EdgeTAM)...")
-            tracker = EdgeTAMTracker()
-            print("Tracker loaded.")
-
-            perception = PerceptionPipeline(camera=camera, vlm=vlm, tracker=tracker)
-            print("Perception ready.")
-        except Exception as exc:
-            print(f"Perception not available: {exc}")
-
-    # --- Calibration ---
-    calibration = None
-    cal_file = cfg.get("calibration", {}).get("file", "config/workspace_calibration.yaml")
-    if cal_file and os.path.exists(cal_file):
-        try:
-            import yaml
-            import numpy as np
-            from vector_os_nano.perception.calibration import Calibration
-            with open(cal_file) as fh:
-                data = yaml.safe_load(fh)
-            if isinstance(data, dict) and "transform_matrix" in data:
-                cal = Calibration()
-                cal._matrix = np.array(data["transform_matrix"], dtype=np.float64)
-                pts_cam = data.get("points_camera")
-                pts_base = data.get("points_base")
-                if pts_cam and pts_base:
-                    cal._cal_points_cam = np.array(pts_cam, dtype=np.float64)
-                    cal._cal_points_base = np.array(pts_base, dtype=np.float64)
-                calibration = cal
-                print(f"Calibration loaded ({data.get('num_points', '?')} points)")
-        except Exception as exc:
-            print(f"Calibration failed: {exc}")
-
-    # --- Agent ---
-    api_key = args.llm_key or cfg.get("llm", {}).get("api_key") or os.environ.get("OPENROUTER_API_KEY")
-    agent = Agent(arm=arm, gripper=gripper, perception=perception, llm_api_key=api_key, config=cfg)
-    if calibration:
-        agent._calibration = calibration
-
-    print(f"\nSkills: {', '.join(agent.skills)}")
-    print(f"LLM: {'configured' if api_key else 'none'}")
-    print(f"Perception: {'ready' if perception else 'not available'}")
-    print(f"Calibration: {'loaded' if calibration else 'not loaded'}\n")
-
-    # --- Launch TUI ---
-    app = DashboardApp(agent=agent)
+    import sys as _sys
+    if "--dashboard" not in _sys.argv and "-d" not in _sys.argv:
+        _sys.argv.append("--dashboard")
     try:
-        app.run()
-    finally:
-        if arm:
-            arm.disconnect()
-            print("Arm disconnected.")
-        if perception and hasattr(perception, "stop_continuous_tracking"):
-            perception.stop_continuous_tracking()
+        import importlib.util as _ilu
+        import os as _os
+        # Resolve run.py: vector_os_nano/cli/dashboard.py -> three levels up
+        _run_path = _os.path.join(
+            _os.path.dirname(_os.path.dirname(_os.path.dirname(
+                _os.path.abspath(__file__)
+            ))),
+            "run.py",
+        )
+        _spec = _ilu.spec_from_file_location("_vector_run", _run_path)
+        if _spec is not None and _spec.loader is not None:
+            _run_mod = _ilu.module_from_spec(_spec)
+            _spec.loader.exec_module(_run_mod)  # type: ignore[union-attr]
+            _run_mod.main()
+            return
+    except Exception:
+        pass
+    # Fallback: run.py is on sys.path (installed entry-point scenario)
+    from run import main as _run_main  # type: ignore[import]
+    _run_main()
 
 
 if __name__ == "__main__":  # pragma: no cover

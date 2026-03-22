@@ -89,8 +89,8 @@ dev = [
 ]
 
 [project.scripts]
-vector-os = "vector_os_nano.cli.simple:main"
-vector-os-dashboard = "vector_os_nano.cli.dashboard:main"
+vector-os = "run:main"
+vector-os-dashboard = "run:main_dashboard"
 
 [tool.hatch.build.targets.wheel]
 packages = ["vector_os_nano"]

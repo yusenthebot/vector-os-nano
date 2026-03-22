@@ -11,7 +11,7 @@ SDK complete and production-ready. Full pick pipeline end-to-end working on hard
 | Agent | Model | Status | Current Work | Branch | Notes |
 |-------|-------|--------|--------------|--------|-------|
 | Lead (Opus) | claude-opus-4-6 | idle | Documentation review complete | — | Architecture approved, v0.1.0 release ready |
-| Alpha (Sonnet) | claude-sonnet-4-6 | done | TUI improvements: logo, input fix, status dots, joint bars, skill progress | feat/alpha-tui-improvements | 30/30 dashboard tests passing |
+| Alpha (Sonnet) | claude-sonnet-4-6 | done | Unified launcher: run.py single entry point for CLI+Dashboard, removed duplicate hardware init from dashboard.py | feat/alpha-unified-launcher | 687 tests passing |
 | Beta (Sonnet) | claude-sonnet-4-6 | done | Camera TUI tab: frame_renderer.py + Camera tab + F5/F6 bindings | feat/beta-camera-tui | 710 tests passing (was 696) |
 | Gamma (Sonnet) | claude-sonnet-4-6 | idle | All wave tasks complete | — | Awaiting next feature phase |
 | Scribe (Haiku) | claude-haiku-4-5 | done | Documentation update for unified launcher | dev | README, testing-guide, architecture, progress, status updated |

@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_VERSION = "0.1.0"
+from vector_os_nano.version import __version__ as _VERSION
 
 
 class SimpleCLI:
@@ -29,7 +29,10 @@ class SimpleCLI:
         "place":  "Place held object: place [x y z]",
         "home":   "Move arm to home position",
         "scan":   "Move arm to scan position",
+        "open":   "Open gripper",
+        "close":  "Close gripper",
         "detect": "Detect objects: detect [query]",
+        "stop":   "Stop all tasks, return home",
         "status": "Show system status",
         "skills": "List available skills",
         "world":  "Show world model state",

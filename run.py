@@ -1,17 +1,20 @@
-"""Vector OS Nano — Full System.
+"""Vector OS Nano — unified launcher.
 
 Connects SO-101 arm + D405 camera + VLM (Moondream) + EdgeTAM tracker + LLM.
 
 Usage::
 
-    cd ~/Desktop/vector_os
-    python run.py
+    python run.py              # CLI mode (default)
+    python run.py --dashboard  # TUI dashboard mode
+    python run.py --cli        # CLI mode (explicit)
+    python run.py -d           # TUI dashboard (short flag)
 
 Set OPENROUTER_API_KEY in the environment (or in config/user.yaml) before
 running if you want LLM-powered natural language control.
 
 No ROS2 required — pure Python.
 """
+import argparse
 import os
 import sys
 import logging
@@ -102,19 +105,29 @@ def _load_calibration_yaml(cal_file: str) -> "Calibration | None":
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Hardware initialisation — single code path shared by CLI and Dashboard
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    """Boot the full Vector OS Nano stack and start the interactive CLI."""
-    from vector_os_nano.core.agent import Agent
-    from vector_os_nano.core.config import load_config
+def _init_hardware(cfg: dict) -> tuple:
+    """Initialise arm, camera, VLM, tracker, and calibration from config.
 
-    cfg = load_config("config/user.yaml")
+    Startup order mirrors perception.launch.py from vector_ws:
+      1. Arm
+      2. Camera
+      3. VLM (Moondream)  — may download ~1.8 GB on first run
+      4. Tracker (EdgeTAM)
+      5. Calibration
 
-    # -----------------------------------------------------------------------
+    Args:
+        cfg: Loaded config dict (from load_config).
+
+    Returns:
+        Tuple of (arm, gripper, perception, calibration).
+        Any component that fails to start is returned as None.
+    """
+    # -------------------------------------------------------------------
     # Arm
-    # -----------------------------------------------------------------------
+    # -------------------------------------------------------------------
     arm = None
     gripper = None
     try:
@@ -129,14 +142,9 @@ def main() -> None:
     except Exception as exc:
         print(f"Arm not available: {exc}")
 
-    # -----------------------------------------------------------------------
+    # -------------------------------------------------------------------
     # Camera + Perception
-    # Startup order mirrors perception.launch.py from vector_ws:
-    #   1. Camera
-    #   2. VLM (Moondream)   — delayed in ROS2 launch by 3 s after camera
-    #   3. Tracker (EdgeTAM) — loaded after VLM
-    #   4. Pipeline assembly
-    # -----------------------------------------------------------------------
+    # -------------------------------------------------------------------
     perception = None
     try:
         from vector_os_nano.perception.realsense import RealSenseCamera
@@ -177,11 +185,11 @@ def main() -> None:
         print(f"Perception not available: {exc}")
         traceback.print_exc()
 
-    # -----------------------------------------------------------------------
+    # -------------------------------------------------------------------
     # Calibration
-    # Prefer YAML format (from vector_ws wizard).  The vector_os Calibration
+    # Prefer YAML format (from vector_ws wizard). The vector_os Calibration
     # class normally loads .npy files; we provide a YAML bridge here.
-    # -----------------------------------------------------------------------
+    # -------------------------------------------------------------------
     calibration = None
     cal_file: str = cfg.get("calibration", {}).get(
         "file", "config/workspace_calibration.yaml"
@@ -209,40 +217,44 @@ def main() -> None:
     else:
         print(f"No calibration file at {cal_file!r} — running without calibration.")
 
-    # -----------------------------------------------------------------------
-    # Agent
-    # -----------------------------------------------------------------------
-    api_key = cfg.get("llm", {}).get("api_key") or os.environ.get("OPENROUTER_API_KEY")
+    return arm, gripper, perception, calibration
 
-    agent = Agent(
-        arm=arm,
-        gripper=gripper,
-        perception=perception,
-        llm_api_key=api_key,
-        config=cfg,
-        # auto_perception=False: perception already wired above
-    )
 
-    # Inject calibration loaded from YAML (bypasses Calibration.load() .npy path)
-    if calibration is not None:
-        agent._calibration = calibration
+# ---------------------------------------------------------------------------
+# Cleanup helper
+# ---------------------------------------------------------------------------
 
-    # -----------------------------------------------------------------------
-    # Status summary
-    # -----------------------------------------------------------------------
-    print()
-    print(f"Skills    : {', '.join(agent.skills)}")
-    print(f"LLM       : {'configured (' + cfg.get('llm', {}).get('model', 'unknown') + ')' if api_key else 'none (set OPENROUTER_API_KEY)'}")
-    print(f"Perception: {'ready' if perception else 'not available'}")
-    print(f"Calibration: {'loaded' if calibration else 'not loaded'}")
-    print()
+def _shutdown(arm, perception) -> None:
+    """Disconnect hardware gracefully."""
+    print("Shutting down...")
+    if perception is not None and hasattr(perception, "stop_continuous_tracking"):
+        try:
+            perception.stop_continuous_tracking()
+        except Exception as exc:
+            logger.warning("Error stopping background tracking: %s", exc)
+    if arm is not None:
+        try:
+            arm.disconnect()
+            print("Arm disconnected.")
+        except Exception as exc:
+            logger.warning("Error disconnecting arm: %s", exc)
+    if perception is not None and hasattr(perception, "disconnect"):
+        try:
+            perception.disconnect()
+            print("Perception disconnected.")
+        except Exception as exc:
+            logger.warning("Error disconnecting perception: %s", exc)
 
-    # -----------------------------------------------------------------------
-    # Live camera viewer (background thread)
-    # Shows raw feed + bounding box overlay in an OpenCV window
-    # -----------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# CLI mode — readline shell + OpenCV camera viewer
+# ---------------------------------------------------------------------------
+
+def _run_cli(agent, perception) -> None:
+    """Start SimpleCLI and an OpenCV camera viewer (background thread)."""
     camera_thread = None
     stop_camera = None
+
     if perception is not None and hasattr(perception, '_camera') and perception._camera is not None:
         import threading
         import cv2
@@ -347,9 +359,6 @@ def main() -> None:
         camera_thread.start()
         print("Viewer started: RGB + Depth side-by-side (ESC to close)")
 
-    # -----------------------------------------------------------------------
-    # CLI
-    # -----------------------------------------------------------------------
     from vector_os_nano.cli.simple import SimpleCLI
     cli = SimpleCLI(agent=agent, verbose=True)
 
@@ -358,28 +367,113 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\nKeyboard interrupt received.")
     finally:
-        print("Shutting down...")
         if stop_camera is not None:
             stop_camera.set()
         if camera_thread is not None:
             camera_thread.join(timeout=2.0)
-        if perception is not None and hasattr(perception, "stop_continuous_tracking"):
-            try:
-                perception.stop_continuous_tracking()
-            except Exception as exc:
-                logger.warning("Error stopping background tracking: %s", exc)
-        if arm is not None:
-            try:
-                arm.disconnect()
-                print("Arm disconnected.")
-            except Exception as exc:
-                logger.warning("Error disconnecting arm: %s", exc)
-        if perception is not None and hasattr(perception, "disconnect"):
-            try:
-                perception.disconnect()
-                print("Perception disconnected.")
-            except Exception as exc:
-                logger.warning("Error disconnecting perception: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Dashboard mode — Textual TUI (dashboard launches its own OpenCV viewer via F1)
+# ---------------------------------------------------------------------------
+
+def _run_dashboard(agent) -> None:
+    """Start the Textual TUI dashboard with the given agent."""
+    try:
+        from vector_os_nano.cli.dashboard import DashboardApp, TEXTUAL_AVAILABLE
+    except ImportError as exc:
+        print(f"Dashboard import failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if not TEXTUAL_AVAILABLE:
+        print("ERROR: textual not installed. pip install 'vector-os-nano[tui]'")
+        sys.exit(1)
+
+    app = DashboardApp(agent=agent)
+    try:
+        app.run()
+    except KeyboardInterrupt:
+        print("\nKeyboard interrupt received.")
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    """Boot the full Vector OS Nano stack and start CLI or Dashboard."""
+    parser = argparse.ArgumentParser(
+        description="Vector OS Nano — unified launcher",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "examples:\n"
+            "  python run.py              # CLI (default)\n"
+            "  python run.py --dashboard  # TUI dashboard\n"
+            "  python run.py -d           # TUI dashboard (short flag)\n"
+            "  python run.py --cli        # CLI (explicit)\n"
+        ),
+    )
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--dashboard", "-d",
+        action="store_true",
+        help="Launch the Textual TUI dashboard instead of the CLI",
+    )
+    mode_group.add_argument(
+        "--cli",
+        action="store_true",
+        help="Launch the readline CLI (default when no flag given)",
+    )
+    args = parser.parse_args()
+
+    dashboard_mode: bool = args.dashboard
+
+    from vector_os_nano.core.agent import Agent
+    from vector_os_nano.core.config import load_config
+
+    cfg = load_config("config/user.yaml")
+    arm, gripper, perception, calibration = _init_hardware(cfg)
+
+    api_key = cfg.get("llm", {}).get("api_key") or os.environ.get("OPENROUTER_API_KEY")
+    agent = Agent(
+        arm=arm,
+        gripper=gripper,
+        perception=perception,
+        llm_api_key=api_key,
+        config=cfg,
+    )
+
+    # Inject calibration loaded from YAML (bypasses Calibration.load() .npy path)
+    if calibration is not None:
+        agent._calibration = calibration
+
+    # Status summary
+    print()
+    print(f"Skills    : {', '.join(agent.skills)}")
+    llm_label = (
+        "configured (" + cfg.get("llm", {}).get("model", "unknown") + ")"
+        if api_key else "none (set OPENROUTER_API_KEY)"
+    )
+    print(f"LLM       : {llm_label}")
+    print(f"Perception: {'ready' if perception else 'not available'}")
+    print(f"Calibration: {'loaded' if calibration else 'not loaded'}")
+    print()
+
+    try:
+        if dashboard_mode:
+            _run_dashboard(agent)
+        else:
+            _run_cli(agent, perception)
+    finally:
+        _shutdown(arm, perception)
+
+
+def main_dashboard() -> None:
+    """Entry point that forces dashboard mode — used by vector-os-dashboard script."""
+    # Inject --dashboard so main()'s argparse picks it up
+    if "--dashboard" not in sys.argv and "-d" not in sys.argv:
+        sys.argv.append("--dashboard")
+    main()
 
 
 if __name__ == "__main__":
