@@ -187,10 +187,11 @@ class PickSkill:
 
         # Step 3: Empirical X/Y offsets (from vector_ws hardware tuning)
         # These offsets absorb tip-to-link offset + servo errors + URDF inaccuracy
-        base_pos[0] += x_offset + 0.02  # uniform +2cm forward (empirical)
-
-        # Gripper asymmetry Y compensation — uniform +2cm (half gripper width)
-        base_pos[1] += 0.02
+        # Skipped when hardware_offsets=false (sim mode — positions already correct)
+        if cfg.get("hardware_offsets", True):
+            base_pos[0] += x_offset + 0.02  # uniform +2cm forward (empirical)
+            # Gripper asymmetry Y compensation — uniform +2cm (half gripper width)
+            base_pos[1] += 0.02
 
         logger.info(
             "[PICK] Raw base: (%.1f, %.1f, %.1f) cm, z_offset=%.0fcm, pre_grasp_h=%.0fcm",
@@ -232,6 +233,11 @@ class PickSkill:
             return SkillResult(success=False, error_message="IK failed for pre-grasp")
         q_pregrasp = list(q_pregrasp_result)
 
+        # Wrist roll offset (sim mode: +pi/2 to orient gripper fingers for top-down grasp)
+        wrist_roll_offset: float = cfg.get("wrist_roll_offset", 0.0)
+        if wrist_roll_offset != 0.0 and len(q_pregrasp) == 5:
+            q_pregrasp[4] += wrist_roll_offset
+
         # Grasp position (warm-started from pre-grasp for minimal joint change)
         q_grasp_result = context.arm.ik(
             (base_pos[0], base_pos[1], base_pos[2]),
@@ -240,6 +246,9 @@ class PickSkill:
         if q_grasp_result is None:
             return SkillResult(success=False, error_message="IK failed for grasp position")
         q_grasp = list(q_grasp_result)
+
+        if wrist_roll_offset != 0.0 and len(q_grasp) == 5:
+            q_grasp[4] += wrist_roll_offset
 
         logger.info(
             "[PICK] IK solved: pre-grasp Z=%.1fcm, grasp Z=%.1fcm",
@@ -280,11 +289,22 @@ class PickSkill:
         if not context.arm.move_joints(home_joints, duration=_HOME_DURATION):
             return SkillResult(success=False, error_message="Return home after pick failed")
 
-        # Step 14: Open gripper to drop object
+        # Step 14: Place — rotate 90deg to drop object outside workspace
+        drop_joints = list(home_joints)
+        drop_joints[0] = drop_joints[0] + 1.57  # shoulder_pan +90deg
+        logger.info("[PICK] Rotating to drop position ...")
+        context.arm.move_joints(drop_joints, duration=_HOME_DURATION)
+
+        # Step 15: Open gripper to drop object, then close to rest state
         logger.info("[PICK] Dropping object ...")
         if context.gripper is not None:
             context.gripper.open()
-            time.sleep(0.3)
+            time.sleep(0.5)
+            context.gripper.close()
+
+        # Step 16: Return home
+        logger.info("[PICK] Returning home ...")
+        context.arm.move_joints(home_joints, duration=_HOME_DURATION)
 
         # Step 15: Clear world model — object has moved, stale data is dangerous
         # Remove ALL objects so next pick forces fresh scan+detect

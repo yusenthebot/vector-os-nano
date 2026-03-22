@@ -23,11 +23,14 @@ import logging
 os.environ["QT_LOGGING_RULES"] = "*=false"
 os.environ["OPENCV_LOG_LEVEL"] = "ERROR"
 
-# Pre-import cv2 with stderr suppressed to catch Qt font warnings
+# Pre-import cv2 with stderr suppressed to catch Qt font warnings.
+# Skip if cv2 is not installed (e.g. sim-only mode without perception).
 _stderr = sys.stderr
 try:
     sys.stderr = open(os.devnull, "w")
     import cv2 as _cv2_preload  # noqa: F401 — triggers Qt init
+except ImportError:
+    pass
 finally:
     sys.stderr = _stderr
 
@@ -221,6 +224,72 @@ def _init_hardware(cfg: dict) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# Simulation initialisation — MuJoCo sim, no real hardware needed
+# ---------------------------------------------------------------------------
+
+def _init_sim(cfg: dict, gui: bool = False) -> tuple:
+    """Initialise MuJoCo simulated arm, gripper, and perception.
+
+    Perception uses MuJoCo ground-truth object positions (no camera/VLM).
+    Calibration is identity (positions already in world frame).
+
+    Args:
+        cfg: Config dict (currently unused for sim, reserved for future options).
+        gui: Open the MuJoCo viewer window for visual feedback.
+
+    Returns:
+        Tuple of (arm, gripper, perception, calibration).
+    """
+    from vector_os_nano.hardware.sim.mujoco_arm import MuJoCoArm
+    from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper
+    from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
+    from vector_os_nano.perception.calibration import Calibration
+
+    print("Starting MuJoCo simulation...")
+    arm = MuJoCoArm(gui=gui)
+    arm.connect()
+    gripper = MuJoCoGripper(arm)
+
+    # Start with gripper closed (rest state)
+    gripper.close()
+
+    joints = [round(j, 2) for j in arm.get_joint_positions()]
+    print(f"Sim arm connected. Joints: {joints}")
+
+    objs = arm.get_object_positions()
+    if objs:
+        print(f"Scene objects: {', '.join(objs.keys())}")
+
+    # Simulated perception — ground truth from MuJoCo
+    perception = MuJoCoPerception(arm)
+    print("Sim perception ready (ground-truth mode).")
+
+    # Identity calibration — sim positions are already in base frame
+    calibration = Calibration()
+
+    # Override config for sim mode:
+    # 1. Disable real-robot hardware offsets (sim positions are world-frame)
+    # 2. Set sim-appropriate z_offset and pre-grasp height
+    # Real-robot config (in user.yaml) is NOT touched.
+    import math as _math
+    cfg.setdefault("skills", {}).setdefault("pick", {}).update({
+        "z_offset": 0.0,
+        "x_offset": 0.0,
+        "pre_grasp_height": 0.04,
+        "hardware_offsets": False,
+        "wrist_roll_offset": _math.pi / 2,
+    })
+    cfg.setdefault("skills", {}).setdefault("home", {}).setdefault(
+        "joint_values", [0.0, 0.0, 0.0, 0.0, 0.0]
+    )
+
+    # Sim motion speed: default duration for arm moves (seconds)
+    cfg["sim_move_duration"] = 3.0
+
+    return arm, gripper, perception, calibration
+
+
+# ---------------------------------------------------------------------------
 # Cleanup helper
 # ---------------------------------------------------------------------------
 
@@ -244,6 +313,8 @@ def _shutdown(arm, perception) -> None:
             print("Perception disconnected.")
         except Exception as exc:
             logger.warning("Error disconnecting perception: %s", exc)
+    # Force exit — MuJoCo viewer GL context can hang the process
+    os._exit(0)
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +482,8 @@ def main() -> None:
             "  python run.py --dashboard  # TUI dashboard\n"
             "  python run.py -d           # TUI dashboard (short flag)\n"
             "  python run.py --cli        # CLI (explicit)\n"
+            "  python run.py --sim        # MuJoCo simulation (no hardware)\n"
+            "  python run.py --sim -d     # Sim + TUI dashboard\n"
         ),
     )
     mode_group = parser.add_mutually_exclusive_group()
@@ -424,15 +497,30 @@ def main() -> None:
         action="store_true",
         help="Launch the readline CLI (default when no flag given)",
     )
+    parser.add_argument(
+        "--sim",
+        action="store_true",
+        help="Use MuJoCo simulation instead of real hardware",
+    )
+    parser.add_argument(
+        "--sim-gui",
+        action="store_true",
+        help="Open MuJoCo viewer window (requires --sim)",
+    )
     args = parser.parse_args()
 
     dashboard_mode: bool = args.dashboard
+    sim_mode: bool = args.sim or args.sim_gui
 
     from vector_os_nano.core.agent import Agent
     from vector_os_nano.core.config import load_config
 
     cfg = load_config("config/user.yaml")
-    arm, gripper, perception, calibration = _init_hardware(cfg)
+
+    if sim_mode:
+        arm, gripper, perception, calibration = _init_sim(cfg, gui=args.sim_gui)
+    else:
+        arm, gripper, perception, calibration = _init_hardware(cfg)
 
     api_key = cfg.get("llm", {}).get("api_key") or os.environ.get("OPENROUTER_API_KEY")
     agent = Agent(
@@ -449,6 +537,8 @@ def main() -> None:
 
     # Status summary
     print()
+    if sim_mode:
+        print(f"Mode      : MuJoCo simulation {'(GUI)' if args.sim_gui else '(headless)'}")
     print(f"Skills    : {', '.join(agent.skills)}")
     llm_label = (
         "configured (" + cfg.get("llm", {}).get("model", "unknown") + ")"

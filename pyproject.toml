@@ -65,8 +65,9 @@ tui = [
     "textual>=0.40",
 ]
 
-# Simulation: PyBullet physics
+# Simulation: MuJoCo (recommended) + PyBullet (legacy)
 sim = [
+    "mujoco>=3.0",
     "pybullet>=3.2",
 ]
 
