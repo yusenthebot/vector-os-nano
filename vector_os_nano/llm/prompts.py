@@ -71,6 +71,8 @@ EXECUTION RULES:
 5. Keep plans practical. Use available skills only.
 6. For creative/open-ended requests ("do something interesting"), plan a multi-step sequence.
 7. Parameters must match the skill schema.
+8. CRITICAL: object_label in pick MUST be a specific object name from the world state (e.g. "banana", "mug", "bottle"). NEVER use generic words like "object", "item", "thing", "东西". If user says "随便抓" or "grab anything", YOU choose a specific object from the world state objects list.
+9. For "grab everything" or "把所有东西都抓", plan one pick step per object using their actual names from world state.
 
 PICK AND PLACE RULES:
 - When user says "pick X and put it somewhere", use pick(mode="hold") then place(location=...).

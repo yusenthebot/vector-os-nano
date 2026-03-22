@@ -203,8 +203,8 @@ class SimpleCLI:
 
     @staticmethod
     def _quiet_logging() -> None:
-        """Suppress verbose logs for clean CLI output."""
-        logging.getLogger().setLevel(logging.WARNING)
+        """Suppress all logs for clean CLI output. Use -v to restore."""
+        logging.getLogger().setLevel(logging.ERROR)
 
     def _print_banner(self) -> None:
         import pathlib as _pl
