@@ -261,6 +261,7 @@ if TEXTUAL_AVAILABLE:
             self._current_skill: str = ""
             self._skill_progress: tuple[int, int] = (0, 0)
             self._last_result: str = ""
+            self._stop_requested: bool = False
 
         # ------------------------------------------------------------------
         # Compose
@@ -662,6 +663,9 @@ if TEXTUAL_AVAILABLE:
                     import json as _json
                     self._log(_json.dumps(self._agent.world.to_dict(), indent=2, default=str))
                 return
+            if cmd in ("stop", "e-stop", "estop"):
+                self._do_stop()
+                return
             if cmd in ("quit", "exit", "q", "bye"):
                 self._log("[dim]Goodbye.[/dim]")
                 self.exit(return_code=0)
@@ -753,13 +757,37 @@ if TEXTUAL_AVAILABLE:
         # ------------------------------------------------------------------
 
         def action_estop(self) -> None:
-            """Emergency stop — halts arm immediately."""
-            if self._agent is not None:
+            """Emergency stop — halts arm immediately and goes home."""
+            self._do_stop()
+
+        def _do_stop(self) -> None:
+            """Stop all tasks, halt arm, go home."""
+            self._stop_requested = True
+            self._log("[bold red]STOP — cancelling all tasks[/bold red]")
+
+            if self._agent is None:
+                return
+
+            # Stop arm motion immediately
+            try:
+                self._agent.stop()
+            except Exception as exc:
+                logger.warning("Stop error: %s", exc)
+
+            # Go home in background thread
+            import threading
+            def _go_home():
                 try:
-                    self._agent.stop()
+                    self._agent.execute("home")
+                    self.call_from_thread(self._log, "[green]Returned to home position[/green]")
                 except Exception as exc:
-                    logger.warning("E-stop error: %s", exc)
-            self._log("[bold red]E-STOP ACTIVATED[/bold red]")
+                    self.call_from_thread(self._log, f"[red]Home failed: {exc}[/red]")
+                finally:
+                    self._stop_requested = False
+                    self._current_skill = ""
+                    self._skill_progress = (0, 0)
+
+            threading.Thread(target=_go_home, daemon=True).start()
 
         def action_switch_tab(self, tab_id: str) -> None:
             """Switch the active tab by ID."""
