@@ -832,6 +832,30 @@ if TEXTUAL_AVAILABLE:
                 perception = self._agent._perception
                 self._cv_viewer_active = True
 
+                # Load PIL font for Chinese text
+                from PIL import Image as PILImage, ImageDraw, ImageFont
+                _pil_font = None
+                for fp in [
+                    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+                    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                    "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+                    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+                ]:
+                    if os.path.exists(fp):
+                        try:
+                            _pil_font = ImageFont.truetype(fp, 16)
+                            break
+                        except Exception:
+                            pass
+
+                def _put_text(img, text, pos, color=(0, 255, 0)):
+                    if _pil_font is None:
+                        cv2.putText(img, text, pos, cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                        return img
+                    pil = PILImage.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+                    ImageDraw.Draw(pil).text(pos, text, font=_pil_font, fill=color)
+                    return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+
                 def _viewer_loop() -> None:
                     try:
                         cam = perception._camera
@@ -845,37 +869,44 @@ if TEXTUAL_AVAILABLE:
                                 if color is None or depth is None:
                                     continue
 
-                                # RGB with bounding box overlay
+                                # --- RGB + tracking overlay ---
                                 rgb_display = color.copy()
                                 last_tracked = getattr(perception, "_last_tracked", [])
                                 for obj in last_tracked:
                                     if obj.bbox_2d:
                                         x1, y1, x2, y2 = [int(v) for v in obj.bbox_2d]
-                                        cv2.rectangle(
-                                            rgb_display, (x1, y1), (x2, y2), (0, 255, 0), 2
-                                        )
-                                        label = getattr(obj, "label", "object")
-                                        cv2.putText(
-                                            rgb_display,
-                                            label,
-                                            (x1, max(y1 - 5, 0)),
-                                            cv2.FONT_HERSHEY_SIMPLEX,
-                                            0.5,
-                                            (0, 255, 0),
-                                            1,
-                                        )
+                                        cv2.rectangle(rgb_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                                        lbl = getattr(obj, "label", "object")
+                                        if obj.pose:
+                                            lbl += f" ({obj.pose.x:.2f},{obj.pose.y:.2f},{obj.pose.z:.2f})"
+                                        rgb_display = _put_text(rgb_display, lbl, (x1, max(y1 - 20, 0)))
 
-                                # Depth colormap
+                                # --- Depth + mask + centroid ---
                                 depth_f = np.clip(depth.astype(np.float32), 0, 500)
                                 depth_u8 = (depth_f / 500.0 * 255).astype(np.uint8)
-                                depth_colored = cv2.applyColorMap(
-                                    depth_u8, cv2.COLORMAP_JET
-                                )
+                                depth_colored = cv2.applyColorMap(depth_u8, cv2.COLORMAP_JET)
+
+                                for obj in last_tracked:
+                                    # Mask contour
+                                    if obj.mask is not None and obj.mask.shape == depth_colored.shape[:2]:
+                                        contours, _ = cv2.findContours(
+                                            obj.mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                                        )
+                                        cv2.drawContours(depth_colored, contours, -1, (255, 255, 255), 2)
+                                    # Centroid dot
+                                    if obj.pose and obj.bbox_2d:
+                                        cx = int((obj.bbox_2d[0] + obj.bbox_2d[2]) / 2)
+                                        cy = int((obj.bbox_2d[1] + obj.bbox_2d[3]) / 2)
+                                        cv2.circle(depth_colored, (cx, cy), 6, (0, 255, 0), -1)
+                                        cv2.circle(depth_colored, (cx, cy), 8, (255, 255, 255), 2)
+                                        info = f"{obj.pose.x:.3f},{obj.pose.y:.3f},{obj.pose.z:.3f}"
+                                        cv2.putText(depth_colored, info, (cx + 10, cy),
+                                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
                                 combined = np.hstack([rgb_display, depth_colored])
                                 cv2.imshow("Vector OS", combined)
                                 key = cv2.waitKey(33)
-                                if key == 27:  # ESC
+                                if key == 27:
                                     break
                             except Exception:
                                 pass
