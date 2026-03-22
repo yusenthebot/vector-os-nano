@@ -1,72 +1,165 @@
 # Vector OS Nano SDK — Progress
 
 **Last updated:** 2026-03-22
-**Status:** v0.1.0 + MuJoCo sim + Web Dashboard — full NL pick-and-place, AI chat, web UI
+**Status:** v0.1.0 — MuJoCo sim + Multi-stage Agent Pipeline + AI Chat + Web Dashboard
 
 ## What Works
 
-- Full NL pipeline: "抓杯子" → LLM → scan → detect → pick → place (rotate + drop) → home
-- **Web Dashboard**: `python run.py --web` — localhost:8000, real-time AI chat with Claude Haiku, live robot status, dark glassmorphism theme, WebSocket bidirectional, multi-turn conversation
-- **MuJoCo simulation**: `python run.py --sim` — SO-101 arm with real STL meshes, 6 mesh objects (banana, mug, bottle, screwdriver, duck, lego), weld-based grasping, smooth real-time motion, pick-and-place with rotate-and-drop
-- **Simulated perception**: ground-truth object detection from MuJoCo state, Chinese/English NL queries
-- Direct commands without LLM: home, scan, open, close (instant, no API call)
+- Full NL pipeline: "抓杯子" → classify → plan → execute (scan→detect→pick→place→home) → summarize
+- Multi-stage Agent Pipeline: CLASSIFY → ROUTE → PLAN → EXECUTE → ADAPT → SUMMARIZE
+- AI Chat (V): multi-turn conversation with Claude Haiku, context-aware (knows robot state + objects)
+- MuJoCo simulation: SO-101 with real STL meshes, 6 mesh objects, weld grasping, smooth real-time motion
+- Simulated perception: ground-truth object detection, Chinese/English NL queries
+- Web Dashboard: localhost:8000, real-time WebSocket chat + status
+- Direct commands without LLM: home, scan, open, close (instant)
 - Chinese + English natural language
 - Live camera viewer: RGB + depth side-by-side, EdgeTAM tracking overlay
-- 733 unit tests passing
+- 733+ unit tests passing
 - ROS2 integration layer (optional, 5 nodes + launch file)
-- Textual TUI dashboard (5 tabs, real-time status, camera preview)
+- Textual TUI dashboard (5 tabs)
 - SO-101 arm driver (Feetech STS3215 serial)
-- Calibration wizard (TUI + readline)
-
-## Current Release: v0.1.0
-
-### Unified Launcher: run.py
-
-Single entry point with four modes:
-
-1. **CLI Mode** (default): `python run.py`
-   - Interactive readline shell, natural language commands
-
-2. **Dashboard Mode**: `python run.py --dashboard` or `-d`
-   - Rich TUI with 5 tabs, real-time visualization
-
-3. **Simulation Mode**: `python run.py --sim` (viewer) or `--sim-headless`
-   - MuJoCo physics with real SO-101 STL meshes
-   - 6 mesh objects: banana, mug, bottle, screwdriver, duck, lego
-   - Weld-constraint grasping (reliable, no contact/friction issues)
-   - Smooth real-time motion with linear interpolation
-   - Pick sequence: open → approach → grasp → lift → rotate 90deg → drop → home
-   - Sim perception: ground-truth positions, NL queries (Chinese + English)
-
-4. **Testing Modes**: `--no-arm`, `--no-perception`
 
 ## Architecture
 
-| Layer | Component | Status |
-|-------|-----------|--------|
-| LLM | Claude Haiku via OpenRouter | Working |
-| Planning | Task decomposition + executor | Working |
-| Perception | VLM + EdgeTAM + RealSense D405 (real) / MuJoCo ground-truth (sim) | Working |
-| Control | Pinocchio FK/IK + MuJoCo Jacobian IK | Working |
-| Hardware | SO-101 arm + gripper (real) / MuJoCo sim | Working |
-| Skills | pick, place, home, scan, detect | Working |
-| CLI | Readline shell + TUI dashboard | Working |
-| ROS2 | 5 nodes + launch file (optional) | Working |
+### Multi-Stage Agent Pipeline
+
+```
+User Input
+    |
+    v
+[Stage 1: CLASSIFY] — Haiku, fast intent detection
+    → chat | task | direct | query
+    |
+[Stage 2: ROUTE]
+    chat    → LLM response (V speaks, no action)
+    direct  → immediate skill execution (home, open, close)
+    query   → scan + detect + LLM summarize results
+    task    → Stage 3
+    |
+[Stage 3: PLAN] — Haiku, task decomposition
+    Input: user goal + skills + world state + objects
+    Output: { message: "好的主人...", steps: [scan, detect, pick, ...] }
+    → V speaks message BEFORE execution starts
+    |
+[Stage 4: EXECUTE] — deterministic, no LLM
+    For each step:
+      - Show progress: [1/5] pick
+      - Execute skill
+      - Check pre/postconditions
+      - On failure → Stage 5
+    |
+[Stage 5: ADAPT] — retry with context (up to 3 attempts)
+    |
+[Stage 6: SUMMARIZE] — Haiku, post-execution
+    → V reports what was done, what succeeded/failed
+```
+
+### System Layers
+
+```
+vector_os_nano/
+├── core/          Agent (multi-stage pipeline), Planner, Executor, WorldModel, Skill protocol
+├── llm/           Claude/OpenAI providers, classify/plan/chat/summarize prompts
+├── perception/    RealSense camera, Moondream VLM, EdgeTAM tracker, pointcloud
+├── hardware/
+│   ├── so101/     SO-101 arm driver (Feetech STS3215 serial, Pinocchio IK)
+│   └── sim/       MuJoCo simulation (arm, gripper, perception, 6 mesh objects)
+├── skills/        pick, place, home, scan, detect
+├── cli/           Interactive CLI with AI chat (V), braille logo
+├── web/           FastAPI + WebSocket dashboard (localhost:8000)
+└── ros2/          Optional ROS2 nodes + launch file (5 nodes)
+```
+
+### Config Files
+
+```
+config/
+├── default.yaml              # SDK defaults (arm, camera, LLM, skills)
+├── user.yaml                 # User overrides (API keys, gitignored)
+└── agent.md                  # V's system prompt (Identity, Safety, Skills, Behavior)
+```
+
+## Launcher Commands
+
+```bash
+# ─── Real Hardware ───
+python run.py                  # CLI mode (readline + AI chat)
+python run.py --dashboard      # Textual TUI dashboard
+python run.py -v               # Verbose mode (show all skill logs)
+
+# ─── MuJoCo Simulation ───
+python run.py --sim            # Sim with MuJoCo viewer + CLI
+python run.py --sim-headless   # Sim without viewer (headless)
+python run.py --sim -d         # Sim + TUI dashboard
+
+# ─── Web Dashboard ───
+python run.py --web            # Web dashboard at localhost:8000
+python run.py --web --sim      # Web + MuJoCo sim
+
+# ─── Testing ───
+python run.py --no-arm         # No arm hardware
+python run.py --no-perception  # No camera/perception
+```
+
+## CLI Commands
+
+```
+vector> 你好                    # AI chat (V responds)
+vector> 桌上有什么              # Query (scan + detect + V describes)
+vector> 抓杯子                  # Task (plan + execute + summarize)
+vector> 随便做点什么            # Creative task (LLM plans multi-step)
+vector> home                    # Direct command (instant, no LLM)
+vector> open / close            # Gripper control (instant)
+vector> scan                    # Move to scan position (instant)
+vector> detect                  # Detect all objects (instant)
+vector> status                  # Show robot status + objects
+vector> world                   # Show world model JSON
+vector> help                    # Show all commands
+vector> q                       # Quit
+```
+
+## MuJoCo Simulation
+
+- SO-101 arm with 13 real STL meshes from CAD model
+- 6 graspable objects: banana, mug, bottle, screwdriver, duck, lego brick
+- Weld-constraint grasping (reliable, no contact/friction issues)
+- Smooth real-time motion with linear interpolation + 60fps viewer sync
+- Pick sequence: open → approach → grasp → lift → rotate 90deg → drop → home
+- Simulated perception: ground-truth positions, NL queries (Chinese + English)
+- Jacobian-based IK solver (< 2mm accuracy)
+- Camera rendering for future VLM integration
+
+## AI Agent (V)
+
+- Name: V, calls user "主人"
+- System prompt: config/agent.md (Identity, Safety, Communication, Skills, Behavior)
+- Multi-turn conversation memory (30 turns)
+- Context-aware: knows robot mode, arm status, gripper state, objects on table
+- Intent classification: chat vs task vs direct vs query
+- Task planning: decomposes complex instructions into skill sequences
+- Post-execution summarization: reports results to user
 
 ## TODO (Next Priorities)
 
 ### 1. ~~MuJoCo Simulation~~ DONE
-- SO-101 with real STL meshes, 6 mesh objects, weld grasping
-- Sim perception, smooth motion, pick-and-place with rotate-drop
-- 26 unit tests + manual verification
+### 2. ~~Multi-stage Agent Pipeline~~ DONE
+### 3. ~~AI Chat (V)~~ DONE
 
-### 2. LLM Agent Brain Upgrade
-- Skill Manifest Protocol (ADR-002), multi-step planning
-- Multi-turn memory, model auto-select (Haiku/Sonnet)
+### 4. LLM Agent Brain Upgrade
+- Skill Manifest Protocol (ADR-002), richer skill descriptions
+- Better creative task decomposition
+- Multi-turn planning memory across commands
+- Model auto-select (Haiku for simple, Sonnet for complex)
 
-### 3. Pick Accuracy
-- Re-calibration, hand-eye calibration, grasp detection
+### 5. Pick Accuracy
+- Re-calibration, hand-eye calibration
+- Grasp success detection via servo current/load
 
-### 4. Merge & Release
-- Merge feat/vector-os-nano-python-sdk → main
+### 6. Web Dashboard Enhancement
+- MuJoCo camera render in browser
+- 3D joint visualization
+- Settings panel
+
+### 7. Merge & Release
+- Merge feat/vector-os-nano-python-sdk → master
 - Tag v0.1.0 release, PyPI publish
