@@ -181,7 +181,7 @@ class Agent:
         except Exception as exc:
             logger.debug("Could not sync robot state: %s", exc)
 
-    def execute(self, instruction: str) -> ExecutionResult:
+    def execute(self, instruction: str, on_message: Any = None, on_step: Any = None) -> ExecutionResult:
         """Execute a natural language instruction via multi-stage pipeline.
 
         Stage 1: CLASSIFY — determine intent (chat/task/direct/query)
@@ -193,6 +193,8 @@ class Agent:
 
         Args:
             instruction: Human-readable command string.
+            on_message: Optional callback(str) — called with AI message BEFORE execution.
+            on_step: Optional callback(step_name, step_idx, total) — called before each step.
 
         Returns:
             ExecutionResult with trace and AI message.
@@ -226,7 +228,7 @@ class Agent:
             return self._handle_query(instruction)
 
         # intent == "task" (or fallback)
-        return self._handle_task(instruction)
+        return self._handle_task(instruction, on_message=on_message, on_step=on_step)
 
     def _handle_chat(self, instruction: str) -> ExecutionResult:
         """Handle pure chat — LLM response, no robot action."""
@@ -286,7 +288,7 @@ class Agent:
             message=response,
         )
 
-    def _handle_task(self, instruction: str) -> ExecutionResult:
+    def _handle_task(self, instruction: str, on_message: Any = None, on_step: Any = None) -> ExecutionResult:
         """Handle task — plan, execute, summarize."""
         self._conversation_history = [{"role": "user", "content": instruction}]
 
@@ -318,15 +320,21 @@ class Agent:
                 )
 
             if not plan.steps:
-                # LLM returned message but no steps — treat as chat
                 return ExecutionResult(
                     success=True,
                     status="chat",
                     message=plan.message or "I'm not sure what to do.",
                 )
 
+            # ── Push AI message BEFORE execution ──
+            if plan_message and on_message:
+                on_message(plan_message)
+
+            # ── Execute with step callbacks ──
             context = self._build_context()
-            result = self._executor.execute(plan, self._skill_registry, context)
+            result = self._executor.execute(
+                plan, self._skill_registry, context, on_step=on_step,
+            )
             self._sync_robot_state()
 
             if result.success:

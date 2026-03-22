@@ -29,6 +29,7 @@ class TaskExecutor:
         plan: TaskPlan,
         skill_registry: Any,  # SkillRegistry — avoids circular import concern
         context: Any,         # SkillContext
+        on_step: Any = None,  # Optional callback(skill_name, step_idx, total)
     ) -> ExecutionResult:
         """Execute task plan step by step.
 
@@ -62,8 +63,15 @@ class TaskExecutor:
         trace: list[StepTrace] = []
         steps_completed = 0
 
-        for step in ordered_steps:
+        for step_idx, step in enumerate(ordered_steps):
             step_start = time.monotonic()
+
+            # --- 0. Notify caller ---
+            if on_step is not None:
+                try:
+                    on_step(step.skill_name, step_idx, steps_total)
+                except Exception:
+                    pass
 
             # --- 1. Look up skill ---
             skill = skill_registry.get(step.skill_name)

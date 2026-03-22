@@ -123,44 +123,53 @@ class SimpleCLI:
     def _execute_unified(self, text: str) -> None:
         """Route all input through Agent's multi-stage pipeline."""
         start = time.time()
-        result = self._agent.execute(text)
+
+        def _on_message(msg: str) -> None:
+            """Called BEFORE execution starts — show AI's plan message."""
+            print(f"\n  {_TEAL}{_BOLD}V:{_RESET} {msg}")
+            print(f"  {_DIM}{'─' * 50}{_RESET}")
+
+        def _on_step(skill_name: str, idx: int, total: int) -> None:
+            """Called before each step — show live progress."""
+            bar = f"[{idx+1}/{total}]"
+            print(f"  {_DIM}{bar}{_RESET} {_CYAN}{skill_name}{_RESET}{_DIM}...{_RESET}", end="", flush=True)
+
+        result = self._agent.execute(text, on_message=_on_message, on_step=_on_step)
         elapsed = time.time() - start
 
-        # Display based on result status
         if result.status == "chat":
-            # Pure chat response from AI
             if result.message:
-                print(f"\n{_TEAL}V:{_RESET} {result.message}\n")
+                print(f"\n  {_TEAL}{_BOLD}V:{_RESET} {result.message}\n")
 
         elif result.status == "query":
-            # Query response (scan+detect happened, AI summarized)
             if result.message:
-                print(f"\n{_TEAL}V:{_RESET} {result.message}\n")
+                print(f"\n  {_TEAL}{_BOLD}V:{_RESET} {result.message}\n")
 
         elif result.status == "clarification_needed":
             msg = result.message or result.clarification_question
-            print(f"\n{_TEAL}V:{_RESET} {msg}\n")
+            print(f"\n  {_YELLOW}{_BOLD}V:{_RESET} {msg}\n")
 
         elif result.success:
-            # Task completed
-            if result.message:
-                print(f"\n{_TEAL}V:{_RESET} {result.message}")
-            print(f"{_GREEN}OK{_RESET} ({result.steps_completed}/{result.steps_total} steps, {elapsed:.1f}s)")
-            if self._verbose and result.trace:
-                for step in result.trace:
-                    icon = f"{_GREEN}OK{_RESET}" if step.status == "success" else f"{_RED}{step.status}{_RESET}"
-                    print(f"  [{icon}] {step.skill_name} ({step.duration_sec:.1f}s)")
+            # Task completed — trace was shown live, now show summary
             print()
+            if result.trace:
+                for step in result.trace:
+                    if step.status == "success":
+                        print(f" {_GREEN}OK{_RESET} {step.duration_sec:.1f}s")
+                    else:
+                        print(f" {_RED}FAIL{_RESET}")
+            print(f"  {_DIM}{'─' * 50}{_RESET}")
+            print(f"  {_GREEN}{_BOLD}Done{_RESET} {_DIM}{result.steps_completed}/{result.steps_total} steps, {elapsed:.1f}s{_RESET}\n")
 
         else:
             # Failed
             if result.message:
-                print(f"\n{_TEAL}V:{_RESET} {result.message}")
-            print(f"{_RED}FAILED: {result.failure_reason}{_RESET}")
-            if self._verbose and result.trace:
+                print(f"\n  {_TEAL}{_BOLD}V:{_RESET} {result.message}")
+            print(f"\n  {_RED}{_BOLD}Failed:{_RESET} {result.failure_reason}")
+            if result.trace:
                 for step in result.trace:
-                    icon = f"{_GREEN}OK{_RESET}" if step.status == "success" else f"{_RED}{step.status}{_RESET}"
-                    print(f"  [{icon}] {step.skill_name} ({step.duration_sec:.1f}s)")
+                    status = f"{_GREEN}OK{_RESET}" if step.status == "success" else f"{_RED}{step.status}{_RESET}"
+                    print(f"    {status} {step.skill_name} ({step.duration_sec:.1f}s)")
             print()
 
     # ------------------------------------------------------------------
