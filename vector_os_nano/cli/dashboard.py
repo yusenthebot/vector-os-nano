@@ -301,13 +301,16 @@ if TEXTUAL_AVAILABLE:
         # ------------------------------------------------------------------
 
         def _setup_logging(self) -> None:
-            """Route Python logging to the chat log."""
+            """Route ALL Python logging to the chat log."""
             try:
                 chat_log = self.query_one("#chat-log", RichLog)
                 handler = _RichLogHandler(chat_log)
-                handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
-                handler.setLevel(logging.INFO)
-                logging.getLogger().addHandler(handler)
+                handler.setFormatter(logging.Formatter("[dim]%(name)s:[/dim] %(message)s"))
+                handler.setLevel(logging.DEBUG)
+                # Attach to root logger so ALL modules' logs appear
+                root = logging.getLogger()
+                root.addHandler(handler)
+                root.setLevel(logging.INFO)
                 self._log_handler = handler
             except Exception:
                 pass
@@ -594,18 +597,18 @@ if TEXTUAL_AVAILABLE:
         # Command input handling
         # ------------------------------------------------------------------
 
-        async def on_input_submitted(self, event: Input.Submitted) -> None:
-            """Handle command input — route to agent.execute()."""
-            text = event.value.strip()
+        def on_input_submitted(self, event: Input.Submitted) -> None:
+            """Handle Enter key in command input."""
+            text = str(event.value).strip()
             if not text:
                 return
-            # Clear input immediately
-            inp = event.input
-            inp.value = ""
-            try:
-                inp.clear()
-            except Exception:
-                pass
+
+            # Prevent event from propagating further
+            event.stop()
+
+            # Clear input widget
+            event.input.value = ""
+
             # Show user message in chat
             self._log(f"\n[bold #00b4b4]You:[/bold #00b4b4] {text}")
 
