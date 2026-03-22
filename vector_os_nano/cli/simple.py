@@ -127,18 +127,31 @@ class SimpleCLI:
         start = time.time()
         step_names: list[str] = []
 
+        plan_shown = [False]
+
         def _on_message(msg: str) -> None:
-            """Called BEFORE execution starts — show AI message + plan."""
+            """Called BEFORE execution — show AI message + full plan preview."""
             print(f"\n  {_TEAL}{_BOLD}V:{_RESET} {msg}")
-            print(f"  {_DIM}{'─' * 50}{_RESET}")
 
         def _on_step(skill_name: str, idx: int, total: int) -> None:
-            """Called before each step — show what's about to run."""
+            """Called before each step."""
             step_names.append(skill_name)
+            if not plan_shown[0]:
+                plan_shown[0] = True
+                print(f"  {_DIM}{'─' * 50}{_RESET}")
+                print(f"  {_DIM}Plan: {total} steps{_RESET}")
+                print()
             label = skill_name.replace("_", " ")
-            print(f"  {_DIM}[{idx+1}/{total}]{_RESET} {_CYAN}{label}{_RESET}", flush=True)
+            print(f"  {_DIM}[{idx+1}/{total}]{_RESET} {_CYAN}{label}{_RESET} ...", end="", flush=True)
 
-        result = self._agent.execute(text, on_message=_on_message, on_step=_on_step)
+        def _on_step_done(skill_name: str, success: bool, duration: float) -> None:
+            """Called after each step — print result on same line."""
+            if success:
+                print(f" {_GREEN}OK{_RESET} {_DIM}{duration:.1f}s{_RESET}")
+            else:
+                print(f" {_RED}FAIL{_RESET}")
+
+        result = self._agent.execute(text, on_message=_on_message, on_step=_on_step, on_step_done=_on_step_done)
         elapsed = time.time() - start
 
         if result.status == "chat":
@@ -154,13 +167,8 @@ class SimpleCLI:
             print(f"\n  {_YELLOW}{_BOLD}V:{_RESET} {msg}\n")
 
         elif result.success:
-            # Show trace summary
-            print(f"  {_DIM}{'─' * 50}{_RESET}")
-            if result.trace:
-                for step in result.trace:
-                    icon = f"{_GREEN}OK{_RESET}" if step.status == "success" else f"{_RED}FAIL{_RESET}"
-                    print(f"  {icon} {step.skill_name} {_DIM}{step.duration_sec:.1f}s{_RESET}")
-            print(f"  {_DIM}{'─' * 50}{_RESET}")
+            # Step results were printed inline, now show summary
+            print(f"\n  {_DIM}{'─' * 50}{_RESET}")
             print(f"  {_GREEN}{_BOLD}Done{_RESET} {_DIM}{result.steps_completed}/{result.steps_total} steps, {elapsed:.1f}s{_RESET}")
 
             # LLM summarize what was accomplished
@@ -195,12 +203,9 @@ class SimpleCLI:
 
     @staticmethod
     def _quiet_logging() -> None:
-        """Suppress verbose skill/perception logs for clean CLI output."""
+        """Suppress verbose logs for clean CLI output."""
         for name in [
-            "vector_os_nano.skills",
-            "vector_os_nano.hardware.sim",
-            "vector_os_nano.perception",
-            "vector_os_nano.core.executor",
+            "vector_os_nano",
             "httpx",
         ]:
             logging.getLogger(name).setLevel(logging.WARNING)

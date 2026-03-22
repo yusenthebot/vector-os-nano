@@ -181,7 +181,7 @@ class Agent:
         except Exception as exc:
             logger.debug("Could not sync robot state: %s", exc)
 
-    def execute(self, instruction: str, on_message: Any = None, on_step: Any = None) -> ExecutionResult:
+    def execute(self, instruction: str, on_message: Any = None, on_step: Any = None, on_step_done: Any = None) -> ExecutionResult:
         """Execute a natural language instruction via multi-stage pipeline.
 
         Stage 1: CLASSIFY — determine intent (chat/task/direct/query)
@@ -228,7 +228,7 @@ class Agent:
             return self._handle_query(instruction)
 
         # intent == "task" (or fallback)
-        return self._handle_task(instruction, on_message=on_message, on_step=on_step)
+        return self._handle_task(instruction, on_message=on_message, on_step=on_step, on_step_done=on_step_done)
 
     def _handle_chat(self, instruction: str) -> ExecutionResult:
         """Handle pure chat — LLM response, no robot action."""
@@ -288,7 +288,7 @@ class Agent:
             message=response,
         )
 
-    def _handle_task(self, instruction: str, on_message: Any = None, on_step: Any = None) -> ExecutionResult:
+    def _handle_task(self, instruction: str, on_message: Any = None, on_step: Any = None, on_step_done: Any = None) -> ExecutionResult:
         """Handle task — plan, execute, summarize."""
         self._conversation_history = [{"role": "user", "content": instruction}]
 
@@ -333,7 +333,8 @@ class Agent:
             # ── Execute with step callbacks ──
             context = self._build_context()
             result = self._executor.execute(
-                plan, self._skill_registry, context, on_step=on_step,
+                plan, self._skill_registry, context,
+                on_step=on_step, on_step_done=on_step_done,
             )
             self._sync_robot_state()
 

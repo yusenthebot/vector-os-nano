@@ -29,7 +29,8 @@ class TaskExecutor:
         plan: TaskPlan,
         skill_registry: Any,  # SkillRegistry — avoids circular import concern
         context: Any,         # SkillContext
-        on_step: Any = None,  # Optional callback(skill_name, step_idx, total)
+        on_step: Any = None,  # Optional callback(skill_name, step_idx, total) — before step
+        on_step_done: Any = None,  # Optional callback(skill_name, success, duration) — after step
     ) -> ExecutionResult:
         """Execute task plan step by step.
 
@@ -205,6 +206,11 @@ class TaskExecutor:
                 "[Executor] Step %s (%s) OK in %.3fs",
                 step.step_id, step.skill_name, duration,
             )
+            if on_step_done is not None:
+                try:
+                    on_step_done(step.skill_name, True, duration)
+                except Exception:
+                    pass
 
         return ExecutionResult(
             success=True,
