@@ -268,14 +268,14 @@ if TEXTUAL_AVAILABLE:
                         yield Button("Scan", id="btn-scan")
                         yield Button("Detect", id="btn-detect")
                         yield Button("Stop", id="btn-stop", variant="error")
-                # Right panel: chat log (conversation style)
+                # Right panel: chat log + input together
                 with Vertical(id="right-col"):
                     yield Label("CHAT", classes="panel-title")
                     yield RichLog(id="chat-log", highlight=True, markup=True)
-            yield Input(
-                placeholder="vector> type command or natural language...",
-                id="command-input",
-            )
+                    yield Input(
+                        placeholder="vector> type command or natural language...",
+                        id="command-input",
+                    )
             yield Footer()
 
         # ------------------------------------------------------------------
@@ -606,8 +606,45 @@ if TEXTUAL_AVAILABLE:
                 inp.clear()
             except Exception:
                 pass
-            # Show user message in chat (teal, right-aligned feel)
+            # Show user message in chat
             self._log(f"\n[bold #00b4b4]You:[/bold #00b4b4] {text}")
+
+            # Handle local commands first (same as SimpleCLI)
+            cmd = text.lower().strip()
+            if cmd in ("help", "?"):
+                self._log("[bold]Commands:[/bold]")
+                self._log("  pick <object>   — Pick an object")
+                self._log("  place [x y z]   — Place held object")
+                self._log("  home            — Move to home position")
+                self._log("  scan            — Move to scan position")
+                self._log("  open / close    — Gripper control")
+                self._log("  detect [query]  — Detect objects")
+                self._log("  status          — System status")
+                self._log("  skills          — List skills")
+                self._log("  world           — World model state")
+                self._log("  Or type natural language")
+                return
+            if cmd == "status":
+                if self._agent:
+                    self._log(f"Skills: {', '.join(self._agent.skills)}")
+                    robot = self._agent.world.get_robot()
+                    objects = self._agent.world.get_objects()
+                    self._log(f"Objects: {len(objects)}, Gripper: {robot.gripper_state}")
+                else:
+                    self._log("[yellow]No agent configured[/yellow]")
+                return
+            if cmd == "skills":
+                if self._agent:
+                    self._log(f"[cyan]{', '.join(self._agent.skills)}[/cyan]")
+                return
+            if cmd == "world":
+                if self._agent:
+                    import json as _json
+                    self._log(_json.dumps(self._agent.world.to_dict(), indent=2, default=str))
+                return
+            if cmd in ("quit", "exit", "q"):
+                self.exit()
+                return
 
             if self._agent is None:
                 self._log("[red]No agent configured[/red]")
