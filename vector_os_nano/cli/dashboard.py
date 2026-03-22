@@ -216,6 +216,18 @@ if TEXTUAL_AVAILABLE:
             border: solid #585b70;
             overflow: hidden;
         }
+        #dash-camera-preview {
+            height: auto;
+            min-height: 12;
+            max-height: 20;
+            border: solid #585b70;
+            overflow: hidden;
+        }
+        #dash-log {
+            height: 1fr;
+            min-height: 6;
+            border: solid #585b70;
+        }
         Button {
             margin: 0 1;
         }
@@ -266,15 +278,10 @@ if TEXTUAL_AVAILABLE:
                                 self._render_status(),
                                 id="status-panel",
                             )
-                            yield Label("SKILL EXECUTION", classes="panel-title")
+                            yield Label("CAMERA PREVIEW", classes="panel-title")
                             yield Static(
-                                self._render_skill(),
-                                id="skill-panel",
-                            )
-                            yield Label("LAST RESULT", classes="panel-title")
-                            yield Static(
-                                "[dim]none[/dim]",
-                                id="last-result",
+                                "[dim]No camera[/dim]",
+                                id="dash-camera-preview",
                             )
                             with Horizontal(id="action-buttons"):
                                 yield Button("Home", id="btn-home", variant="primary")
@@ -287,11 +294,13 @@ if TEXTUAL_AVAILABLE:
                                 self._render_joints(),
                                 id="joint-panel",
                             )
-                            yield Label("WORLD MODEL", classes="panel-title")
+                            yield Label("SKILL EXECUTION", classes="panel-title")
                             yield Static(
-                                self._render_world_summary(),
-                                id="world-panel",
+                                self._render_skill(),
+                                id="skill-panel",
                             )
+                            yield Label("LOG", classes="panel-title")
+                            yield RichLog(id="dash-log", highlight=True, markup=True, max_lines=50)
                 with TabPane("Log", id="log"):
                     yield RichLog(id="log-view", highlight=True, markup=True)
                 with TabPane("Skills", id="skills"):
@@ -376,6 +385,7 @@ if TEXTUAL_AVAILABLE:
             self._update_status_panel()
             self._update_joint_panel()
             self._update_skill_panel()
+            self._update_dash_camera_preview()
             self._update_world_panel()
             self._update_world_tab()
             self._update_camera_panel()
@@ -395,6 +405,30 @@ if TEXTUAL_AVAILABLE:
         def _update_skill_panel(self) -> None:
             try:
                 self.query_one("#skill-panel", Static).update(self._render_skill())
+            except Exception:
+                pass
+
+        def _update_dash_camera_preview(self) -> None:
+            """Update the small camera preview on the Dashboard tab."""
+            if self._agent is None or self._agent._perception is None:
+                return
+            try:
+                tabs = self.query_one(TabbedContent)
+                if tabs.active != "dashboard":
+                    return
+            except Exception:
+                return
+            try:
+                from vector_os_nano.cli.frame_renderer import annotated_frame, frame_to_rich_text
+                cam = self._agent._perception._camera
+                color = cam.get_color_frame()
+                if color is not None:
+                    tracked = getattr(self._agent._perception, "_last_tracked", [])
+                    if tracked:
+                        preview = annotated_frame(color, tracked, width=40, height=10)
+                    else:
+                        preview = frame_to_rich_text(color, width=40, height=10)
+                    self.query_one("#dash-camera-preview", Static).update(preview)
             except Exception:
                 pass
 
@@ -605,8 +639,11 @@ if TEXTUAL_AVAILABLE:
             text = event.value.strip()
             if not text:
                 return
+            # Clear input and re-focus for next command
             event.input.value = ""
-            self._log(f"[bold]> {text}[/bold]")
+            event.input.clear()
+            self.call_after_refresh(event.input.focus)
+            self._log(f"[bold #00b4b4]> {text}[/bold #00b4b4]")
 
             if self._agent is None:
                 self._log("[red]No agent configured[/red]")
@@ -786,10 +823,16 @@ if TEXTUAL_AVAILABLE:
         # ------------------------------------------------------------------
 
         def _log(self, message: str) -> None:
-            """Write a message to the Log tab RichLog widget."""
+            """Write a message to both the Log tab AND the Dashboard log panel."""
             try:
                 log_view = self.query_one("#log-view", RichLog)
                 log_view.write(message)
+            except Exception:
+                pass
+            # Also write to the dashboard's embedded log
+            try:
+                dash_log = self.query_one("#dash-log", RichLog)
+                dash_log.write(message)
             except Exception:
                 pass
 

@@ -118,7 +118,6 @@ async def test_dashboard_headless():
         assert app.query_one("#status-panel")
         assert app.query_one("#joint-panel")
         assert app.query_one("#skill-panel")
-        assert app.query_one("#world-panel")
         # Command input must be present
         assert app.query_one("#command-input")
 
@@ -433,16 +432,16 @@ async def test_status_dots_green():
 
 
 # ---------------------------------------------------------------------------
-# T29 — last-result widget present on Dashboard tab
+# T29 — dashboard camera preview widget present
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_last_result_widget_present():
+async def test_dash_camera_preview_present():
     from vector_os_nano.cli.dashboard import DashboardApp
     from textual.widgets import Static
     app = DashboardApp()
     async with app.run_test() as pilot:
-        widget = app.query_one("#last-result", Static)
+        widget = app.query_one("#dash-camera-preview", Static)
         assert widget is not None
 
 
