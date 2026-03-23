@@ -200,6 +200,40 @@ def _run_debug_perception(agent: Agent, query: str) -> str:
 
     lines.append(f"Perception type: {type(perc).__name__}")
 
+    # Step 0: Move to scan position first (arm might block camera at home)
+    lines.append("\n--- Step 0: Move to Scan Position ---")
+    try:
+        scan_skill = agent._skill_registry.get("scan")
+        if scan_skill and agent._arm:
+            ctx = agent._build_context()
+            scan_result = scan_skill.execute({}, ctx)
+            lines.append(f"Scan: {'ok' if scan_result.success else 'FAILED: ' + str(scan_result.error_message)}")
+        else:
+            lines.append("SKIP: no scan skill or no arm")
+    except Exception as exc:
+        lines.append(f"Scan error: {exc}")
+
+    # Step 0.5: Check camera frame
+    lines.append("\n--- Step 0.5: Camera Frame Check ---")
+    try:
+        if hasattr(perc, 'get_color_frame'):
+            frame = perc.get_color_frame()
+            if frame is None:
+                lines.append("FAIL: get_color_frame() returned None — camera not streaming?")
+                return "\n".join(lines)
+            lines.append(f"Frame shape: {frame.shape}, dtype: {frame.dtype}")
+            lines.append(f"Mean pixel: {frame.mean():.1f}, min: {frame.min()}, max: {frame.max()}")
+            if frame.mean() < 5:
+                lines.append("WARN: Frame is nearly black — camera may not be streaming")
+            elif frame.mean() > 250:
+                lines.append("WARN: Frame is nearly white — overexposed?")
+            else:
+                lines.append("Frame looks valid")
+        else:
+            lines.append("Perception has no get_color_frame method")
+    except Exception as exc:
+        lines.append(f"Camera frame error: {exc}")
+
     # Step 1: VLM detect
     lines.append("\n--- Step 1: VLM Detect ---")
     try:
@@ -210,6 +244,20 @@ def _run_debug_perception(agent: Agent, query: str) -> str:
     except Exception as exc:
         lines.append(f"FAIL: detect() raised {type(exc).__name__}: {exc}")
         return "\n".join(lines)
+
+    # Also try "all objects" if specific query failed
+    if not detections and query != "all objects":
+        lines.append("\nRetrying with query='all objects'...")
+        try:
+            detections_all = perc.detect("all objects")
+            lines.append(f"  'all objects' detections: {len(detections_all)}")
+            for i, det in enumerate(detections_all):
+                lines.append(f"  [{i}] label={det.label!r} confidence={det.confidence:.3f}")
+            if detections_all:
+                detections = detections_all
+                lines.append("  Using 'all objects' results")
+        except Exception as exc:
+            lines.append(f"  'all objects' also failed: {exc}")
 
     if not detections:
         lines.append("FAIL: VLM returned 0 detections")
