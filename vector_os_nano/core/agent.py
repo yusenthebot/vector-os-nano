@@ -689,8 +689,8 @@ class Agent:
             if step_skill == skill_name:
                 # Pass ALL original params to the target skill
                 step_params = dict(params)
-            elif step_skill == "detect" and object_query:
-                step_params = {"query": object_query}
+            # detect step: use default "all objects" (matches CLI behavior).
+            # Specific object matching is handled by pick's world model fallback.
             steps.append(TaskStep(
                 step_id=f"s{i+1}",
                 skill_name=step_skill,
