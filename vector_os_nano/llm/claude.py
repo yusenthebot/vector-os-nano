@@ -160,6 +160,7 @@ class ClaudeProvider:
         world_state: dict[str, Any],
         skill_schemas: list[dict[str, Any]],
         history: list[dict[str, Any]] | None = None,
+        model_override: str | None = None,
     ) -> TaskPlan:
         """Decompose a natural-language goal into a TaskPlan.
 
@@ -179,13 +180,14 @@ class ClaudeProvider:
 
         messages.append({"role": "user", "content": goal})
 
-        raw_response = self._chat_completion(system_prompt, messages)
+        raw_response = self._chat_completion(system_prompt, messages, model_override)
         return parse_plan_response(goal, raw_response)
 
     def query(
         self,
         prompt: str,
         image: Any = None,
+        model_override: str | None = None,
     ) -> str:
         """Send a free-form prompt and return the LLM's text response."""
         system_prompt = (
@@ -193,9 +195,9 @@ class ClaudeProvider:
             "Answer concisely and accurately."
         )
         messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
-        return self._chat_completion(system_prompt, messages)
+        return self._chat_completion(system_prompt, messages, model_override)
 
-    def classify(self, user_message: str) -> str:
+    def classify(self, user_message: str, model_override: str | None = None) -> str:
         """Classify user intent: chat | task | direct | query.
 
         Returns one of: "chat", "task", "direct", "query".
@@ -204,7 +206,7 @@ class ClaudeProvider:
         from vector_os_nano.llm.prompts import build_classify_prompt
         system = build_classify_prompt(user_message)
         messages: list[dict[str, Any]] = [{"role": "user", "content": user_message}]
-        result = self._chat_completion(system, messages).strip().lower()
+        result = self._chat_completion(system, messages, model_override).strip().lower()
         if result in ("chat", "task", "direct", "query"):
             return result
         # Extract first valid word
@@ -218,22 +220,28 @@ class ClaudeProvider:
         user_message: str,
         system_prompt: str,
         history: list[dict[str, Any]] | None = None,
+        model_override: str | None = None,
     ) -> str:
         """Free-form chat with conversation history."""
         messages: list[dict[str, Any]] = []
         if history:
             messages.extend(history[-self.max_history:])
         messages.append({"role": "user", "content": user_message})
-        return self._chat_completion(system_prompt, messages)
+        return self._chat_completion(system_prompt, messages, model_override)
 
-    def summarize(self, original_request: str, execution_trace: str) -> str:
+    def summarize(
+        self,
+        original_request: str,
+        execution_trace: str,
+        model_override: str | None = None,
+    ) -> str:
         """Summarize execution results for the user."""
         from vector_os_nano.llm.prompts import build_summarize_prompt
         system = build_summarize_prompt(original_request, execution_trace)
         messages: list[dict[str, Any]] = [
             {"role": "user", "content": "Summarize the execution results."}
         ]
-        return self._chat_completion(system, messages)
+        return self._chat_completion(system, messages, model_override)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -243,13 +251,15 @@ class ClaudeProvider:
         self,
         system_prompt: str,
         messages: list[dict[str, Any]],
+        model_override: str | None = None,
     ) -> str:
         """POST to the chat completions endpoint and return the assistant text.
 
         Returns an error description string on any failure.
         """
+        model = model_override or self.model
         payload: dict[str, Any] = {
-            "model": self.model,
+            "model": model,
             "messages": [{"role": "system", "content": system_prompt}] + messages,
             "temperature": self._temperature,
             "max_tokens": self._max_tokens,

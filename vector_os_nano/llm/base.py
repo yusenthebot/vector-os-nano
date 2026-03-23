@@ -43,6 +43,7 @@ class LLMProvider(Protocol):
         world_state: dict[str, Any],
         skill_schemas: list[dict[str, Any]],
         history: list[dict[str, Any]] | None = None,
+        model_override: str | None = None,
     ) -> TaskPlan:
         """Decompose a goal into a TaskPlan.
 
@@ -51,6 +52,9 @@ class LLMProvider(Protocol):
             world_state: serialized world model snapshot.
             skill_schemas: list of skill schemas from SkillRegistry.to_schemas().
             history: optional prior conversation turns for multi-turn planning.
+            model_override: optional model identifier to use instead of the
+                provider default (e.g. "anthropic/claude-haiku-4-5" for a cheap
+                classification step).
 
         Returns:
             TaskPlan with steps, or a clarification request if goal is ambiguous.
@@ -61,12 +65,15 @@ class LLMProvider(Protocol):
         self,
         prompt: str,
         image: Any = None,
+        model_override: str | None = None,
     ) -> str:
         """Send a free-form prompt and return the LLM's text response.
 
         Args:
             prompt: natural-language question or instruction.
             image: optional image data (format depends on provider).
+            model_override: optional model identifier to use instead of the
+                provider default.
 
         Returns:
             LLM response as a plain string. Never raises — returns an

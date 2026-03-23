@@ -71,6 +71,7 @@ class OpenAIProvider:
         world_state: dict[str, Any],
         skill_schemas: list[dict[str, Any]],
         history: list[dict[str, Any]] | None = None,
+        model_override: str | None = None,
     ) -> TaskPlan:
         """Decompose a natural-language goal into a TaskPlan.
 
@@ -83,13 +84,14 @@ class OpenAIProvider:
             messages.extend(history[-self.max_history:])
         messages.append({"role": "user", "content": goal})
 
-        raw = self._chat_completion(system_prompt, messages)
+        raw = self._chat_completion(system_prompt, messages, model_override)
         return parse_plan_response(goal, raw)
 
     def query(
         self,
         prompt: str,
         image: Any = None,
+        model_override: str | None = None,
     ) -> str:
         """Send a free-form prompt and return the LLM's text response.
 
@@ -100,7 +102,7 @@ class OpenAIProvider:
             "Answer concisely and accurately."
         )
         messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
-        return self._chat_completion(system_prompt, messages)
+        return self._chat_completion(system_prompt, messages, model_override)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -110,10 +112,12 @@ class OpenAIProvider:
         self,
         system_prompt: str,
         messages: list[dict[str, Any]],
+        model_override: str | None = None,
     ) -> str:
         """POST to chat/completions endpoint and return assistant text."""
+        model = model_override or self.model
         payload: dict[str, Any] = {
-            "model": self.model,
+            "model": model,
             "messages": [{"role": "system", "content": system_prompt}] + messages,
             "temperature": self._temperature,
             "max_tokens": self._max_tokens,

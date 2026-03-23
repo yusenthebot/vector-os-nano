@@ -79,14 +79,35 @@ class MockLLM:
         world_state: dict,
         skill_schemas: list,
         history=None,
+        model_override: str | None = None,
     ) -> TaskPlan:
         return TaskPlan(
             goal=goal,
             steps=[TaskStep(step_id="s1", skill_name="home", parameters={})],
         )
 
-    def query(self, prompt: str, image=None) -> str:
+    def query(self, prompt: str, image=None, model_override: str | None = None) -> str:
         return "I see a robot arm."
+
+    def classify(self, user_message: str, model_override: str | None = None) -> str:
+        return "task"
+
+    def chat(
+        self,
+        user_message: str,
+        system_prompt: str,
+        history=None,
+        model_override: str | None = None,
+    ) -> str:
+        return "Done."
+
+    def summarize(
+        self,
+        original_request: str,
+        execution_trace: str,
+        model_override: str | None = None,
+    ) -> str:
+        return "Task complete."
 
 
 class MockLLMClarification:
@@ -98,6 +119,7 @@ class MockLLMClarification:
         world_state: dict,
         skill_schemas: list,
         history=None,
+        model_override: str | None = None,
     ) -> TaskPlan:
         return TaskPlan(
             goal=goal,
@@ -106,7 +128,27 @@ class MockLLMClarification:
             clarification_question="Which object should I pick?",
         )
 
-    def query(self, prompt: str, image=None) -> str:
+    def query(self, prompt: str, image=None, model_override: str | None = None) -> str:
+        return ""
+
+    def classify(self, user_message: str, model_override: str | None = None) -> str:
+        return "task"
+
+    def chat(
+        self,
+        user_message: str,
+        system_prompt: str,
+        history=None,
+        model_override: str | None = None,
+    ) -> str:
+        return ""
+
+    def summarize(
+        self,
+        original_request: str,
+        execution_trace: str,
+        model_override: str | None = None,
+    ) -> str:
         return ""
 
 
@@ -119,13 +161,34 @@ class MockLLMFail:
         world_state: dict,
         skill_schemas: list,
         history=None,
+        model_override: str | None = None,
     ) -> TaskPlan:
         return TaskPlan(
             goal=goal,
             steps=[TaskStep(step_id="s1", skill_name="nonexistent_skill", parameters={})],
         )
 
-    def query(self, prompt: str, image=None) -> str:
+    def query(self, prompt: str, image=None, model_override: str | None = None) -> str:
+        return ""
+
+    def classify(self, user_message: str, model_override: str | None = None) -> str:
+        return "task"
+
+    def chat(
+        self,
+        user_message: str,
+        system_prompt: str,
+        history=None,
+        model_override: str | None = None,
+    ) -> str:
+        return ""
+
+    def summarize(
+        self,
+        original_request: str,
+        execution_trace: str,
+        model_override: str | None = None,
+    ) -> str:
         return ""
 
 
@@ -295,7 +358,8 @@ class TestAgentExecuteWithLLM:
         from vector_os_nano.core.agent import Agent
 
         agent = Agent(arm=MockArm(), llm=MockLLMClarification())
-        result = agent.execute("pick something")
+        # Use an instruction that has no alias match so the LLM classify/plan path runs
+        result = agent.execute("do something ambiguous please")
         assert isinstance(result, ExecutionResult)
         assert result.success is False
         assert result.status == "clarification_needed"
@@ -554,3 +618,113 @@ class TestAgentContextManager:
         except RuntimeError:
             pass
         assert arm._connected is False
+
+
+# ---------------------------------------------------------------------------
+# Test: cross-task memory (SessionMemory integration)
+# ---------------------------------------------------------------------------
+
+
+class MockLLMWithChat:
+    """Mock LLM that routes 'hello' to chat, everything else to task planning."""
+
+    def plan(
+        self,
+        goal: str,
+        world_state: dict,
+        skill_schemas: list,
+        history=None,
+        model_override: str | None = None,
+    ) -> TaskPlan:
+        return TaskPlan(
+            goal=goal,
+            steps=[TaskStep(step_id="s1", skill_name="home", parameters={})],
+        )
+
+    def query(self, prompt: str, image=None, model_override: str | None = None) -> str:
+        return "I see a robot arm."
+
+    def classify(self, user_message: str, model_override: str | None = None) -> str:
+        """Return 'chat' for greetings, 'task' for everything else."""
+        if user_message.lower().startswith("hello"):
+            return "chat"
+        return "task"
+
+    def chat(
+        self,
+        user_message: str,
+        system_prompt: str,
+        history=None,
+        model_override: str | None = None,
+    ) -> str:
+        return f"Hi! Ready to help. You said: {user_message}"
+
+    def summarize(
+        self,
+        original_request: str,
+        execution_trace: str,
+        model_override: str | None = None,
+    ) -> str:
+        return f"Completed: {original_request}"
+
+
+class TestCrossTaskMemory:
+    """Test that conversation context persists across task executions."""
+
+    @pytest.fixture
+    def agent(self):
+        """Agent with MockArm, MockGripper, and MockLLMWithChat."""
+        from vector_os_nano.core.agent import Agent
+
+        return Agent(
+            arm=MockArm(),
+            gripper=MockGripper(),
+            llm=MockLLMWithChat(),
+        )
+
+    def test_task_result_in_memory(self, agent):
+        """After executing a task via LLM path, the result should be in session memory."""
+        # Use an instruction that bypasses direct-skill alias matching
+        agent.execute("execute a custom task")
+        ctx = agent._memory.get_last_task_context()
+        assert ctx is not None
+
+    def test_task_result_metadata_contains_success(self, agent):
+        """Task result metadata should record success status."""
+        agent.execute("execute a custom task")
+        ctx = agent._memory.get_last_task_context()
+        assert ctx is not None
+        assert "success" in ctx
+        assert ctx["success"] is True
+
+    def test_cross_task_history_available(self, agent):
+        """After two tasks, both should appear in LLM history."""
+        agent.execute("execute first task")
+        agent.execute("execute second task")
+        history = agent._memory.get_llm_history()
+        # Should have entries from both tasks:
+        # task1: user message + task_result = 2 entries
+        # task2: user message + task_result = 2 entries
+        assert len(history) >= 4
+
+    def test_chat_then_task_continuity(self, agent):
+        """Chat messages should persist in memory when switching to task mode."""
+        # First a chat (classify returns "chat" for "hello...")
+        agent.execute("hello there")
+        # Then a task
+        agent.execute("execute a custom task")
+        history = agent._memory.get_llm_history()
+        # The chat user message should still be in history
+        assert any("hello there" in h["content"] for h in history)
+
+    def test_memory_attribute_exists(self, agent):
+        """Agent should expose _memory as a SessionMemory instance."""
+        from vector_os_nano.core.memory import SessionMemory
+
+        assert hasattr(agent, "_memory")
+        assert isinstance(agent._memory, SessionMemory)
+
+    def test_memory_empty_before_execute(self, agent):
+        """Fresh agent should have an empty memory."""
+        history = agent._memory.get_llm_history()
+        assert history == []

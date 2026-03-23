@@ -15,9 +15,11 @@ from typing import Any
 
 from vector_os_nano.core.config import load_config
 from vector_os_nano.core.executor import TaskExecutor
+from vector_os_nano.core.memory import SessionMemory
 from vector_os_nano.core.skill import Skill, SkillContext, SkillMatch, SkillRegistry
 from vector_os_nano.core.types import ExecutionResult
 from vector_os_nano.core.world_model import WorldModel
+from vector_os_nano.llm.router import ModelRouter
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +154,10 @@ class Agent:
         # ---- Lazy-init state ------------------------------------------------
         self._ik_solver: Any = None
         self._calibration: Any = None
-        self._conversation_history: list[dict] = []
+
+        # ---- Session memory + model router ----------------------------------
+        self._memory = SessionMemory(max_entries=50)
+        self._router = ModelRouter(self._config)
 
         # ---- Sync world model with hardware ----------------------------------
         self._sync_robot_state()
@@ -254,8 +259,9 @@ class Agent:
             )
 
         # ── Stage 3: CLASSIFY intent via LLM ──
-        intent = self._llm.classify(instruction)
-        logger.info("[Agent] Intent: %s for %r", intent, instruction)
+        classify_selection = self._router.for_classify()
+        intent = self._llm.classify(instruction, model_override=classify_selection.model)
+        logger.info("[Agent] Intent: %s for %r (model: %s)", intent, instruction, classify_selection.model)
 
         if intent == "chat":
             return self._handle_chat(instruction)
@@ -358,16 +364,18 @@ class Agent:
 
     def _handle_chat(self, instruction: str) -> ExecutionResult:
         """Handle pure chat — LLM response, no robot action."""
+        self._memory.add_user_message(instruction, entry_type="chat")
+        history = self._memory.get_llm_history(max_turns=30)
+
         agent_prompt = self._load_agent_prompt()
+        selection = self._router.for_chat()
         response = self._llm.chat(
             instruction,
             system_prompt=agent_prompt,
-            history=self._conversation_history,
+            history=history,
+            model_override=selection.model,
         )
-        self._conversation_history.append({"role": "user", "content": instruction})
-        self._conversation_history.append({"role": "assistant", "content": response})
-        if len(self._conversation_history) > 30:
-            self._conversation_history = self._conversation_history[-30:]
+        self._memory.add_assistant_message(response, entry_type="chat")
 
         return ExecutionResult(
             success=True,
@@ -377,6 +385,8 @@ class Agent:
 
     def _handle_query(self, instruction: str) -> ExecutionResult:
         """Handle state query — detect objects, then AI describes."""
+        self._memory.add_user_message(instruction, entry_type="query")
+
         # Execute scan + detect
         context = self._build_context()
         scan_skill = self._skill_registry.get("scan")
@@ -398,15 +408,17 @@ class Agent:
             )
 
         # Ask LLM to answer the query with updated info
+        history = self._memory.get_llm_history(max_turns=30)
         agent_prompt = self._load_agent_prompt()
         full_prompt = f"{agent_prompt}\n\nDetected objects: {objects_info}"
+        selection = self._router.for_chat()
         response = self._llm.chat(
             instruction,
             system_prompt=full_prompt,
-            history=self._conversation_history,
+            history=history,
+            model_override=selection.model,
         )
-        self._conversation_history.append({"role": "user", "content": instruction})
-        self._conversation_history.append({"role": "assistant", "content": response})
+        self._memory.add_assistant_message(response, entry_type="query")
 
         return ExecutionResult(
             success=True,
@@ -416,7 +428,9 @@ class Agent:
 
     def _handle_task(self, instruction: str, on_message: Any = None, on_step: Any = None, on_step_done: Any = None) -> ExecutionResult:
         """Handle task — plan, execute, summarize."""
-        self._conversation_history = [{"role": "user", "content": instruction}]
+        # Add user instruction to persistent memory (preserves cross-task context).
+        # Previous code reset history here, which broke "now put it on the left"-style refs.
+        self._memory.add_user_message(instruction, entry_type="task")
 
         # Ensure world model has current objects (sim or perception)
         self._refresh_objects()
@@ -432,9 +446,17 @@ class Agent:
             world_state = self._world_model.to_dict()
             skill_schemas = self._skill_registry.to_schemas()
 
+            # Get history including cross-task context
+            history = self._memory.get_llm_history(max_turns=20)
+
+            # Select model based on instruction complexity
+            selection = self._router.for_plan(instruction, world_state)
+            logger.debug("[Agent] Plan model: %s (%s)", selection.model, selection.reason)
+
             plan = self._llm.plan(
                 instruction, world_state, skill_schemas,
-                self._conversation_history,
+                history,
+                model_override=selection.model,
             )
 
             if plan.message:
@@ -469,7 +491,10 @@ class Agent:
 
             if result.success:
                 # ── Stage 6: SUMMARIZE ──
-                summary = self._summarize(instruction, result)
+                self._summarize(instruction, result)
+                # Record task result in persistent memory for future cross-task refs
+                world_diff = result.world_model_diff if hasattr(result, "world_model_diff") else None
+                self._memory.add_task_result(instruction, result, world_diff)
                 return ExecutionResult(
                     success=True,
                     status="completed",
@@ -484,13 +509,11 @@ class Agent:
 
             # ── Stage 5: ADAPT — inject failure context for re-planning ──
             failed_skill = result.failed_step.skill_name if result.failed_step else "unknown"
-            self._conversation_history.append({
-                "role": "assistant",
-                "content": (
-                    f"Execution failed at step '{failed_skill}': {result.failure_reason}. "
-                    f"Please adjust the plan or inform the user."
-                ),
-            })
+            failure_msg = (
+                f"Execution failed at step '{failed_skill}': {result.failure_reason}. "
+                f"Please adjust the plan or inform the user."
+            )
+            self._memory.add_assistant_message(failure_msg, entry_type="task")
             logger.warning(
                 "[Agent] Attempt %d/%d failed: %s",
                 attempt + 1, max_retries, result.failure_reason,
@@ -501,11 +524,14 @@ class Agent:
             if "Cannot locate" in reason or "not found" in reason.lower():
                 # Ask LLM to explain to the user instead of retrying
                 agent_prompt = self._load_agent_prompt()
+                explain_history = self._memory.get_llm_history(max_turns=20)
+                chat_selection = self._router.for_chat()
                 explain = self._llm.chat(
                     f"The command '{instruction}' failed because: {reason}. "
                     f"Explain this to the user briefly and suggest alternatives.",
                     system_prompt=agent_prompt,
-                    history=self._conversation_history,
+                    history=explain_history,
+                    model_override=chat_selection.model,
                 )
                 return ExecutionResult(
                     success=False,
@@ -546,7 +572,10 @@ class Agent:
             for s in result.trace
         )
         try:
-            return self._llm.summarize(original_request, trace_str)
+            selection = self._router.for_summarize()
+            return self._llm.summarize(
+                original_request, trace_str, model_override=selection.model
+            )
         except Exception:
             return ""
 
