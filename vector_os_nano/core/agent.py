@@ -646,6 +646,91 @@ class Agent:
         if self._perception is not None and hasattr(self._perception, "disconnect"):
             self._perception.disconnect()
 
+    def execute_skill(
+        self,
+        skill_name: str,
+        params: dict | None = None,
+        on_message: Any = None,
+        on_step: Any = None,
+        on_step_done: Any = None,
+    ) -> ExecutionResult:
+        """Execute a skill directly with structured parameters.
+
+        Bypasses string parsing and alias matching — ideal for MCP tool calls
+        where params are already structured (e.g., object_label, mode).
+
+        If the skill has auto_steps, builds a plan with the correct params
+        for each step. Otherwise executes the single skill directly.
+        """
+        from vector_os_nano.core.types import TaskPlan, TaskStep
+
+        params = params or {}
+        skill_obj = self._skill_registry.get(skill_name)
+        if skill_obj is None:
+            return ExecutionResult(
+                success=False, status="failed",
+                failure_reason=f"Unknown skill: {skill_name}",
+            )
+
+        # Determine object query from params (for detect step in auto_steps)
+        object_query = (
+            params.get("object_label")
+            or params.get("object_id")
+            or params.get("query")
+            or ""
+        )
+
+        # Build steps: use auto_steps if available, otherwise single skill
+        raw_auto = getattr(skill_obj, "__skill_auto_steps__", [])
+        auto_steps = list(raw_auto) if raw_auto else [skill_name]
+        steps = []
+        for i, step_skill in enumerate(auto_steps):
+            step_params: dict = {}
+            if step_skill == skill_name:
+                # Pass ALL original params to the target skill
+                step_params = dict(params)
+            elif step_skill == "detect" and object_query:
+                step_params = {"query": object_query}
+            steps.append(TaskStep(
+                step_id=f"s{i+1}",
+                skill_name=step_skill,
+                parameters=step_params,
+                depends_on=[f"s{i}"] if i > 0 else [],
+                preconditions=[],
+                postconditions=[],
+            ))
+
+        # Add home at end if not already there
+        if not steps or steps[-1].skill_name != "home":
+            steps.append(TaskStep(
+                step_id=f"s{len(steps)+1}",
+                skill_name="home",
+                parameters={},
+                depends_on=[f"s{len(steps)}"],
+                preconditions=[],
+                postconditions=[],
+            ))
+
+        goal = f"{skill_name} {object_query}".strip()
+        plan = TaskPlan(goal=goal, steps=steps)
+
+        if on_message:
+            step_names = [s.skill_name for s in steps]
+            on_message(f"Executing: {' → '.join(step_names)}")
+
+        context = self._build_context()
+        result = self._executor.execute(
+            plan, self._skill_registry, context,
+            on_step=on_step, on_step_done=on_step_done,
+        )
+        self._sync_robot_state()
+
+        # Record in memory
+        self._memory.add_user_message(goal, entry_type="task")
+        self._memory.add_task_result(goal, result)
+
+        return result
+
     def register_skill(self, skill: Skill) -> None:
         """Register a custom skill, immediately available to the planner.
 

@@ -161,11 +161,11 @@ class TestVectorMCPServer:
         assert "completed" in result[0].text
 
     def test_call_tool_direct_skill(self) -> None:
-        """call_tool for a named skill routes through agent.execute."""
+        """call_tool for a named skill routes through agent.execute_skill."""
         from vector_os_nano.core.types import ExecutionResult
 
         agent = _make_mock_agent(["home"])
-        agent.execute = MagicMock(
+        agent.execute_skill = MagicMock(
             return_value=ExecutionResult(success=True, status="completed")
         )
         server = VectorMCPServer(agent)
@@ -175,14 +175,14 @@ class TestVectorMCPServer:
         )
         assert len(result) == 1
         assert result[0].type == "text"
-        agent.execute.assert_called_once()
+        agent.execute_skill.assert_called_once_with("home", {})
 
     def test_call_tool_with_arguments(self) -> None:
-        """call_tool passes skill arguments into the instruction."""
+        """call_tool passes structured params to agent.execute_skill."""
         from vector_os_nano.core.types import ExecutionResult
 
         agent = _make_mock_agent(["pick"])
-        agent.execute = MagicMock(
+        agent.execute_skill = MagicMock(
             return_value=ExecutionResult(success=True, status="completed")
         )
         server = VectorMCPServer(agent)
@@ -190,9 +190,7 @@ class TestVectorMCPServer:
         asyncio.run(
             _invoke_call_tool(server, "pick", {"object_label": "mug"})
         )
-        call_args = agent.execute.call_args[0][0]
-        assert "pick" in call_args
-        assert "mug" in call_args
+        agent.execute_skill.assert_called_once_with("pick", {"object_label": "mug"})
 
     def test_read_resource_world_state(self) -> None:
         """read_resource world://state returns JSON text."""

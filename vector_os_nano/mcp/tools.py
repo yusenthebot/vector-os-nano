@@ -147,9 +147,10 @@ async def handle_tool_call(
         result = await asyncio.to_thread(agent.execute, instruction)
         return _format_execution_result(instruction, result)
 
-    instruction = _build_skill_instruction(tool_name, arguments)
-    result = await asyncio.to_thread(agent.execute, instruction)
-    return _format_execution_result(instruction, result)
+    # Direct skill call: use structured params (bypasses string parsing)
+    result = await asyncio.to_thread(agent.execute_skill, tool_name, arguments)
+    label = _build_skill_instruction(tool_name, arguments)
+    return _format_execution_result(label, result)
 
 
 def _build_skill_instruction(skill_name: str, arguments: dict[str, Any]) -> str:
