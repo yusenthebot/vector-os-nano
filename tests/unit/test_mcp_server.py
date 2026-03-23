@@ -115,7 +115,8 @@ class TestVectorMCPServer:
         tool_list = asyncio.run(
             _invoke_list_tools(server)
         )
-        assert len(tool_list) == len(skills) + 1
+        # skills + natural_language + diagnostics + debug_perception
+        assert len(tool_list) == len(skills) + 3
 
     def test_list_resources_count(self) -> None:
         """list_resources returns 6 resources (3 world + 3 cameras)."""

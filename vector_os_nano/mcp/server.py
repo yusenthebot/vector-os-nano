@@ -178,40 +178,94 @@ def _log(msg: str) -> None:
 def _start_camera_viewer(perception: Any) -> None:
     """Start a background OpenCV viewer for hardware mode.
 
-    Shows the live RGB feed from the RealSense camera in a daemon thread so
-    the MCP stdio transport is not blocked.  The window closes when the thread
-    exits or the user presses ESC.
+    Shows RGB + depth side-by-side with tracking annotations:
+    - Left: RGB with bounding boxes, labels, and 3D coordinates
+    - Right: Depth colormap with mask contours and pointcloud centroids
 
-    Args:
-        perception: A perception object that exposes ``get_color_frame()``.
-                    If None or the method is absent the function is a no-op.
+    Mirrors the viewer in run.py _run_cli().
     """
     if perception is None or not hasattr(perception, "get_color_frame"):
         return
 
     import threading  # noqa: PLC0415
+
     import cv2  # noqa: PLC0415
+    import numpy as np  # noqa: PLC0415
+
+    cam = perception._camera if hasattr(perception, "_camera") else perception
 
     def _viewer_loop() -> None:
         cv2.namedWindow("Vector OS MCP", cv2.WINDOW_NORMAL)
-        cv2.resizeWindow("Vector OS MCP", 640, 480)
+        cv2.resizeWindow("Vector OS MCP", 1280, 480)
+
         while True:
             try:
-                frame = perception.get_color_frame()
-                if frame is None:
+                color = cam.get_color_frame() if hasattr(cam, "get_color_frame") else perception.get_color_frame()
+                depth = cam.get_depth_frame() if hasattr(cam, "get_depth_frame") else None
+                if color is None:
                     continue
-                # Perception pipeline returns RGB; OpenCV expects BGR.
-                bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                cv2.imshow("Vector OS MCP", bgr)
-                if cv2.waitKey(33) == 27:  # ESC closes the window
+
+                # --- Left: RGB + tracking overlay ---
+                rgb_display = cv2.cvtColor(color.copy(), cv2.COLOR_RGB2BGR)
+
+                if hasattr(perception, "_last_tracked") and perception._last_tracked:
+                    for obj in perception._last_tracked:
+                        if obj.bbox_2d:
+                            x1, y1, x2, y2 = [int(v) for v in obj.bbox_2d]
+                            cv2.rectangle(rgb_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                            lbl = obj.label
+                            if obj.pose:
+                                lbl += f" ({obj.pose.x:.3f},{obj.pose.y:.3f},{obj.pose.z:.3f})"
+                            cv2.putText(rgb_display, lbl, (x1, max(y1 - 8, 12)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
+                elif hasattr(perception, "_last_detections") and perception._last_detections:
+                    for det in perception._last_detections:
+                        x1, y1, x2, y2 = [int(v) for v in det.bbox]
+                        cv2.rectangle(rgb_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        cv2.putText(rgb_display, det.label, (x1, max(y1 - 8, 12)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1)
+
+                # --- Right: Depth colormap + mask + centroid ---
+                if depth is not None:
+                    depth_f = np.clip(depth.astype(np.float32), 0, 5000)
+                    depth_u8 = (depth_f / 5000.0 * 255).astype(np.uint8)
+                    depth_colored = cv2.applyColorMap(depth_u8, cv2.COLORMAP_JET)
+
+                    if hasattr(perception, "_last_tracked") and perception._last_tracked:
+                        for obj in perception._last_tracked:
+                            # Draw mask contours
+                            if obj.mask is not None and obj.mask.shape == depth_colored.shape[:2]:
+                                contours, _ = cv2.findContours(
+                                    obj.mask.astype(np.uint8),
+                                    cv2.RETR_EXTERNAL,
+                                    cv2.CHAIN_APPROX_SIMPLE,
+                                )
+                                cv2.drawContours(depth_colored, contours, -1, (255, 255, 255), 2)
+                            # Draw pointcloud centroid
+                            if obj.pose and obj.bbox_2d:
+                                cx = int((obj.bbox_2d[0] + obj.bbox_2d[2]) / 2)
+                                cy = int((obj.bbox_2d[1] + obj.bbox_2d[3]) / 2)
+                                cv2.circle(depth_colored, (cx, cy), 6, (0, 255, 0), -1)
+                                cv2.circle(depth_colored, (cx, cy), 8, (255, 255, 255), 2)
+                                info = f"{obj.pose.x:.3f},{obj.pose.y:.3f},{obj.pose.z:.3f}"
+                                cv2.putText(depth_colored, info, (cx + 10, cy),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+                    combined = np.hstack([rgb_display, depth_colored])
+                else:
+                    combined = rgb_display
+
+                cv2.imshow("Vector OS MCP", combined)
+                if cv2.waitKey(33) == 27:
                     break
             except Exception:
-                break
+                pass
+
         cv2.destroyAllWindows()
 
     thread = threading.Thread(target=_viewer_loop, daemon=True)
     thread.start()
-    _log("[MCP] Camera viewer started (ESC to close)")
+    _log("[MCP] Camera viewer started — RGB + depth with annotations (ESC to close)")
 
 
 def create_sim_agent(headless: bool = True) -> Agent:
