@@ -90,6 +90,11 @@ PLACE LOCATIONS (map user language to these values):
 - "左后方" → "back_left"
 - "右后方" → "back_right"
 
+MULTI-OBJECT EXAMPLE:
+User: "把所有东西都抓了随便乱放"
+With objects: banana, mug, bottle on table →
+steps: pick(banana,hold) → place(left) → pick(mug,hold) → place(right) → pick(bottle,hold) → place(front) → home
+
 Output format — JSON only, no markdown fences:
 {{
   "message": "好的主人，我来抓取杯子。",

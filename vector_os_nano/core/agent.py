@@ -181,6 +181,34 @@ class Agent:
         except Exception as exc:
             logger.debug("Could not sync robot state: %s", exc)
 
+    def _refresh_objects(self) -> None:
+        """Populate world model with current objects from sim or perception.
+
+        Ensures the LLM planner can see what objects are on the table
+        even if previous operations cleared the world model.
+        """
+        if self._arm is None:
+            return
+
+        # From MuJoCo sim: get_object_positions() returns ground truth
+        if hasattr(self._arm, "get_object_positions"):
+            try:
+                from vector_os_nano.core.world_model import ObjectState
+                objs = self._arm.get_object_positions()
+                for name, pos in objs.items():
+                    obj = ObjectState(
+                        object_id=name,
+                        label=name.replace("_", " "),
+                        x=float(pos[0]),
+                        y=float(pos[1]),
+                        z=float(pos[2]),
+                        state="on_table",
+                        confidence=1.0,
+                    )
+                    self._world_model.add_object(obj)
+            except Exception as exc:
+                logger.debug("Could not refresh objects from sim: %s", exc)
+
     def execute(self, instruction: str, on_message: Any = None, on_step: Any = None, on_step_done: Any = None) -> ExecutionResult:
         """Execute a natural language instruction via multi-stage pipeline.
 
@@ -291,6 +319,9 @@ class Agent:
     def _handle_task(self, instruction: str, on_message: Any = None, on_step: Any = None, on_step_done: Any = None) -> ExecutionResult:
         """Handle task — plan, execute, summarize."""
         self._conversation_history = [{"role": "user", "content": instruction}]
+
+        # Ensure world model has current objects (sim or perception)
+        self._refresh_objects()
 
         max_retries: int = (
             self._config.get("agent", {}).get("max_planning_retries", 3)
