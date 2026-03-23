@@ -325,6 +325,7 @@ def create_hardware_agent() -> Agent:
             cfg.get("perception", {}).get("vlm_model")
             or os.environ.get("MOONDREAM_MODEL", "vikhyatk/moondream2")
         )
+        os.environ.setdefault("MOONDREAM_MODEL", vlm_model)
         _log(f"[MCP] Loading VLM ({vlm_model})...")
         vlm = VLMDetector()
         _log("[MCP] VLM loaded.")
