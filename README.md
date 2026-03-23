@@ -157,6 +157,10 @@ python run.py --sim-headless     # headless (no viewer)
 - Pick-and-place with named locations (front, left, right, center, etc.)
 - Simulated perception with Chinese/English NL queries
 
+<p align="center">
+  <img src="images/sim_setup.png" width="700" alt="MuJoCo Simulation">
+</p>
+
 ## Hardware (~$420 total)
 
 | Component | Model | Cost |
