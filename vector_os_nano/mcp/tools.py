@@ -25,7 +25,23 @@ def skills_to_mcp_tools(registry: SkillRegistry) -> list[dict]:
     tools = [skill_schema_to_mcp_tool(s) for s in schemas]
     tools.append(build_natural_language_tool())
     tools.append(build_diagnostics_tool())
+    tools.append(build_debug_perception_tool())
     return tools
+
+
+def build_debug_perception_tool() -> dict:
+    """Build a debug tool that traces the full perception pipeline."""
+    return {
+        "name": "debug_perception",
+        "description": "Trace the full perception pipeline step by step: VLM detect, EdgeTAM track, 3D sampling, calibration. Use to debug why pick fails.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Object to detect (e.g. 'battery')"},
+            },
+            "required": ["query"],
+        },
+    }
 
 
 def build_diagnostics_tool() -> dict:
@@ -155,6 +171,10 @@ async def handle_tool_call(
     if tool_name == "diagnostics":
         return _run_diagnostics(agent)
 
+    if tool_name == "debug_perception":
+        query = arguments.get("query", "all objects")
+        return await asyncio.to_thread(_run_debug_perception, agent, query)
+
     if tool_name == "natural_language":
         instruction = arguments.get("instruction", "")
         result = await asyncio.to_thread(agent.execute, instruction)
@@ -164,6 +184,113 @@ async def handle_tool_call(
     result = await asyncio.to_thread(agent.execute_skill, tool_name, arguments)
     label = _build_skill_instruction(tool_name, arguments)
     return _format_execution_result(label, result)
+
+
+def _run_debug_perception(agent: Agent, query: str) -> str:
+    """Trace the full perception pipeline step by step, mirroring pick's flow."""
+    import time
+    import numpy as np
+
+    lines: list[str] = [f"=== DEBUG PERCEPTION: query={query!r} ==="]
+
+    perc = agent._perception
+    if perc is None:
+        lines.append("FAIL: agent._perception is None")
+        return "\n".join(lines)
+
+    lines.append(f"Perception type: {type(perc).__name__}")
+
+    # Step 1: VLM detect
+    lines.append("\n--- Step 1: VLM Detect ---")
+    try:
+        detections = perc.detect(query)
+        lines.append(f"Detections: {len(detections)}")
+        for i, det in enumerate(detections):
+            lines.append(f"  [{i}] label={det.label!r} confidence={det.confidence:.3f} bbox={det.bbox}")
+    except Exception as exc:
+        lines.append(f"FAIL: detect() raised {type(exc).__name__}: {exc}")
+        return "\n".join(lines)
+
+    if not detections:
+        lines.append("FAIL: VLM returned 0 detections")
+        return "\n".join(lines)
+
+    # Step 2: Tracker init
+    lines.append("\n--- Step 2: EdgeTAM Track ---")
+    try:
+        tracked = perc.track(detections)
+        lines.append(f"Tracked objects: {len(tracked)}")
+        for i, obj in enumerate(tracked):
+            pose_str = f"({obj.pose.x:.4f}, {obj.pose.y:.4f}, {obj.pose.z:.4f})" if obj.pose else "None"
+            lines.append(f"  [{i}] label={obj.label!r} pose={pose_str} mask={'yes' if obj.mask is not None else 'no'}")
+    except Exception as exc:
+        lines.append(f"FAIL: track() raised {type(exc).__name__}: {exc}")
+        return "\n".join(lines)
+
+    if not tracked:
+        lines.append("FAIL: Tracker returned 0 objects")
+        return "\n".join(lines)
+
+    # Step 3: 3D sampling
+    lines.append("\n--- Step 3: 3D Position Sampling ---")
+    samples: list[list[float]] = []
+    t0 = tracked[0]
+    if t0.pose is not None:
+        samples.append([t0.pose.x, t0.pose.y, t0.pose.z])
+        lines.append(f"Initial pose: ({t0.pose.x:.4f}, {t0.pose.y:.4f}, {t0.pose.z:.4f})")
+    else:
+        lines.append("Initial pose: None (no depth?)")
+
+    has_update = hasattr(perc, "update")
+    lines.append(f"Has update(): {has_update}")
+    for sample_i in range(4):
+        time.sleep(0.1)
+        try:
+            if has_update:
+                updated = perc.update()
+            else:
+                updated = perc.track(detections)
+            if updated and updated[0].pose is not None:
+                p = updated[0].pose
+                samples.append([p.x, p.y, p.z])
+                lines.append(f"  Sample {sample_i+1}: ({p.x:.4f}, {p.y:.4f}, {p.z:.4f})")
+            else:
+                lines.append(f"  Sample {sample_i+1}: no pose")
+        except Exception as exc:
+            lines.append(f"  Sample {sample_i+1}: ERROR {exc}")
+
+    lines.append(f"Total valid samples: {len(samples)}")
+
+    if not samples:
+        lines.append("FAIL: 0 valid 3D samples — depth camera not returning data?")
+        return "\n".join(lines)
+
+    # Step 4: Calibration
+    lines.append("\n--- Step 4: Calibration Transform ---")
+    cam_pos = np.median(np.array(samples), axis=0)
+    lines.append(f"Camera-frame position: ({cam_pos[0]:.4f}, {cam_pos[1]:.4f}, {cam_pos[2]:.4f})")
+
+    cal = agent._calibration
+    if cal is None:
+        lines.append("WARN: No calibration — using camera coords as base coords")
+        base_pos = cam_pos
+    else:
+        try:
+            base_pos = cal.camera_to_base(cam_pos)
+            lines.append(f"Base-frame position: ({base_pos[0]:.4f}, {base_pos[1]:.4f}, {base_pos[2]:.4f})")
+            lines.append(f"Base-frame (cm): ({base_pos[0]*100:.1f}, {base_pos[1]*100:.1f}, {base_pos[2]*100:.1f})")
+        except Exception as exc:
+            lines.append(f"FAIL: calibration.camera_to_base raised {type(exc).__name__}: {exc}")
+            return "\n".join(lines)
+
+    # Step 5: Workspace check
+    lines.append("\n--- Step 5: Workspace Bounds ---")
+    dist = float(np.sqrt(base_pos[0]**2 + base_pos[1]**2))
+    lines.append(f"Distance from origin: {dist*100:.1f} cm")
+    lines.append(f"In workspace (5-35cm): {'YES' if 0.05 <= dist <= 0.35 else 'NO'}")
+
+    lines.append("\n=== RESULT: Perception pipeline completed successfully ===")
+    return "\n".join(lines)
 
 
 def _run_diagnostics(agent: Agent) -> str:
