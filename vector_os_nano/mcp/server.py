@@ -115,7 +115,7 @@ class VectorMCPServer:
                 )
 
     async def run_stdio(self) -> None:
-        """Run the server with stdio transport (for Claude Code)."""
+        """Run the server with stdio transport."""
         from mcp.server.stdio import stdio_server  # noqa: PLC0415
 
         async with stdio_server() as (read_stream, write_stream):
@@ -124,6 +124,44 @@ class VectorMCPServer:
                 write_stream,
                 self._server.create_initialization_options(),
             )
+
+    async def run_sse(self, host: str = "0.0.0.0", port: int = 8100) -> None:
+        """Run the server with SSE transport over HTTP.
+
+        Start manually in a terminal, then connect Claude Code to it:
+            python -m vector_os_nano.mcp --sim --port 8100
+            # In Claude Code: /mcp add url http://localhost:8100/sse
+        """
+        from mcp.server.sse import SseServerTransport  # noqa: PLC0415
+        from starlette.applications import Starlette  # noqa: PLC0415
+        from starlette.routing import Mount, Route  # noqa: PLC0415
+        import uvicorn  # noqa: PLC0415
+
+        sse = SseServerTransport("/messages/")
+
+        async def handle_sse(request):
+            async with sse.connect_sse(
+                request.scope, request.receive, request._send
+            ) as (read_stream, write_stream):
+                await self._server.run(
+                    read_stream,
+                    write_stream,
+                    self._server.create_initialization_options(),
+                )
+
+        app = Starlette(
+            routes=[
+                Route("/sse", endpoint=handle_sse),
+                Mount("/messages/", app=sse.handle_post_message),
+            ],
+        )
+
+        _log(f"[MCP] SSE server listening on http://{host}:{port}/sse")
+        _log(f"[MCP] In Claude Code run:  /mcp add url http://localhost:{port}/sse")
+
+        config = uvicorn.Config(app, host=host, port=port, log_level="warning")
+        server = uvicorn.Server(config)
+        await server.serve()
 
 
 # ---------------------------------------------------------------------------
@@ -334,25 +372,47 @@ async def main() -> None:
     """Async entry point for the MCP server."""
     import argparse  # noqa: PLC0415
 
-    parser = argparse.ArgumentParser(description="Vector OS Nano MCP Server")
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument(
+    parser = argparse.ArgumentParser(
+        description="Vector OS Nano MCP Server",
+        epilog=(
+            "examples:\n"
+            "  python -m vector_os_nano.mcp --sim            # sim + viewer + SSE on :8100\n"
+            "  python -m vector_os_nano.mcp --sim-headless   # sim headless + SSE\n"
+            "  python -m vector_os_nano.mcp --hardware       # real arm + SSE\n"
+            "  python -m vector_os_nano.mcp --sim --stdio    # sim + stdio (for .mcp.json)\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    hw_mode = parser.add_mutually_exclusive_group()
+    hw_mode.add_argument(
         "--sim",
         action="store_true",
         help="MuJoCo simulation with viewer window",
     )
-    mode.add_argument(
+    hw_mode.add_argument(
         "--sim-headless",
         action="store_true",
         help="MuJoCo simulation without viewer",
     )
-    mode.add_argument(
+    hw_mode.add_argument(
         "--hardware",
         action="store_true",
         help="Real SO-101 arm + RealSense + VLM",
     )
+    parser.add_argument(
+        "--stdio",
+        action="store_true",
+        help="Use stdio transport (for .mcp.json auto-start). Default is SSE.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8100,
+        help="SSE server port (default: 8100)",
+    )
     args = parser.parse_args()
 
+    # Create agent
     if args.hardware:
         agent = create_hardware_agent()
     elif args.sim:
@@ -360,12 +420,15 @@ async def main() -> None:
     elif args.sim_headless:
         agent = create_sim_agent(headless=True)
     else:
-        # Default: headless sim
-        agent = create_sim_agent(headless=True)
+        # Default: sim with viewer
+        agent = create_sim_agent(headless=False)
 
     server = VectorMCPServer(agent)
     try:
-        await server.run_stdio()
+        if args.stdio:
+            await server.run_stdio()
+        else:
+            await server.run_sse(port=args.port)
     finally:
         agent.disconnect()
 
