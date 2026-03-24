@@ -6,6 +6,12 @@ agent:
   max_planning_retries: 3
   max_execution_retries: 2
   planning_timeout_sec: 10.0
+  agent_loop:
+    max_iterations: 10
+    verify: true
+    verify_in_sim: false
+    history_max_actions: 6
+    model: null
 
 llm:
   provider: "claude"           # claude | openai | local

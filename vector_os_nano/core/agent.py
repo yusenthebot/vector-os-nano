@@ -640,6 +640,48 @@ class Agent:
         except (KeyError, IndexError):
             return prompt
 
+    def run_goal(
+        self,
+        goal: str,
+        max_iterations: int | None = None,
+        verify: bool | None = None,
+        on_step: Any = None,
+        on_message: Any = None,
+    ) -> "GoalResult":
+        """Execute an iterative goal using the observe-decide-act-verify loop.
+
+        Unlike execute() which plans all steps upfront, run_goal() calls the
+        LLM once per action, observes the result, and decides the next step
+        dynamically. Use for open-ended goals like "clean the table".
+
+        Args:
+            goal: Natural language goal string.
+            max_iterations: Safety cap on loop iterations. None = use config default.
+            verify: Whether to run perception verification after pick/place.
+                    None = use config default.
+            on_step: Optional callback(action_name, iteration, max_iterations).
+            on_message: Optional callback(str) for LLM messages.
+
+        Returns:
+            GoalResult with success, actions trace, and summary.
+        """
+        from vector_os_nano.core.agent_loop import AgentLoop  # lazy import
+
+        loop_cfg = self._config.get("agent", {}).get("agent_loop", {})
+        if max_iterations is None:
+            max_iterations = loop_cfg.get("max_iterations", 10)
+        if verify is None:
+            verify = loop_cfg.get("verify", True)
+
+        loop = AgentLoop(agent_ref=self, config=self._config)
+        return loop.run(
+            goal=goal,
+            max_iterations=max_iterations,
+            verify=verify,
+            on_step=on_step,
+            on_message=on_message,
+        )
+
     # -------------------------------------------------------------------------
     # Convenience methods
     # -------------------------------------------------------------------------

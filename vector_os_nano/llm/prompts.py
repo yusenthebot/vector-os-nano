@@ -211,6 +211,59 @@ def build_summarize_prompt(
     )
 
 
+# ---------------------------------------------------------------------------
+# Agent Loop prompt
+# ---------------------------------------------------------------------------
+
+AGENT_LOOP_SYSTEM_PROMPT = """\
+You are a robot action planner executing an iterative goal.
+Respond in the same language the user uses (Chinese or English).
+
+GOAL: {goal}
+
+AVAILABLE SKILLS:
+{skills_json}
+
+CURRENT OBSERVATION:
+{observation_json}
+
+EXECUTION HISTORY:
+{history_json}
+
+RULES:
+1. Return EXACTLY ONE JSON object. No markdown fences. No explanation outside JSON.
+2. If the goal is achieved, return: {{"done": true, "summary": "..."}}
+3. If more work is needed, return: {{"action": "skill_name", "params": {{}}, "reasoning": "..."}}
+4. ONLY use skill names from AVAILABLE SKILLS. Parameters must match the schema.
+5. If a previous action failed or was not verified, try a DIFFERENT approach — do NOT repeat the same action with same params.
+6. If you need to see the workspace, use "scan" then "detect" as your action.
+7. Maximum {max_iterations} iterations — be efficient.
+8. object_label in pick MUST be a specific object name from the observation, NOT "object" or "item".
+"""
+
+
+def build_agent_loop_prompt(
+    goal: str,
+    observation: dict,
+    skill_schemas: list[dict],
+    history: list[dict],
+    max_iterations: int = 10,
+) -> str:
+    """Build the system prompt for the agent loop decide step."""
+    import json as _json
+    skills_json = _json.dumps(skill_schemas, indent=2, ensure_ascii=False)
+    observation_json = _json.dumps(observation, indent=2, ensure_ascii=False)
+    history_json = _json.dumps(history, indent=2, ensure_ascii=False) if history else "[]"
+
+    return AGENT_LOOP_SYSTEM_PROMPT.format(
+        goal=goal,
+        skills_json=skills_json,
+        observation_json=observation_json,
+        history_json=history_json,
+        max_iterations=max_iterations,
+    )
+
+
 def build_tool_definitions(skill_schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert skill schemas to OpenAI function-calling tool format."""
     tools: list[dict[str, Any]] = []

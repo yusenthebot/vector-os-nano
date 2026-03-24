@@ -107,6 +107,59 @@ def parse_plan_response(goal: str, raw_text: str) -> TaskPlan:
     return TaskPlan(goal=goal, steps=steps, message=ai_message)
 
 
+def parse_action_response(raw_text: str) -> dict:
+    """Parse an LLM response for the agent loop into a single action dict.
+
+    Returns one of:
+        {"action": "skill_name", "params": {...}, "reasoning": "..."}
+        {"done": true, "summary": "..."}
+
+    Triple fallback:
+        1. JSON parse (with markdown fence stripping)
+        2. Regex extract action name
+        3. Default to {"action": "scan"} (safe, non-destructive)
+
+    Never raises.
+    """
+    if not raw_text or not raw_text.strip():
+        log.warning("Empty LLM response for agent loop, defaulting to scan")
+        return {"action": "scan", "params": {}, "reasoning": "empty response fallback"}
+
+    cleaned = _strip_markdown_fences(raw_text)
+
+    # Attempt 1: Full JSON parse
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, dict):
+            if data.get("done"):
+                return data
+            if "action" in data:
+                data.setdefault("params", {})
+                data.setdefault("reasoning", "")
+                return data
+    except json.JSONDecodeError:
+        pass
+
+    # Attempt 2: Regex extract action name
+    m = re.search(r'"action"\s*:\s*"(\w+)"', raw_text)
+    if m:
+        action = m.group(1)
+        log.warning("JSON parse failed, regex extracted action=%r", action)
+        # Try to extract params too
+        params: dict = {}
+        pm = re.search(r'"params"\s*:\s*(\{[^}]*\})', raw_text)
+        if pm:
+            try:
+                params = json.loads(pm.group(1))
+            except json.JSONDecodeError:
+                pass
+        return {"action": action, "params": params, "reasoning": "regex fallback"}
+
+    # Attempt 3: Safe default
+    log.warning("Could not parse agent loop response: %.200s — defaulting to scan", raw_text)
+    return {"action": "scan", "params": {}, "reasoning": "parse failure fallback"}
+
+
 # ---------------------------------------------------------------------------
 # ClaudeProvider
 # ---------------------------------------------------------------------------
@@ -242,6 +295,29 @@ class ClaudeProvider:
             {"role": "user", "content": "Summarize the execution results."}
         ]
         return self._chat_completion(system, messages, model_override)
+
+    def decide_next_action(
+        self,
+        goal: str,
+        observation: dict,
+        skill_schemas: list[dict],
+        history: list[dict],
+        model_override: str | None = None,
+    ) -> dict:
+        """Decide the next action for the agent loop.
+
+        Returns a dict with either {"action": ..., "params": ...} or {"done": true, "summary": ...}.
+        """
+        from vector_os_nano.llm.prompts import build_agent_loop_prompt
+        system_prompt = build_agent_loop_prompt(
+            goal=goal,
+            observation=observation,
+            skill_schemas=skill_schemas,
+            history=history,
+        )
+        messages: list[dict] = [{"role": "user", "content": goal}]
+        raw = self._chat_completion(system_prompt, messages, model_override)
+        return parse_action_response(raw)
 
     # ------------------------------------------------------------------
     # Internal helpers

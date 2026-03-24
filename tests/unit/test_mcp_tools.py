@@ -190,7 +190,7 @@ class TestSkillsToMcpTools:
         registry = self._make_registry()
         skill_count = len(registry.list_skills())
         tools = skills_to_mcp_tools(registry)
-        assert len(tools) == skill_count + 3  # +3 meta-tools: natural_language, diagnostics, debug_perception
+        assert len(tools) == skill_count + 4  # +4 meta-tools: natural_language, diagnostics, debug_perception, run_goal
 
     def test_all_tools_have_name_description_input_schema(self) -> None:
         registry = self._make_registry()

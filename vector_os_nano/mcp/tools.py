@@ -26,7 +26,41 @@ def skills_to_mcp_tools(registry: SkillRegistry) -> list[dict]:
     tools.append(build_natural_language_tool())
     tools.append(build_diagnostics_tool())
     tools.append(build_debug_perception_tool())
+    tools.append(build_run_goal_tool())
     return tools
+
+
+def build_run_goal_tool() -> dict:
+    """Build the run_goal tool for iterative goal execution."""
+    return {
+        "name": "run_goal",
+        "description": (
+            "Execute an iterative goal using the observe-decide-act-verify loop. "
+            "Use for multi-step goals like 'clean the table', 'sort objects by color', "
+            "'pick all objects'. The system will loop: observe workspace, decide next action, "
+            "execute it, verify the outcome, and repeat until the goal is achieved."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "goal": {
+                    "type": "string",
+                    "description": "Natural language goal (e.g., 'clean the table', 'pick all red objects')",
+                },
+                "max_iterations": {
+                    "type": "integer",
+                    "description": "Maximum loop iterations (default: 10)",
+                    "default": 10,
+                },
+                "verify": {
+                    "type": "boolean",
+                    "description": "Verify outcomes with perception after pick/place (default: true)",
+                    "default": True,
+                },
+            },
+            "required": ["goal"],
+        },
+    }
 
 
 def build_debug_perception_tool() -> dict:
@@ -178,6 +212,15 @@ async def handle_tool_call(
     if tool_name == "debug_perception":
         query = arguments.get("query", "all objects")
         return await asyncio.to_thread(_run_debug_perception, agent, query)
+
+    if tool_name == "run_goal":
+        goal = arguments.get("goal", "")
+        max_iter = arguments.get("max_iterations", 10)
+        verify = arguments.get("verify", True)
+        result = await asyncio.to_thread(
+            agent.run_goal, goal, max_iterations=max_iter, verify=verify
+        )
+        return _format_goal_result(result)
 
     if tool_name == "natural_language":
         instruction = arguments.get("instruction", "")
@@ -477,3 +520,18 @@ def _format_execution_result(
     response["total_duration_sec"] = round(total_duration, 3)
 
     return json.dumps(response, ensure_ascii=False, indent=2)
+
+
+def _format_goal_result(result: Any) -> str:
+    """Format a GoalResult as JSON for MCP.
+
+    Returns JSON string with goal, success, iterations, actions trace, summary,
+    and final world state.  Falls back to str() for non-GoalResult inputs.
+    """
+    import json
+    from vector_os_nano.core.types import GoalResult
+
+    if not isinstance(result, GoalResult):
+        return str(result)
+
+    return json.dumps(result.to_dict(), ensure_ascii=False, indent=2)
