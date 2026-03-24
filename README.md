@@ -252,6 +252,34 @@ vector_os_nano/
 └── ros2/          Optional ROS2 integration (5 nodes)
 ```
 
+## MCP Server -- Claude Code Controls the Robot
+
+Vector OS Nano exposes all skills via the **Model Context Protocol (MCP)**. Claude Code connects directly and controls the robot -- sim or real hardware -- through natural language.
+
+```bash
+# Auto-connects when Claude Code starts (configured in .mcp.json)
+# Or manual: python -m vector_os_nano.mcp --sim --stdio
+```
+
+**10 MCP tools**: pick, place, home, scan, detect, gripper_open, gripper_close, natural_language, diagnostics, debug_perception
+**7 MCP resources**: world://state, world://objects, world://robot, camera://overhead, camera://front, camera://side, camera://live
+
+<p align="center">
+  <img src="images/mcp_claude.png" width="700" alt="Claude Code controlling robot via MCP">
+  <br>
+  <i>Claude Code operating the robot arm through MCP -- scan, detect, pick, place via natural conversation.</i>
+</p>
+
+### Autonomous Skill Generation
+
+Claude Agent can autonomously design, implement, and test new skills with full reasoning -- then register and execute them immediately.
+
+<p align="center">
+  <img src="images/skillgen.png" width="700" alt="Claude Agent generating skills autonomously">
+  <br>
+  <i>Claude Agent designing a custom wave skill with full reasoning, code generation, and live execution.</i>
+</p>
+
 ## What's Coming
 
 The full Vector OS stack under development at **CMU Robotics Institute**:
@@ -260,7 +288,6 @@ The full Vector OS stack under development at **CMU Robotics Institute**:
 - **Semantic Mapping** -- 3D scene graphs, object permanence, spatial reasoning
 - **Multi-Robot Coordination** -- fleet management, task allocation, shared world model
 - **Mobile Manipulation** -- wheeled, legged, and humanoid platforms
-- **MCP Server** -- expose skills via Model Context Protocol for external agent integration
 
 **Star this repo and stay tuned.**
 
