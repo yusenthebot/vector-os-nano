@@ -274,13 +274,60 @@ class ClaudeProvider:
         system_prompt: str,
         history: list[dict[str, Any]] | None = None,
         model_override: str | None = None,
+        image: Any = None,
     ) -> str:
-        """Free-form chat with conversation history."""
+        """Free-form chat with conversation history.
+
+        Args:
+            user_message: User text.
+            system_prompt: System prompt.
+            history: Prior conversation turns.
+            model_override: Override model.
+            image: Optional numpy array (H, W, 3) RGB image to include
+                   in the user message via base64 encoding.
+        """
         messages: list[dict[str, Any]] = []
         if history:
             messages.extend(history[-self.max_history:])
-        messages.append({"role": "user", "content": user_message})
+
+        if image is not None:
+            # Build multimodal message with image
+            content: list[dict[str, Any]] = [
+                {"type": "text", "text": user_message},
+            ]
+            try:
+                b64 = self._encode_image(image)
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                })
+            except Exception as exc:
+                log.warning("Failed to encode image: %s", exc)
+            messages.append({"role": "user", "content": content})
+        else:
+            messages.append({"role": "user", "content": user_message})
+
         return self._chat_completion(system_prompt, messages, model_override)
+
+    @staticmethod
+    def _encode_image(image: Any) -> str:
+        """Encode a numpy RGB image to base64 JPEG string."""
+        import base64
+        import io
+        try:
+            from PIL import Image
+            img = Image.fromarray(image)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=85)
+            return base64.b64encode(buf.getvalue()).decode("ascii")
+        except ImportError:
+            pass
+        # Fallback: cv2
+        import cv2
+        bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        _, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        import base64
+        return base64.b64encode(buf.tobytes()).decode("ascii")
 
     def summarize(
         self,

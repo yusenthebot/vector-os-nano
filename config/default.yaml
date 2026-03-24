@@ -25,6 +25,7 @@ llm:
     plan_simple: "anthropic/claude-haiku-4-5"
     plan_complex: "anthropic/claude-sonnet-4-6"
     chat: "anthropic/claude-haiku-4-5"
+    query: "openai/gpt-4o-mini"              # vision-capable model for visual queries
     summarize: "anthropic/claude-haiku-4-5"
 
 arm:

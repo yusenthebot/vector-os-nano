@@ -265,15 +265,43 @@ def build_agent_loop_prompt(
 
 
 def build_tool_definitions(skill_schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert skill schemas to OpenAI function-calling tool format."""
+    """Convert skill schemas to OpenAI function-calling tool format.
+
+    Cleans property definitions to only contain valid JSON Schema keys.
+    Skill-internal keys like 'required', 'source' are stripped.
+    """
+    # Keys valid inside a JSON Schema property definition
+    _VALID_PROP_KEYS = {"type", "description", "enum", "default", "items"}
+    _TYPE_MAP = {"float": "number", "int": "integer", "bool": "boolean", "str": "string"}
+
     tools: list[dict[str, Any]] = []
     for skill in skill_schemas:
         raw_params: dict[str, Any] = skill.get("parameters", {})
-        required = [
-            name
-            for name, schema in raw_params.items()
-            if not isinstance(schema, dict) or "default" not in schema
-        ]
+
+        properties: dict[str, dict] = {}
+        required: list[str] = []
+
+        for pname, pdef in raw_params.items():
+            if not isinstance(pdef, dict):
+                continue
+            # Clean: only keep valid JSON Schema keys
+            clean: dict[str, Any] = {}
+            if "type" in pdef:
+                clean["type"] = _TYPE_MAP.get(pdef["type"], pdef["type"])
+            if "description" in pdef:
+                clean["description"] = pdef["description"]
+            if "enum" in pdef:
+                clean["enum"] = pdef["enum"]
+            if "default" in pdef:
+                clean["default"] = pdef["default"]
+            properties[pname] = clean
+
+            # Determine required
+            explicitly_optional = pdef.get("required") is False
+            has_default = "default" in pdef
+            if not explicitly_optional and not has_default:
+                required.append(pname)
+
         tool: dict[str, Any] = {
             "type": "function",
             "function": {
@@ -281,10 +309,12 @@ def build_tool_definitions(skill_schemas: list[dict[str, Any]]) -> list[dict[str
                 "description": skill.get("description", ""),
                 "parameters": {
                     "type": "object",
-                    "properties": raw_params,
-                    "required": required,
+                    "properties": properties,
                 },
             },
         }
+        if required:
+            tool["function"]["parameters"]["required"] = required
+
         tools.append(tool)
     return tools
