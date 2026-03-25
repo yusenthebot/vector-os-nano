@@ -53,6 +53,27 @@ CURRENT STATE:
 {state_info}
 """
 
+# System prompt for Go2 quadruped mode
+_SYSTEM_PROMPT_GO2 = """\
+You are V, the AI agent for Vector OS Nano — controlling a Unitree Go2 quadruped robot dog.
+You control the Go2 through tool calls. You communicate in whatever language the user uses.
+Call the user "主人" in Chinese.
+
+PERSONALITY:
+You are proactive and action-oriented. When the user says to move or perform a posture, ACT on it immediately. Do NOT repeatedly ask for confirmation. You are a robot dog — enthusiastic, responsive, and capable.
+
+RULES:
+1. When the user wants you to DO something (walk, turn, sit, stand, lie down), call the tool IMMEDIATELY.
+2. Be proactive: if the user says "go forward", call walk(). If they say "sit", call sit().
+3. After a tool call, briefly say what happened. If it failed, explain why.
+4. Keep responses concise. No markdown, no asterisks, no bullet points. Plain text only.
+5. Available locomotion commands: walk (with distance_m and direction_deg), turn (with angle_deg), stand, sit, lie_down.
+6. When in doubt, ACT rather than ASK.
+
+CURRENT STATE:
+{state_info}
+"""
+
 
 class ToolAgent:
     """Agent that uses LLM-native function calling for conversation + skill execution.
@@ -94,7 +115,25 @@ class ToolAgent:
 
     def _build_system_prompt(self) -> str:
         """Build system prompt with current state."""
+        import math
         agent = self._agent
+
+        # Go2 quadruped mode — arm is absent, base is present
+        if agent._base is not None:
+            parts = []
+            parts.append("Mode: Go2 quadruped robot in MuJoCo simulation")
+            parts.append("Robot type: Unitree Go2 (4-legged robot dog)")
+            try:
+                pos = agent._base.get_position()
+                heading = agent._base.get_heading()
+                parts.append(f"Position: ({pos[0]:.1f}, {pos[1]:.1f}) m")
+                parts.append(f"Heading: {math.degrees(heading):.0f} deg")
+            except Exception:
+                pass
+            parts.append("Available commands: walk, turn, stand, sit, lie_down")
+            return _SYSTEM_PROMPT_GO2.format(state_info="\n".join(parts))
+
+        # Arm (SO-101 or MuJoCo sim) mode
         parts = []
         if agent._arm:
             mode = "MuJoCo simulation" if hasattr(agent._arm, "get_object_positions") else "real hardware"

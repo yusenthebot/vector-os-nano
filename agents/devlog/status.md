@@ -105,9 +105,9 @@ python -m vector_os_nano.mcp --hardware --stdio         # Real hardware
 | Agent | Model | Status | Notes |
 |-------|-------|--------|-------|
 | Lead/Architect | opus | Ready | v0.3.0 spec authoring |
-| Alpha | sonnet | DONE | T3 (v0.4.0): AgentLoop Full Implementation Tests — 13 new tests in test_agent_loop.py; all 23 T3 tests pass (13 new + 4 skeleton + 6 types), no implementation fixes needed |
-| Beta | sonnet | DONE | T4 (v0.4.0): Agent.run_goal() + MCP run_goal tool + config — run_goal() on Agent with lazy AgentLoop import, build_run_goal_tool() + _format_goal_result() + handle_tool_call handler in tools.py, agent_loop config in default.yaml; 14 new tests pass (6 agent + 8 mcp), 70 total in target suite |
-| Gamma | sonnet | DONE | T5: Integration tests — tests/unit/test_agent_loop_integration.py (5 tests: full Agent.run_goal() path with mock arm + mock LLM, MCP handler, no-LLM fallback, max-iterations cap); all 5 pass, regression 1010 passed / 1 pre-existing fail |
+| Alpha | sonnet | DONE | T3 (Go2 MuJoCo walk): walk() MPC locomotion complete — 10/10 tests pass; SIM_HZ=1000, CTRL_HZ=200, 3Hz trot gait, CentroidalMPC lazy-init |
+| Beta | sonnet | DONE | T4 (Go2 Skills): walk/turn/stance skills — 12 tests pass; vector_os_nano/skills/go2/ (walk.py, turn.py, stance.py, __init__.py); SkillResult.diagnosis_code added to core/types.py |
+| Gamma | sonnet | DONE | T5 (run.py --sim-go2 + ToolAgent Go2 prompt): --sim-go2/--sim-go2-headless flags, _init_sim_go2(), Go2 skills registered, _SYSTEM_PROMPT_GO2 with position/heading in ToolAgent — 3 new tests pass, 35 total pass, 0 regressions |
 | QA | — | Ready | Code review for v0.3.0 |
 | Scribe | haiku | DONE | Final session docs |
 

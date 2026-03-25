@@ -290,10 +290,40 @@ def _init_sim(cfg: dict, gui: bool = False) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# Go2 simulation initialisation — MuJoCo quadruped, no arm hardware
+# ---------------------------------------------------------------------------
+
+def _init_sim_go2(cfg: dict, gui: bool = False) -> tuple:
+    """Initialise Go2 quadruped MuJoCo simulation.
+
+    Returns (arm, gripper, perception, calibration, base) where arm/gripper/
+    perception/calibration are all None (Go2 has no arm) and base is MuJoCoGo2.
+
+    Args:
+        cfg: Config dict (reserved for future options).
+        gui: Open the MuJoCo viewer window for visual feedback.
+
+    Returns:
+        Tuple of (None, None, None, None, base).
+    """
+    from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
+
+    print("Starting Go2 MuJoCo simulation...")
+    base = MuJoCoGo2(gui=gui)
+    base.connect()
+    base.stand()
+
+    pos = base.get_position()
+    print(f"Go2 standing at ({pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f})")
+
+    return None, None, None, None, base
+
+
+# ---------------------------------------------------------------------------
 # Cleanup helper
 # ---------------------------------------------------------------------------
 
-def _shutdown(arm, perception) -> None:
+def _shutdown(arm, perception, base=None) -> None:
     """Disconnect hardware gracefully."""
     print("Shutting down...")
     if perception is not None and hasattr(perception, "stop_continuous_tracking"):
@@ -313,6 +343,12 @@ def _shutdown(arm, perception) -> None:
             print("Perception disconnected.")
         except Exception as exc:
             logger.warning("Error disconnecting perception: %s", exc)
+    if base is not None:
+        try:
+            base.disconnect()
+            print("Base disconnected.")
+        except Exception as exc:
+            logger.warning("Error disconnecting base: %s", exc)
     # Force exit — MuJoCo viewer GL context can hang the process
     os._exit(0)
 
@@ -648,6 +684,16 @@ def main() -> None:
         help="MuJoCo simulation without viewer (headless)",
     )
     parser.add_argument(
+        "--sim-go2",
+        action="store_true",
+        help="Go2 quadruped MuJoCo simulation with viewer",
+    )
+    parser.add_argument(
+        "--sim-go2-headless",
+        action="store_true",
+        help="Go2 quadruped MuJoCo simulation without viewer (headless)",
+    )
+    parser.add_argument(
         "-v", "--verbose",
         action="store_true",
         help="Show agent thinking process (match, classify, route decisions)",
@@ -666,14 +712,20 @@ def main() -> None:
     args = parser.parse_args()
 
     dashboard_mode: bool = args.dashboard
-    sim_mode: bool = args.sim or args.sim_headless
+    sim_mode: bool = args.sim or args.sim_headless or args.sim_go2 or args.sim_go2_headless
+    go2_mode: bool = args.sim_go2 or args.sim_go2_headless
 
     from vector_os_nano.core.agent import Agent
     from vector_os_nano.core.config import load_config
 
     cfg = load_config("config/user.yaml")
 
-    if sim_mode:
+    base = None
+    if go2_mode:
+        arm, gripper, perception, calibration, base = _init_sim_go2(
+            cfg, gui=not args.sim_go2_headless
+        )
+    elif sim_mode:
         arm, gripper, perception, calibration = _init_sim(cfg, gui=not args.sim_headless)
     else:
         arm, gripper, perception, calibration = _init_hardware(cfg)
@@ -685,15 +737,24 @@ def main() -> None:
         perception=perception,
         llm_api_key=api_key,
         config=cfg,
+        base=base,
     )
 
     # Inject calibration loaded from YAML (bypasses Calibration.load() .npy path)
     if calibration is not None:
         agent._calibration = calibration
 
+    # Register Go2 skills when in Go2 mode
+    if go2_mode:
+        from vector_os_nano.skills.go2 import get_go2_skills
+        for skill in get_go2_skills():
+            agent._skill_registry.register(skill)
+
     # Status summary
     print()
-    if sim_mode:
+    if go2_mode:
+        print(f"Mode      : Go2 MuJoCo simulation {'(headless)' if args.sim_go2_headless else '(GUI)'}")
+    elif sim_mode:
         print(f"Mode      : MuJoCo simulation {'(headless)' if args.sim_headless else '(GUI)'}")
     print(f"Skills    : {', '.join(agent.skills)}")
     llm_label = (
@@ -715,7 +776,7 @@ def main() -> None:
         else:
             _run_cli(agent, perception, verbose=args.verbose)
     finally:
-        _shutdown(arm, perception)
+        _shutdown(arm, perception, base=base)
 
 
 def main_dashboard() -> None:
