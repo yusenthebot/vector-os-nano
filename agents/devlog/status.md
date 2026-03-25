@@ -106,7 +106,7 @@ python -m vector_os_nano.mcp --hardware --stdio         # Real hardware
 |-------|-------|--------|-------|
 | Lead/Architect | opus | Ready | v0.3.0 spec authoring |
 | Alpha | sonnet | DONE | T3 (Go2 MuJoCo walk): walk() MPC locomotion complete — 10/10 tests pass; SIM_HZ=1000, CTRL_HZ=200, 3Hz trot gait, CentroidalMPC lazy-init |
-| Beta | sonnet | DONE | T4 (Go2 Skills): walk/turn/stance skills — 12 tests pass; vector_os_nano/skills/go2/ (walk.py, turn.py, stance.py, __init__.py); SkillResult.diagnosis_code added to core/types.py |
+| Beta | sonnet | DONE | T4 (Go2 Skills): walk/turn/stance skills — 12 tests pass; vector_os_nano/skills/go2/ (walk.py, turn.py, stance.py, __init__.py); SkillResult.diagnosis_code added to core/types.py. T6 (Integration tests): 3/3 pass in tests/integration/test_go2_integration.py; T7 (pyproject.toml go2 deps): casadi>=3.6 + pin>=3.0 added, pip install -e ".[go2]" verified. |
 | Gamma | sonnet | DONE | T5 (run.py --sim-go2 + ToolAgent Go2 prompt): --sim-go2/--sim-go2-headless flags, _init_sim_go2(), Go2 skills registered, _SYSTEM_PROMPT_GO2 with position/heading in ToolAgent — 3 new tests pass, 35 total pass, 0 regressions |
 | QA | — | Ready | Code review for v0.3.0 |
 | Scribe | haiku | DONE | Final session docs |
