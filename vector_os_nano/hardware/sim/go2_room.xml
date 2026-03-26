@@ -103,7 +103,13 @@
     <light name="sun" pos="10 7 4" dir="0 0 -1" directional="true" diffuse="0.25 0.25 0.25"/>
 
     <!-- ==================== FLOORS ==================== -->
+    <!-- Floor: plane for physics contact (correct collision) + box for mj_ray detection -->
     <geom name="floor" type="plane" pos="10 7 0" size="10.5 7.5 0.05" material="marble_mat"/>
+    <geom name="floor_raycast" type="box" pos="10 7 -0.02" size="10.5 7.5 0.01"
+          contype="0" conaffinity="0" group="3" rgba="0 0 0 0"/>
+    <!-- Ceiling: needed for downward-facing lidar rays -->
+    <geom name="ceiling" type="box" pos="10 7 2.85" size="10.5 7.5 0.05" material="wall_mat"
+          contype="0" conaffinity="0" group="3"/>
 
     <!-- Per-room floor overlays (visual only) -->
     <geom name="f_living" type="box" pos="3 2.5 0.001" size="3 2.5 0.001" material="wood_mat" contype="0" conaffinity="0"/>

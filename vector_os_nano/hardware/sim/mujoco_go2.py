@@ -558,6 +558,9 @@ class MuJoCoGo2:
 
         heading = self.get_heading()
 
+        # Exclude Go2 robot body from ray detection (base_link + all children)
+        robot_body_id = self._mj.base_bid
+
         n_azimuth = 360
         elevations = [-15, -10, -5, 0, 5, 10, 15]  # degrees
         mid_ring_ranges: list[float] = []
@@ -582,7 +585,7 @@ class MuJoCoGo2:
                     direction,
                     None,
                     1,
-                    -1,
+                    robot_body_id,  # exclude Go2 body
                     geom_id,
                 )
                 if dist > 0 and dist < 12.0:
