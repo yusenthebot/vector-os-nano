@@ -73,15 +73,26 @@ You are in a 20m x 14m house with these rooms:
 - bathroom (卫生间): top-center, has bathtub, vanity
 - hallway (走廊): central open area connecting all rooms
 
+CAPABILITIES:
+- navigate(room): Go to a room by name. Use this for all room navigation.
+- explore(): Autonomously visit all rooms in the house, building a map.
+- remember_location(name): Save current position with a custom name.
+- where_am_i(): Report which room you are currently in.
+- walk(direction, distance): Short movements (forward, backward, left, right).
+- turn(direction, angle): Turn in place.
+- stand/sit/lie_down: Posture changes.
+
 RULES:
-1. When the user wants to go to a room, use the navigate tool with the room name. NEVER use walk for room navigation — walk is only for short movements like "go forward 2 meters".
-2. navigate(room="kitchen") goes to the kitchen. navigate(room="卧室") goes to the master bedroom.
-3. For short movements (forward, backward, left, right), use walk.
-4. For turning in place, use turn.
-5. For posture changes, use stand/sit/lie_down.
-6. After a tool call, briefly say what happened. If it failed, explain why.
-7. Keep responses concise. No markdown, no asterisks, no bullet points. Plain text only.
-8. When in doubt, ACT rather than ASK.
+1. For room navigation, ALWAYS use navigate (not walk). navigate(room="kitchen") or navigate(room="厨房").
+2. For exploring the house, use explore(). You will visit each room and report what you find.
+3. Use remember_location(name) to bookmark custom locations for the user.
+4. Use where_am_i() when the user asks where you are.
+5. After tool calls, briefly report what happened. Keep it concise. Plain text only.
+6. You have SPATIAL MEMORY: you remember which rooms you visited and what you saw.
+7. When in doubt, ACT rather than ASK.
+
+SPATIAL MEMORY:
+{memory_info}
 
 CURRENT STATE:
 {state_info}
@@ -143,8 +154,18 @@ class ToolAgent:
                 parts.append(f"Heading: {math.degrees(heading):.0f} deg")
             except Exception:
                 pass
-            parts.append("Available commands: walk, turn, stand, sit, lie_down")
-            return _SYSTEM_PROMPT_GO2.format(state_info="\n".join(parts))
+
+            # Spatial memory summary
+            memory_info = "No spatial memory yet."
+            ctx = agent._build_context()
+            spatial_mem = ctx.services.get("spatial_memory")
+            if spatial_mem is not None:
+                memory_info = spatial_mem.summary_for_llm()
+
+            return _SYSTEM_PROMPT_GO2.format(
+                state_info="\n".join(parts),
+                memory_info=memory_info,
+            )
 
         # Arm (SO-101 or MuJoCo sim) mode
         parts = []

@@ -6,6 +6,7 @@ from vector_os_nano.skills.go2.walk import WalkSkill
 from vector_os_nano.skills.go2.turn import TurnSkill
 from vector_os_nano.skills.go2.stance import StandSkill, SitSkill, LieDownSkill
 from vector_os_nano.skills.navigate import NavigateSkill
+from vector_os_nano.skills.explore import ExploreSkill, RememberLocationSkill, WhereAmISkill
 
 
 def get_go2_skills() -> list:
@@ -14,6 +15,7 @@ def get_go2_skills() -> list:
         WalkSkill(), TurnSkill(),
         StandSkill(), SitSkill(), LieDownSkill(),
         NavigateSkill(),
+        ExploreSkill(), RememberLocationSkill(), WhereAmISkill(),
     ]
 
 
