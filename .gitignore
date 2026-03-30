@@ -11,6 +11,8 @@ build/
 .env
 .venv/
 .venv-nano/
+.sdd*/
+agents/devlog/
 vector_os_nano/hardware/sim/mjcf/go2/scene_flat.xml
 vector_os_nano/hardware/sim/mjcf/go2/scene_room.xml
 venv/
