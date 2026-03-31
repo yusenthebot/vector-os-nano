@@ -60,7 +60,7 @@ _ts.loader.exec_module(_tm)
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
-from nav_msgs.msg import Odometry as OdometryMsg
+from nav_msgs.msg import Odometry as OdometryMsg, Path
 from sensor_msgs.msg import PointCloud2, PointField, Joy, LaserScan as LaserScanMsg
 from geometry_msgs.msg import TwistStamped, Twist, TransformStamped, PointStamped
 from std_msgs.msg import Float32, Header
@@ -116,13 +116,21 @@ class Go2VNavBridge(Node):
         # Publish static TF: sensor → base_link (sensor mounting offset)
         self._publish_static_tf()
 
-        # Subscribe to all velocity sources in the nav stack pipeline:
-        #   /navigation_cmd_vel — localPlanner direct output (TwistStamped)
-        #   /cmd_vel — pathFollower / cmd_vel_mux output (TwistStamped)
-        #   /cmd_vel_nav — manual control (Twist)
-        self.create_subscription(TwistStamped, "/navigation_cmd_vel", self._cmd_vel_stamped_cb, 10)
-        self.create_subscription(TwistStamped, "/cmd_vel", self._cmd_vel_stamped_cb, 10)
+        # Subscribe to /path from localPlanner — we follow it with our own Python follower
+        # (C++ pathFollower oscillates with MPC gait, bypassed)
+        self.create_subscription(
+            Path, "/path", self._path_cb,
+            QoSProfile(reliability=ReliabilityPolicy.RELIABLE, depth=1)
+        )
+        self._current_path: list = []
+        self._path_time = 0.0
+
+        # Manual control fallback
         self.create_subscription(Twist, "/cmd_vel_nav", self._cmd_vel_cb, 10)
+        self.create_subscription(TwistStamped, "/navigation_cmd_vel", self._cmd_vel_stamped_cb, 10)
+
+        # Path follower timer (20 Hz)
+        self.create_timer(1.0 / 20.0, self._follow_path)
         self._cmd_count = 0
 
         # Timers
@@ -274,20 +282,117 @@ class Go2VNavBridge(Node):
         self._scan_pub.publish(msg)
 
     def _publish_joy_speed(self) -> None:
-        """Fake joystick for pathFollower autonomyMode + desired speed."""
-        joy = Joy()
-        joy.header.stamp = self.get_clock().now().to_msg()
-        joy.axes = [0.0] * 8
-        joy.buttons = [0] * 11
-        # LT trigger pressed → autonomyMode = true
-        joy.axes[2] = -1.0
-        # RT trigger pressed → manualMode = false
-        joy.axes[5] = -1.0
-        self._joy_pub.publish(joy)
+        """Publish /speed for pathFollower velocity control.
 
+        NOTE: We do NOT publish /joy — pathFollower's joystickHandler
+        zeros joySpeed when axes[4]==0, which defeats autonomyMode.
+        Without /joy, autonomyMode initialization keeps joySpeed=1.0
+        and /speed handler scales it to desired speed.
+        """
         speed = Float32()
         speed.data = 0.5
         self._speed_pub.publish(speed)
+
+    def _path_cb(self, msg: Path) -> None:
+        """Receive planned path from localPlanner and transform to map frame.
+
+        localPlanner publishes paths in the sensor/body frame (relative to robot).
+        We transform to map frame using current pose for the path follower.
+        """
+        odom = self._go2.get_odometry()
+        heading = self._go2.get_heading()
+        cos_h = math.cos(heading)
+        sin_h = math.sin(heading)
+        # Sensor position in map frame
+        sx = odom.x + cos_h * _SENSOR_X - sin_h * _SENSOR_Y
+        sy = odom.y + sin_h * _SENSOR_X + cos_h * _SENSOR_Y
+
+        self._current_path = []
+        for p in msg.poses:
+            # Rotate from sensor frame to map frame
+            lx, ly = p.pose.position.x, p.pose.position.y
+            mx = sx + lx * cos_h - ly * sin_h
+            my = sy + lx * sin_h + ly * cos_h
+            self._current_path.append((mx, my))
+
+        self._path_time = time.time()
+        if self._current_path:
+            self.get_logger().info(
+                f"Path: {len(self._current_path)} pts, "
+                f"target=({self._current_path[-1][0]:.1f},{self._current_path[-1][1]:.1f}) "
+                f"robot=({odom.x:.1f},{odom.y:.1f})"
+            )
+
+    def _follow_path(self) -> None:
+        """Simple pure-pursuit path follower at 20 Hz.
+
+        Finds the lookahead point on the path and generates smooth velocity.
+        Much more stable than C++ pathFollower with MPC gait.
+        """
+        # No path or stale path (>5s old)
+        if not self._current_path or time.time() - self._path_time > 5.0:
+            return
+
+        odom = self._go2.get_odometry()
+        rx, ry = odom.x, odom.y
+        heading = self._go2.get_heading()
+
+        # Find lookahead point (0.8m ahead on path)
+        lookahead = 0.8
+        target = None
+        for px, py in self._current_path:
+            d = math.sqrt((px - rx) ** 2 + (py - ry) ** 2)
+            if d >= lookahead:
+                target = (px, py)
+                break
+
+        # If no point far enough, use last point
+        if target is None and self._current_path:
+            target = self._current_path[-1]
+
+        if target is None:
+            return
+
+        tx, ty = target
+        dx = tx - rx
+        dy = ty - ry
+        dist = math.sqrt(dx * dx + dy * dy)
+
+        # Close enough — stop
+        if dist < 0.3:
+            self._go2.set_velocity(0.0, 0.0, 0.0)
+            self.get_logger().info(f"Path follower: reached target (dist={dist:.2f})")
+            self._current_path = []
+            return
+
+        # Heading to target
+        desired_heading = math.atan2(dy, dx)
+        heading_err = desired_heading - heading
+        while heading_err > math.pi:
+            heading_err -= 2 * math.pi
+        while heading_err < -math.pi:
+            heading_err += 2 * math.pi
+
+        # Pure pursuit: proportional yaw + forward speed based on alignment
+        vyaw = float(np.clip(heading_err * 2.0, -1.0, 1.0))
+
+        # Only drive forward when roughly aligned (< 45 degrees)
+        if abs(heading_err) < 0.8:
+            vx = float(np.clip(dist * 0.5, 0.1, 0.4))
+        else:
+            vx = 0.0  # rotate in place first
+
+        self._go2.set_velocity(vx, 0.0, vyaw)
+        self._last_cmd_time = time.time()
+        # Log every 1 second (20Hz timer, so every 20th call)
+        if not hasattr(self, '_follow_count'):
+            self._follow_count = 0
+        self._follow_count += 1
+        if self._follow_count % 20 == 0:
+            self.get_logger().info(
+                f"Following: vx={vx:.2f} vyaw={vyaw:.2f} dist={dist:.2f} "
+                f"heading_err={math.degrees(heading_err):.1f}deg target=({tx:.1f},{ty:.1f})"
+            )
 
     def _safety_check(self) -> None:
         if time.time() - self._last_cmd_time > 2.0:
