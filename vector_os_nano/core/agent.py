@@ -118,18 +118,45 @@ class Agent:
         # ---- LLM provider ---------------------------------------------------
         # llm= takes priority over llm_api_key=
         self._llm = llm
-        if llm is None and llm_api_key:
-            try:
-                from vector_os_nano.llm.claude import ClaudeProvider  # lazy
-
-                llm_cfg = self._config.get("llm", {})
-                self._llm = ClaudeProvider(
-                    api_key=llm_api_key,
-                    model=llm_cfg.get("model", "anthropic/claude-sonnet-4-6"),
-                    api_base=llm_cfg.get("api_base", "https://openrouter.ai/api/v1"),
-                )
-            except Exception as exc:
-                logger.warning("Could not create ClaudeProvider: %s", exc)
+        if llm is None:
+            llm_cfg = self._config.get("llm", {})
+            provider = llm_cfg.get("provider", "claude")
+            
+            if provider == "local":
+                # Local Ollama - no API key needed
+                try:
+                    from vector_os_nano.llm.local import LocalProvider
+                    self._llm = LocalProvider(
+                        model=llm_cfg.get("model", "llama3:8b"),
+                        host=llm_cfg.get("api_base", "http://127.0.0.1:11434").replace("/v1", ""),
+                    )
+                    logger.info("Using LocalProvider (Ollama): %s", llm_cfg.get("model", "llama3"))
+                except Exception as exc:
+                    logger.warning("Could not create LocalProvider: %s", exc)
+            elif provider == "openai":
+                # OpenAI or OpenAI-compatible API
+                try:
+                    from vector_os_nano.llm.openai_compat import OpenAIProvider
+                    self._llm = OpenAIProvider(
+                        api_key=llm_api_key or "",
+                        model=llm_cfg.get("model", "gpt-4o-mini"),
+                        api_base=llm_cfg.get("api_base", "https://api.openai.com/v1"),
+                    )
+                    logger.info("Using OpenAIProvider: %s", llm_cfg.get("model"))
+                except Exception as exc:
+                    logger.warning("Could not create OpenAIProvider: %s", exc)
+            elif llm_api_key:
+                # Default: Claude via OpenRouter or direct API
+                try:
+                    from vector_os_nano.llm.claude import ClaudeProvider  # lazy
+                    self._llm = ClaudeProvider(
+                        api_key=llm_api_key,
+                        model=llm_cfg.get("model", "anthropic/claude-sonnet-4-6"),
+                        api_base=llm_cfg.get("api_base", "https://openrouter.ai/api/v1"),
+                    )
+                    logger.info("Using ClaudeProvider: %s", llm_cfg.get("model"))
+                except Exception as exc:
+                    logger.warning("Could not create ClaudeProvider: %s", exc)
 
         # ---- World model ----------------------------------------------------
         self._world_model = WorldModel()
