@@ -45,10 +45,10 @@ Visualization Manager:
       Color Scheme: map
       Draw Behind: true
 
-    # 2D LaserScan (360 degree ring)
+    # 2D LaserScan
     - Class: rviz_default_plugins/LaserScan
       Name: LaserScan
-      Enabled: true
+      Enabled: false
       Topic:
         Value: /scan
         Depth: 5
@@ -59,22 +59,22 @@ Visualization Manager:
       Style: Points
       Alpha: 1.0
 
-    # 3D Point Cloud (multi-ring lidar — colored by height)
+    # 3D Point Cloud (registered lidar scan — white, like nav stack default)
     - Class: rviz_default_plugins/PointCloud2
-      Name: PointCloud
+      Name: RegisteredScan
       Enabled: true
       Topic:
         Value: /registered_scan
         Depth: 5
         Reliability Policy: Reliable
-      Size (Pixels): 3
+      Size (Pixels): 2
       Style: Points
-      Color Transformer: AxisColor
-      Axis: Z
-      Alpha: 0.9
-      Decay Time: 5.0
+      Color Transformer: FlatColor
+      Color: 220; 220; 220
+      Alpha: 0.7
+      Decay Time: 3.0
 
-    # Terrain map (from terrain_analysis — height-coded obstacles)
+    # Terrain map (height above ground — green=ground, red=obstacle)
     - Class: rviz_default_plugins/PointCloud2
       Name: TerrainMap
       Enabled: true
@@ -85,8 +85,22 @@ Visualization Manager:
       Size (Pixels): 5
       Style: Squares
       Color Transformer: Intensity
-      Alpha: 0.7
+      Alpha: 0.8
       Decay Time: 0.5
+
+    # Extended terrain map (larger radius)
+    - Class: rviz_default_plugins/PointCloud2
+      Name: TerrainMapExt
+      Enabled: true
+      Topic:
+        Value: /terrain_map_ext
+        Depth: 5
+        Reliability Policy: Reliable
+      Size (Pixels): 3
+      Style: Points
+      Color Transformer: Intensity
+      Alpha: 0.5
+      Decay Time: 1.0
 
     # Robot odometry trail
     - Class: rviz_default_plugins/Odometry
