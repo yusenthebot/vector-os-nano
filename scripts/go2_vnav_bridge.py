@@ -249,6 +249,10 @@ class Go2VNavBridge(Node):
         if not points:
             return
 
+        # Compute ground Z from robot height (~0.28m standing, ground at z≈0)
+        odom = self._go2.get_odometry()
+        ground_z = odom.z - 0.28  # robot CoM is ~0.28m above ground
+
         now = self.get_clock().now().to_msg()
         fields = [
             PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
@@ -259,7 +263,10 @@ class Go2VNavBridge(Node):
 
         point_step = 16
         data = bytearray()
-        for x, y, z, intensity in points:
+        for x, y, z, _ in points:
+            # intensity = height above ground (terrain_analysis uses this
+            # for ground/obstacle classification: <0.1m = ground)
+            intensity = z - ground_z
             data.extend(struct.pack("ffff", x, y, z, intensity))
 
         msg = PointCloud2()
