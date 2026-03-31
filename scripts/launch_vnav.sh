@@ -94,10 +94,23 @@ PIDS+=($!)
 rviz2 -d "$RVIZ_CFG" 2>/dev/null &
 PIDS+=($!)
 
+# Brief initial movement to seed FAR planner's visibility graph
 echo ""
-echo "Ready! Send a navigation goal:"
-echo "  ros2 topic pub --once /goal_point geometry_msgs/msg/PointStamped \\"
-echo "    \"{header: {frame_id: 'map'}, point: {x: 3.0, y: 2.5, z: 0.0}}\""
+echo "Seeding FAR planner with initial scan data..."
+sleep 2
+for i in $(seq 1 4); do
+    ros2 topic pub --once /cmd_vel_nav geometry_msgs/msg/Twist "{linear: {x: 0.2}}" 2>/dev/null
+    sleep 1
+done
+ros2 topic pub --once /cmd_vel_nav geometry_msgs/msg/Twist "{}" 2>/dev/null
+sleep 2
+
+echo ""
+echo "Ready! Controls:"
+echo "  Teleop:  Use RViz teleop panel (drag to drive)"
+echo "  Goal:    ros2 topic pub --once /goal_point geometry_msgs/msg/PointStamped \\"
+echo "           \"{header: {frame_id: 'map'}, point: {x: 3.0, y: 2.5, z: 0.0}}\""
+echo "  Manual:  ros2 topic pub /cmd_vel_nav geometry_msgs/msg/Twist '{linear: {x: 0.3}}' -r 10"
 echo ""
 echo "Press Ctrl+C to stop."
 

@@ -61,7 +61,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from nav_msgs.msg import Odometry as OdometryMsg, Path
-from sensor_msgs.msg import PointCloud2, PointField, Joy, LaserScan as LaserScanMsg
+from sensor_msgs.msg import PointCloud2, PointField, Joy, LaserScan as LaserScanMsg, Image, CompressedImage
 from geometry_msgs.msg import TwistStamped, Twist, TransformStamped, PointStamped
 from std_msgs.msg import Float32, Header
 from tf2_ros import TransformBroadcaster
@@ -109,6 +109,8 @@ class Go2VNavBridge(Node):
         )
         self._joy_pub = self.create_publisher(Joy, "/joy", 5)
         self._speed_pub = self.create_publisher(Float32, "/speed", 5)
+        self._img_pub = self.create_publisher(Image, "/camera/image", sensor_qos)
+        self._depth_pub = self.create_publisher(Image, "/camera/depth", sensor_qos)
 
         self._tf_broadcaster = TransformBroadcaster(self)
         # NOTE: static TF sensor→base_link is published by local_planner.launch.py
@@ -123,13 +125,19 @@ class Go2VNavBridge(Node):
         self._current_path: list = []
         self._path_time = 0.0
 
-        # Manual control fallback
-        self.create_subscription(Twist, "/cmd_vel_nav", self._cmd_vel_cb, 10)
+        # Manual control: teleop /joy → direct velocity
+        self.create_subscription(Joy, "/joy", self._joy_cb, 10)
+        # Nav stack path follower output
         self.create_subscription(TwistStamped, "/navigation_cmd_vel", self._cmd_vel_stamped_cb, 10)
+        # Manual CLI control
+        self.create_subscription(Twist, "/cmd_vel_nav", self._cmd_vel_cb, 10)
 
         # Path follower timer (20 Hz)
         self.create_timer(1.0 / 20.0, self._follow_path)
+        # Camera rendering (5 Hz)
+        self.create_timer(1.0 / 5.0, self._publish_camera)
         self._cmd_count = 0
+        self._teleop_until = 0.0  # teleop priority timestamp
 
         # Timers
         self.create_timer(1.0 / 200.0, self._publish_odom)       # 200 Hz
@@ -141,6 +149,25 @@ class Go2VNavBridge(Node):
         self.get_logger().info(
             "Go2VNavBridge started — /state_estimation, /registered_scan, /joy, /speed"
         )
+
+    def _joy_cb(self, msg: Joy) -> None:
+        """Direct teleop: /joy axes → velocity (bypasses pathFollower).
+
+        Sets _teleop_active to prevent path follower from overriding.
+        """
+        if len(msg.axes) < 5:
+            return
+        linear = msg.axes[4]    # right stick Y → forward/back
+        angular = msg.axes[3]   # right stick X → yaw
+        if abs(linear) > 0.05 or abs(angular) > 0.05:
+            vx = float(np.clip(linear * 0.5, -0.4, 0.4))
+            vyaw = float(np.clip(angular * 1.5, -1.5, 1.5))
+            self._go2.set_velocity(vx, 0.0, vyaw)
+            self._last_cmd_time = time.time()
+            self._teleop_until = time.time() + 0.5  # teleop priority for 500ms
+            self._cmd_count += 1
+            if self._cmd_count <= 3 or self._cmd_count % 50 == 0:
+                self.get_logger().info(f"teleop: vx={vx:.2f} vyaw={vyaw:.2f}")
 
     def _cmd_vel_stamped_cb(self, msg: TwistStamped) -> None:
         vx = msg.twist.linear.x
@@ -278,6 +305,87 @@ class Go2VNavBridge(Node):
         speed.data = 0.5
         self._speed_pub.publish(speed)
 
+    def _publish_camera(self) -> None:
+        """Render camera from MuJoCo using a free camera at camera_link position."""
+        try:
+            import mujoco
+            if not hasattr(self, '_renderer'):
+                self._renderer = mujoco.Renderer(
+                    self._go2._mj.model, 240, 320
+                )
+
+            model = self._go2._mj.model
+            data = self._go2._mj.data
+
+            # Camera at sensor + camera offset, looking forward
+            odom = self._go2.get_odometry()
+            heading = self._go2.get_heading()
+            cos_h = math.cos(heading)
+            sin_h = math.sin(heading)
+
+            # Camera position (sensor + camera offset from go2 config)
+            cam_x = odom.x + cos_h * (_SENSOR_X + 0.1)
+            cam_y = odom.y + sin_h * (_SENSOR_X + 0.1)
+            cam_z = odom.z + _SENSOR_Z - 0.04
+
+            scene = mujoco.MjvScene(model, maxgeom=1000)
+            cam = mujoco.MjvCamera()
+            cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+            cam.lookat[:] = [cam_x + cos_h * 2, cam_y + sin_h * 2, cam_z]
+            cam.distance = 2.0
+            cam.azimuth = math.degrees(heading) + 180
+            cam.elevation = -15
+
+            opt = mujoco.MjvOption()
+            mujoco.mjv_updateScene(model, data, opt, None, cam,
+                                   mujoco.mjtCatBit.mjCAT_ALL, scene)
+
+            # RGB render
+            self._renderer.update_scene(data)
+            rgb = self._renderer.render().copy()
+            now = self.get_clock().now().to_msg()
+
+            img_msg = Image()
+            img_msg.header.stamp = now
+            img_msg.header.frame_id = "camera_link"
+            img_msg.height = 240
+            img_msg.width = 320
+            img_msg.encoding = "rgb8"
+            img_msg.step = 320 * 3
+            img_msg.data = bytes(rgb)
+            self._img_pub.publish(img_msg)
+
+            # Depth via separate renderer instance
+            if not hasattr(self, '_depth_renderer'):
+                try:
+                    self._depth_renderer = mujoco.Renderer(
+                        self._go2._mj.model, 240, 320
+                    )
+                    self._depth_renderer.enable_depth_rendering(True)
+                except Exception:
+                    self._depth_renderer = None
+
+            if self._depth_renderer is not None:
+                try:
+                    self._depth_renderer.update_scene(data)
+                    depth = self._depth_renderer.render().copy()
+
+                    depth_msg = Image()
+                    depth_msg.header.stamp = now
+                    depth_msg.header.frame_id = "camera_link"
+                    depth_msg.height = 240
+                    depth_msg.width = 320
+                    depth_msg.encoding = "32FC1"
+                    depth_msg.step = 320 * 4
+                    depth_msg.data = bytes(depth.astype(np.float32))
+                    self._depth_pub.publish(depth_msg)
+                except Exception:
+                    pass
+        except Exception as e:
+            if not hasattr(self, '_cam_err_logged'):
+                self.get_logger().warn(f"Camera render failed: {e}")
+                self._cam_err_logged = True
+
     def _path_cb(self, msg: Path) -> None:
         """Receive planned path from localPlanner and transform to map frame.
 
@@ -314,7 +422,9 @@ class Go2VNavBridge(Node):
         Finds the lookahead point on the path and generates smooth velocity.
         Much more stable than C++ pathFollower with MPC gait.
         """
-        # No path or stale path (>5s old)
+        # Don't override teleop or stale path
+        if time.time() < self._teleop_until:
+            return
         if not self._current_path or time.time() - self._path_time > 5.0:
             return
 
