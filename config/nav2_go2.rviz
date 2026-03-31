@@ -74,7 +74,7 @@ Visualization Manager:
       Alpha: 0.7
       Decay Time: 3.0
 
-    # Terrain map (height above ground — green=ground, red=obstacle)
+    # Terrain map (local obstacle detection)
     - Class: rviz_default_plugins/PointCloud2
       Name: TerrainMap
       Enabled: true
@@ -84,11 +84,12 @@ Visualization Manager:
         Reliability Policy: Reliable
       Size (Pixels): 5
       Style: Squares
-      Color Transformer: Intensity
+      Color Transformer: FlatColor
+      Color: 50; 200; 50
       Alpha: 0.8
       Decay Time: 0.5
 
-    # Extended terrain map (larger radius)
+    # Extended terrain map
     - Class: rviz_default_plugins/PointCloud2
       Name: TerrainMapExt
       Enabled: true
@@ -98,7 +99,8 @@ Visualization Manager:
         Reliability Policy: Reliable
       Size (Pixels): 3
       Style: Points
-      Color Transformer: Intensity
+      Color Transformer: FlatColor
+      Color: 80; 160; 80
       Alpha: 0.5
       Decay Time: 1.0
 

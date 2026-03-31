@@ -794,10 +794,8 @@ class MuJoCoGo2:
         heading = self.get_heading()
         robot_body_id = self._mj.base_bid
 
-        # MID360 mounting: ~15° forward tilt (pitch DOWN).
-        # Real hardware is 30° but SLAM accumulates multi-frame data.
-        # In sim (single-frame, no SLAM) 15° gives good mix of floor + wall hits.
-        tilt_rad = math.radians(-15.0)
+        # MID360 mounting: 30° forward tilt (pitch DOWN), matching real hardware.
+        tilt_rad = math.radians(-30.0)
         cos_tilt = math.cos(tilt_rad)
         sin_tilt = math.sin(tilt_rad)
 
