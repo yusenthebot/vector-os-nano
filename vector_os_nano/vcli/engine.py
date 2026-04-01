@@ -95,8 +95,12 @@ class VectorEngine:
         permissions: PermissionContext | None = None,
         max_turns: int = 50,
         max_tokens: int = 16384,
+        base_url: str | None = None,
     ) -> None:
-        self._client = anthropic.Anthropic(api_key=api_key)
+        client_kwargs: dict[str, Any] = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        self._client = anthropic.Anthropic(**client_kwargs)
         self._model = model
         self._registry: ToolRegistry = registry or ToolRegistry()
         self._system_prompt: list[dict[str, Any]] = system_prompt or []

@@ -95,7 +95,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--api-key",
         default=None,
-        help="Anthropic API key (or set ANTHROPIC_API_KEY env var)",
+        help="API key (or set ANTHROPIC_API_KEY / OPENROUTER_API_KEY env var)",
+    )
+    parser.add_argument(
+        "--base-url",
+        default=None,
+        help="API base URL (e.g. https://openrouter.ai/api/v1 for OpenRouter)",
     )
     parser.add_argument(
         "--no-permission",
@@ -280,12 +285,21 @@ def main(argv: list[str] | None = None) -> None:
     else:
         logging.basicConfig(level=logging.WARNING)
 
-    # API key — prefer explicit flag, fall back to env var
+    # API key + base URL — auto-detect OpenRouter if ANTHROPIC_API_KEY not set
     api_key: str = args.api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    base_url: str | None = args.base_url
+
+    if not api_key:
+        # Fallback: try OpenRouter
+        api_key = os.environ.get("OPENROUTER_API_KEY", "")
+        if api_key and not base_url:
+            base_url = "https://openrouter.ai/api/v1"
+
     if not api_key:
         console.print(
             "[red]Error: No API key.[/red] "
-            "Set [bold]ANTHROPIC_API_KEY[/bold] or use [bold]--api-key[/bold]."
+            "Set [bold]ANTHROPIC_API_KEY[/bold] or [bold]OPENROUTER_API_KEY[/bold], "
+            "or use [bold]--api-key[/bold]."
         )
         sys.exit(1)
 
@@ -334,9 +348,11 @@ def main(argv: list[str] | None = None) -> None:
         registry=registry,
         system_prompt=system_prompt,
         permissions=permissions,
+        base_url=base_url,
     )
 
     # Startup banner
+    provider = "OpenRouter" if base_url and "openrouter" in base_url else "Anthropic"
     console.print(
         Panel(
             format_banner(args.model, agent),
@@ -344,7 +360,7 @@ def main(argv: list[str] | None = None) -> None:
             border_style="cyan",
         )
     )
-    console.print(f"[dim]Session: {session.session_id}[/dim]\n")
+    console.print(f"[dim]Session: {session.session_id} | Provider: {provider}[/dim]\n")
 
     # Prompt-toolkit session with persistent history
     history_dir = Path.home() / ".vector"
