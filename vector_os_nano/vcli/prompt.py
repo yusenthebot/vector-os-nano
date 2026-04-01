@@ -1,10 +1,8 @@
 """System prompt builder for the Vector CLI agentic harness.
 
-Mirrors Claude Code's buildEffectiveSystemPrompt pattern:
-- Static sections (ROLE_PROMPT, TOOL_INSTRUCTIONS) carry cache_control so
-  Anthropic's prompt caching can avoid re-encoding them on every turn.
-- Dynamic sections (hardware state, skills, world model, VECTOR.md) are
-  regenerated each call and carry no cache_control.
+Builds a multi-block system prompt with:
+- Static sections (ROLE_PROMPT, TOOL_INSTRUCTIONS) with cache_control
+- Dynamic sections (hardware, skills, world model, VECTOR.md)
 
 Public API:
     build_system_prompt(agent, cwd, session) -> list[dict]
@@ -18,33 +16,44 @@ from typing import Any
 # Static prompt text — these are cacheable
 # ---------------------------------------------------------------------------
 
-ROLE_PROMPT = """You are Vector, a robotics AI assistant built into Vector OS Nano.
+ROLE_PROMPT = """\
+You are V, the AI agent for Vector OS Nano, created by Vector Robotics.
+You control robot hardware (arms, grippers, mobile bases) through tool calls.
+You also read/write files, run shell commands, and search codebases.
 
-You control robot hardware (arms, grippers, mobile bases) through tool calls. \
-You can also read/write files, run shell commands, and search codebases — \
-making you useful for both robot operation and development.
+You communicate in whatever language the user uses.
+In Chinese, call the user "主人". In English, use their name if known.
 
-Key behaviors:
-- Use robot tools (pick, place, detect, scan, navigate) for physical tasks
-- Use dev tools (file_read, file_edit, bash, grep, glob) for coding tasks
-- Always check world_query before attempting physical manipulation
-- Respect permission prompts — motor commands require user confirmation
-- Be concise. Show results, not process.
+Safety first:
+- Never command motions that could damage hardware, knock objects, or harm humans.
+- If a command seems dangerous or ambiguous, ask for clarification before executing.
+- If a skill fails, report clearly and suggest a next step.
+
+Communication:
+- Keep responses concise. One to three sentences unless detail is requested.
+- Write flowing plain text. Separate ideas with commas or line breaks.
+- FORBIDDEN: markdown headers (# ##), bold (**), bullet markers (- *), \
+numbered lists, code blocks, horizontal rules (---), emojis.
+- When executing a robot command, briefly say what you will do, then act.
+- Never introduce yourself unprompted. Just answer.
+
+Behavior:
+- Be proactive. Infer intent from ambiguous requests.
+- Remember previous conversation context within the session.
+- When reporting results, state facts: what was done, whether it succeeded.
 """
 
-TOOL_INSTRUCTIONS = """# Tool Usage
-
-- Robot tools wrap real hardware skills. Motor tools (pick, place, gripper, navigate) require permission.
+TOOL_INSTRUCTIONS = """\
+Tool usage:
+- Robot tools wrap real hardware skills. Motor tools require user permission.
 - Dev tools (file_read, file_write, file_edit, bash, glob, grep) work like a coding assistant.
-- Read-only tools (detect, scan, world_query, robot_status, file_read, glob, grep) run without permission.
-- When multiple read-only tools are needed, they may run in parallel.
+- Read-only tools run without permission and may execute in parallel.
 - If a tool returns is_error=true, report the error and suggest alternatives.
 
-# Safety
-
-- Never move joints to extreme positions without checking robot_status first
-- Always detect/scan before attempting pick operations
-- Report hardware errors immediately — do not retry motor commands silently
+Safety:
+- Check robot_status before moving joints to extreme positions.
+- Always detect/scan before attempting pick operations.
+- Report hardware errors immediately. Do not retry motor commands silently.
 """
 
 # ---------------------------------------------------------------------------
@@ -57,19 +66,10 @@ def build_system_prompt(
     cwd: Path | None = None,
     session: Any = None,
 ) -> list[dict]:
-    """Build system prompt as a list of Anthropic text blocks.
+    """Build system prompt as a list of text blocks.
 
-    Static blocks carry ``cache_control`` so they can be cached server-side.
-    Dynamic blocks (hardware, skills, world, VECTOR.md) are generated fresh.
-
-    Args:
-        agent: Agent instance (may be None for dev-only sessions).
-        cwd: Working directory — used to locate VECTOR.md.
-        session: Unused currently; reserved for future session-context injection.
-
-    Returns:
-        List of dicts, each with at minimum ``type`` and ``text`` keys.
-        Cached blocks additionally have a ``cache_control`` key.
+    Static blocks carry ``cache_control`` for server-side caching.
+    Dynamic blocks (hardware, skills, world, VECTOR.md) are regenerated each call.
     """
     blocks: list[dict] = []
 
@@ -93,25 +93,25 @@ def build_system_prompt(
     if agent is not None:
         hw_text = _format_hardware(agent)
         if hw_text:
-            blocks.append({"type": "text", "text": f"# Current Hardware\n{hw_text}"})
+            blocks.append({"type": "text", "text": f"Current Hardware:\n{hw_text}"})
 
     # -- Dynamic: available skills -------------------------------------------
     if agent is not None:
         skills_text = _format_skills(agent)
         if skills_text:
-            blocks.append({"type": "text", "text": f"# Available Skills\n{skills_text}"})
+            blocks.append({"type": "text", "text": f"Available Skills:\n{skills_text}"})
 
     # -- Dynamic: world model ------------------------------------------------
     if agent is not None:
         world_text = _format_world(agent)
         if world_text:
-            blocks.append({"type": "text", "text": f"# World Model\n{world_text}"})
+            blocks.append({"type": "text", "text": f"World Model:\n{world_text}"})
 
     # -- Dynamic: VECTOR.md --------------------------------------------------
     vector_md = _load_vector_md(cwd)
     if vector_md:
         blocks.append(
-            {"type": "text", "text": f"# Project Context (VECTOR.md)\n{vector_md}"}
+            {"type": "text", "text": f"Project Context (VECTOR.md):\n{vector_md}"}
         )
 
     return blocks
@@ -177,7 +177,7 @@ def _format_skills(agent: Any) -> str:
         if skill is None:
             continue
         desc: str = getattr(skill, "description", "")
-        lines.append(f"- {name}: {desc}" if desc else f"- {name}")
+        lines.append(f"{name}: {desc}" if desc else name)
 
     return "\n".join(lines)
 
@@ -204,19 +204,15 @@ def _format_world(agent: Any) -> str:
         y = getattr(obj, "y", "?")
         z = getattr(obj, "z", "?")
         _fmt = lambda v: f"{v:.3f}" if isinstance(v, float) else str(v)
-        lines.append(f"- {label}: ({_fmt(x)}, {_fmt(y)}, {_fmt(z)})")
+        lines.append(f"{label}: ({_fmt(x)}, {_fmt(y)}, {_fmt(z)})")
 
     return "\n".join(lines)
 
 
 def _load_vector_md(cwd: Path | None) -> str:
-    """Load VECTOR.md from cwd and/or ~/.vector/VECTOR.md.
-
-    Concatenates both if both exist. Returns '' when neither is found.
-    """
+    """Load VECTOR.md from cwd and/or ~/.vector/VECTOR.md."""
     parts: list[str] = []
 
-    # Check cwd first
     if cwd is not None:
         local_path = cwd / "VECTOR.md"
         if local_path.is_file():
@@ -225,7 +221,6 @@ def _load_vector_md(cwd: Path | None) -> str:
             except OSError:
                 pass
 
-    # Check ~/.vector/VECTOR.md
     home_path = Path.home() / ".vector" / "VECTOR.md"
     if home_path.is_file():
         try:
