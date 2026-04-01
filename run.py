@@ -8,6 +8,9 @@ Usage::
     python run.py --dashboard  # TUI dashboard mode
     python run.py --cli        # CLI mode (explicit)
     python run.py -d           # TUI dashboard (short flag)
+    python run.py --sim-go2               # Go2 MuJoCo simulation
+    python run.py --sim-go2 --explore     # Go2 autonomous exploration (TARE + VNav)
+    python run.py --sim-go2 --explore --sim-go2-headless  # headless exploration
 
 Set OPENROUTER_API_KEY in the environment (or in config/user.yaml) before
 running if you want LLM-powered natural language control.
@@ -17,6 +20,7 @@ No ROS2 required — pure Python.
 import argparse
 import os
 import sys
+import time
 import logging
 
 # Suppress Qt font warnings from OpenCV
@@ -287,6 +291,81 @@ def _init_sim(cfg: dict, gui: bool = False) -> tuple:
     cfg["sim_move_duration"] = 3.0
 
     return arm, gripper, perception, calibration
+
+
+# ---------------------------------------------------------------------------
+# Go2 exploration mode — external MuJoCo managed by launch_explore.sh
+# ---------------------------------------------------------------------------
+
+def _init_explore_go2(cfg: dict, gui: bool = True) -> tuple:
+    """Launch the Go2 exploration stack and connect via a ROS2 proxy.
+
+    ``launch_explore.sh`` creates its own MuJoCoGo2 instance (via
+    ``go2_vnav_bridge.py``), so we must NOT create a second one here.
+    Instead we start the script as a subprocess and proxy commands through
+    ROS2 topics using ``Go2ROS2Proxy``.
+
+    Args:
+        cfg: Config dict (currently unused, reserved for future options).
+        gui: When False, passes ``--no-gui`` to ``launch_explore.sh``.
+
+    Returns:
+        Tuple of (None, None, None, None, base) where base is a
+        connected ``Go2ROS2Proxy``.
+    """
+    import signal
+    import subprocess
+    import atexit
+
+    script = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "scripts", "launch_explore.sh"
+    )
+    if not os.path.isfile(script):
+        raise FileNotFoundError(f"launch_explore.sh not found at {script!r}")
+
+    cmd: list[str] = [script]
+    if not gui:
+        cmd.append("--no-gui")
+
+    print("Launching exploration stack (MuJoCo + VNav + TARE)...")
+    print("This takes ~30 seconds to fully initialise...")
+
+    # Route explore-stack output to a log file to keep the agent CLI clean.
+    log_path = "/tmp/vector_explore.log"
+    log_fh = open(log_path, "w")  # noqa: WPS515 — intentional long-lived file handle
+    proc = subprocess.Popen(
+        cmd,
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        preexec_fn=os.setsid,
+    )
+
+    def _cleanup() -> None:
+        log_fh.close()
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            proc.wait(timeout=5)
+        except Exception:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except Exception:
+                pass
+
+    atexit.register(_cleanup)
+
+    # Give the exploration stack time to bring up MuJoCo + all ROS2 nodes.
+    time.sleep(25)
+
+    from vector_os_nano.hardware.sim.go2_ros2_proxy import Go2ROS2Proxy
+
+    base = Go2ROS2Proxy()
+    base.connect()
+
+    pos = base.get_position()
+    print(f"Go2 exploration mode ready. Position: ({pos[0]:.1f}, {pos[1]:.1f})")
+    print(f"Explore-stack log: {log_path}")
+
+    return None, None, None, None, base
 
 
 # ---------------------------------------------------------------------------
@@ -655,6 +734,8 @@ def main() -> None:
             "  python run.py --sim-headless     # MuJoCo sim without viewer\n"
             "  python run.py --web --sim        # Web dashboard + sim\n"
             "  python run.py --sim -d           # Sim + TUI dashboard\n"
+            "  python run.py --sim-go2 --explore            # Go2 autonomous exploration (GUI)\n"
+            "  python run.py --sim-go2-headless --explore   # Go2 autonomous exploration (headless)\n"
         ),
     )
     mode_group = parser.add_mutually_exclusive_group()
@@ -694,6 +775,14 @@ def main() -> None:
         help="Go2 quadruped MuJoCo simulation without viewer (headless)",
     )
     parser.add_argument(
+        "--explore",
+        action="store_true",
+        help=(
+            "Launch autonomous exploration with Vector Nav Stack + TARE planner. "
+            "Must be combined with --sim-go2 or --sim-go2-headless."
+        ),
+    )
+    parser.add_argument(
         "-v", "--verbose",
         action="store_true",
         help="Show agent thinking process (match, classify, route decisions)",
@@ -715,6 +804,11 @@ def main() -> None:
     sim_mode: bool = args.sim or args.sim_headless or args.sim_go2 or args.sim_go2_headless
     go2_mode: bool = args.sim_go2 or args.sim_go2_headless
 
+    # Validate flag combinations early.
+    if args.explore and not go2_mode:
+        print("ERROR: --explore requires --sim-go2 or --sim-go2-headless")
+        sys.exit(1)
+
     from vector_os_nano.core.agent import Agent
     from vector_os_nano.core.config import load_config
 
@@ -722,9 +816,15 @@ def main() -> None:
 
     base = None
     if go2_mode:
-        arm, gripper, perception, calibration, base = _init_sim_go2(
-            cfg, gui=not args.sim_go2_headless
-        )
+        if args.explore:
+            # Exploration mode: nav stack is managed externally; proxy via ROS2.
+            arm, gripper, perception, calibration, base = _init_explore_go2(
+                cfg, gui=not args.sim_go2_headless
+            )
+        else:
+            arm, gripper, perception, calibration, base = _init_sim_go2(
+                cfg, gui=not args.sim_go2_headless
+            )
     elif sim_mode:
         arm, gripper, perception, calibration = _init_sim(cfg, gui=not args.sim_headless)
     else:
@@ -753,7 +853,16 @@ def main() -> None:
     # Status summary
     print()
     if go2_mode:
-        print(f"Mode      : Go2 MuJoCo simulation {'(headless)' if args.sim_go2_headless else '(GUI)'}")
+        if args.explore:
+            print(
+                f"Mode      : Go2 Autonomous Exploration "
+                f"{'(headless)' if args.sim_go2_headless else '(GUI)'}"
+            )
+        else:
+            print(
+                f"Mode      : Go2 MuJoCo simulation "
+                f"{'(headless)' if args.sim_go2_headless else '(GUI)'}"
+            )
     elif sim_mode:
         print(f"Mode      : MuJoCo simulation {'(headless)' if args.sim_headless else '(GUI)'}")
     print(f"Skills    : {', '.join(agent.skills)}")

@@ -5,6 +5,9 @@ Exports all Go2 skills and the get_go2_skills() factory.
 from vector_os_nano.skills.go2.walk import WalkSkill
 from vector_os_nano.skills.go2.turn import TurnSkill
 from vector_os_nano.skills.go2.stance import StandSkill, SitSkill, LieDownSkill
+from vector_os_nano.skills.go2.explore import ExploreSkill
+from vector_os_nano.skills.go2.where_am_i import WhereAmISkill
+from vector_os_nano.skills.go2.stop import StopSkill
 from vector_os_nano.skills.navigate import NavigateSkill
 
 
@@ -14,6 +17,9 @@ def get_go2_skills() -> list:
         WalkSkill(), TurnSkill(),
         StandSkill(), SitSkill(), LieDownSkill(),
         NavigateSkill(),
+        ExploreSkill(),
+        WhereAmISkill(),
+        StopSkill(),
     ]
 
 
@@ -24,5 +30,8 @@ __all__ = [
     "SitSkill",
     "LieDownSkill",
     "NavigateSkill",
+    "ExploreSkill",
+    "WhereAmISkill",
+    "StopSkill",
     "get_go2_skills",
 ]
