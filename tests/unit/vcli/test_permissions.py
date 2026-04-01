@@ -229,3 +229,30 @@ class TestPermissionContext:
         result = ctx.check(tool, {})
         assert result.behavior == "deny"
         assert "bad" in result.reason
+
+    def test_check_permissions_called_only_once(self) -> None:
+        """check_permissions() on the tool is invoked exactly once per PermissionContext.check() call.
+
+        Regression test: the old implementation called check_permissions twice — once
+        in step 2 (deny guard) and again in step 5 (ask propagation).  The fix caches
+        the result from step 2 and reuses it in step 5.
+        """
+        from unittest.mock import MagicMock
+
+        from vector_os_nano.vcli.permissions import PermissionContext
+        from vector_os_nano.vcli.tools.base import PermissionResult
+
+        ctx = PermissionContext()
+
+        mock_tool = MagicMock()
+        mock_tool.name = "instrumented_tool"
+        # check_permissions returns "ask" — triggers propagation path in step 5
+        mock_tool.check_permissions.return_value = PermissionResult(behavior="ask")
+        # Not read-only — so read-only auto-allow does not short-circuit
+        mock_tool.is_read_only.return_value = False
+
+        result = ctx.check(mock_tool, {})
+
+        assert result.behavior == "ask"
+        # The critical assertion: check_permissions must have been called exactly once
+        mock_tool.check_permissions.assert_called_once()

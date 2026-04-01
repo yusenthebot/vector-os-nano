@@ -1,4 +1,4 @@
-"""Unit tests for VectorEngine — TDD RED phase.
+"""Unit tests for VectorEngine — updated for backend-agnostic API.
 
 Covers:
 - test_single_text_turn: text-only response returns TurnResult with no tool_calls
@@ -19,10 +19,11 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, call
 
 import pytest
 
+from vector_os_nano.vcli.backends.types import LLMResponse, LLMToolCall
 from vector_os_nano.vcli.engine import TurnResult, VectorEngine
 from vector_os_nano.vcli.permissions import PermissionContext
 from vector_os_nano.vcli.session import Session, TokenUsage
@@ -39,51 +40,34 @@ from vector_os_nano.vcli.tools.base import (
 # ---------------------------------------------------------------------------
 
 
-def make_mock_response(
-    content_blocks: list,
+def make_llm_response(
+    text: str = "",
+    tool_calls: list[LLMToolCall] | None = None,
     stop_reason: str = "end_turn",
-    usage: Any = None,
-) -> MagicMock:
-    """Create a mock Anthropic API response."""
-    response = MagicMock()
-    response.content = content_blocks
-    response.stop_reason = stop_reason
-    if usage is None:
-        usage = MagicMock(
-            input_tokens=100,
-            output_tokens=50,
-            cache_read_input_tokens=0,
-            cache_creation_input_tokens=0,
-        )
-    response.usage = usage
-    return response
+    usage: TokenUsage | None = None,
+) -> LLMResponse:
+    """Build a canonical LLMResponse for test use."""
+    return LLMResponse(
+        text=text,
+        tool_calls=tool_calls or [],
+        stop_reason=stop_reason,
+        usage=usage or TokenUsage(input_tokens=100, output_tokens=50),
+    )
 
 
-def make_text_block(text: str) -> MagicMock:
-    block = MagicMock()
-    block.type = "text"
-    block.text = text
-    return block
-
-
-def make_tool_use_block(tool_id: str, name: str, input_dict: dict) -> MagicMock:
-    block = MagicMock()
-    block.type = "tool_use"
-    block.id = tool_id
-    block.name = name
-    block.input = input_dict
-    return block
+def make_tool_call(tool_id: str, name: str, input_dict: dict) -> LLMToolCall:
+    """Build a frozen LLMToolCall."""
+    return LLMToolCall(id=tool_id, name=name, input=input_dict)
 
 
 def make_session() -> Session:
     """Return a transient in-memory session (no file I/O)."""
-    session = Session(
+    return Session(
         session_id="test-session-1",
         created_at="2026-01-01T00:00:00Z",
         updated_at="2026-01-01T00:00:00Z",
         path=Path("/tmp/test_session.jsonl"),
     )
-    return session
 
 
 def make_read_only_tool(name: str, return_content: str = "ok") -> Any:
@@ -117,18 +101,15 @@ def make_engine(
     permissions: PermissionContext | None = None,
     max_turns: int = 50,
 ) -> tuple[VectorEngine, MagicMock]:
-    """Return (engine, mock_client) with patched anthropic.Anthropic."""
-    mock_client = MagicMock()
-    with patch("vector_os_nano.vcli.engine.anthropic.Anthropic", return_value=mock_client):
-        engine = VectorEngine(
-            api_key="test-key",
-            registry=registry or ToolRegistry(),
-            permissions=permissions or PermissionContext(no_permission=True),
-            max_turns=max_turns,
-        )
-    # Directly replace the private _client so mock is in place
-    engine._client = mock_client
-    return engine, mock_client
+    """Return (engine, mock_backend) with a MagicMock backend."""
+    mock_backend = MagicMock()
+    engine = VectorEngine(
+        backend=mock_backend,
+        registry=registry or ToolRegistry(),
+        permissions=permissions or PermissionContext(no_permission=True),
+        max_turns=max_turns,
+    )
+    return engine, mock_backend
 
 
 # ---------------------------------------------------------------------------
@@ -138,12 +119,11 @@ def make_engine(
 
 class TestSingleTextTurn:
     def test_single_text_turn(self) -> None:
-        """User sends 'hello', API returns text-only → TurnResult with text, no tool_calls."""
-        engine, mock_client = make_engine()
+        """User sends 'hello', backend returns text-only → TurnResult with text, no tool_calls."""
+        engine, mock_backend = make_engine()
         session = make_session()
 
-        response = make_mock_response([make_text_block("Hello, world!")])
-        mock_client.messages.create.return_value = response
+        mock_backend.call.return_value = make_llm_response(text="Hello, world!")
 
         result = engine.run_turn("hello", session)
 
@@ -153,18 +133,19 @@ class TestSingleTextTurn:
         assert result.stop_reason == "end_turn"
 
     def test_turn_result_usage(self) -> None:
-        """TurnResult.usage reflects the token counts from the API response."""
-        engine, mock_client = make_engine()
+        """TurnResult.usage reflects the token counts from the backend response."""
+        engine, mock_backend = make_engine()
         session = make_session()
 
-        usage_mock = MagicMock(
-            input_tokens=200,
-            output_tokens=75,
-            cache_read_input_tokens=10,
-            cache_creation_input_tokens=5,
+        mock_backend.call.return_value = make_llm_response(
+            text="hi",
+            usage=TokenUsage(
+                input_tokens=200,
+                output_tokens=75,
+                cache_read_tokens=10,
+                cache_creation_tokens=5,
+            ),
         )
-        response = make_mock_response([make_text_block("hi")], usage=usage_mock)
-        mock_client.messages.create.return_value = response
 
         result = engine.run_turn("ping", session)
 
@@ -175,19 +156,16 @@ class TestSingleTextTurn:
 
     def test_session_messages_updated(self) -> None:
         """After run_turn, session.to_messages() contains user + assistant entries."""
-        engine, mock_client = make_engine()
+        engine, mock_backend = make_engine()
         session = make_session()
 
-        response = make_mock_response([make_text_block("I'm fine.")])
-        mock_client.messages.create.return_value = response
+        mock_backend.call.return_value = make_llm_response(text="I'm fine.")
 
         engine.run_turn("How are you?", session)
 
         messages = session.to_messages()
-        # First message: user
         assert messages[0]["role"] == "user"
         assert messages[0]["content"] == "How are you?"
-        # Second message: assistant
         assert messages[1]["role"] == "assistant"
         assert any(
             block.get("text") == "I'm fine."
@@ -198,12 +176,22 @@ class TestSingleTextTurn:
 
 class TestStreamingCallback:
     def test_streaming_text_callback(self) -> None:
-        """on_text callback receives text chunks during the turn."""
-        engine, mock_client = make_engine()
+        """on_text callback receives text chunks during the turn.
+
+        The backend's call() invokes the on_text callback that was passed to it.
+        We simulate this with a side_effect that calls on_text with two chunks,
+        then returns a final LLMResponse.
+        """
+        engine, mock_backend = make_engine()
         session = make_session()
 
-        response = make_mock_response([make_text_block("chunk one"), make_text_block(" chunk two")])
-        mock_client.messages.create.return_value = response
+        def streaming_side_effect(messages, tools, system, max_tokens, on_text=None):
+            if on_text is not None:
+                on_text("chunk one")
+                on_text(" chunk two")
+            return make_llm_response(text="chunk one chunk two")
+
+        mock_backend.call.side_effect = streaming_side_effect
 
         received: list[str] = []
         engine.run_turn("hello", session, on_text=received.append)
@@ -213,21 +201,20 @@ class TestStreamingCallback:
 
 class TestToolUseTurn:
     def test_tool_use_turn(self) -> None:
-        """API returns tool_use block → engine executes tool → sends tool_result → returns final text."""
+        """Backend returns tool_use → engine executes tool → sends result → returns final text."""
         registry = ToolRegistry()
         tool = make_read_only_tool("read_file", return_content="file contents")
         registry.register(tool)
 
-        engine, mock_client = make_engine(registry=registry)
+        engine, mock_backend = make_engine(registry=registry)
         session = make_session()
 
-        # First response: tool call; second: final text after tool result
-        first_response = make_mock_response(
-            [make_tool_use_block("tool_1", "read_file", {"path": "/tmp/x.txt"})],
+        first_response = make_llm_response(
+            tool_calls=[make_tool_call("tool_1", "read_file", {"path": "/tmp/x.txt"})],
             stop_reason="tool_use",
         )
-        second_response = make_mock_response([make_text_block("Done.")])
-        mock_client.messages.create.side_effect = [first_response, second_response]
+        second_response = make_llm_response(text="Done.")
+        mock_backend.call.side_effect = [first_response, second_response]
 
         result = engine.run_turn("read that file", session)
 
@@ -240,25 +227,25 @@ class TestToolUseTurn:
         assert not tc.result.is_error
 
     def test_multi_tool_turn(self) -> None:
-        """API returns 2 tool_use blocks → both executed → results sent back."""
+        """Backend returns 2 tool_use blocks → both executed → results sent back."""
         registry = ToolRegistry()
         tool_a = make_read_only_tool("tool_a", return_content="result_a")
         tool_b = make_read_only_tool("tool_b", return_content="result_b")
         registry.register(tool_a)
         registry.register(tool_b)
 
-        engine, mock_client = make_engine(registry=registry)
+        engine, mock_backend = make_engine(registry=registry)
         session = make_session()
 
-        first_response = make_mock_response(
-            [
-                make_tool_use_block("id_a", "tool_a", {}),
-                make_tool_use_block("id_b", "tool_b", {}),
+        first_response = make_llm_response(
+            tool_calls=[
+                make_tool_call("id_a", "tool_a", {}),
+                make_tool_call("id_b", "tool_b", {}),
             ],
             stop_reason="tool_use",
         )
-        second_response = make_mock_response([make_text_block("Both done.")])
-        mock_client.messages.create.side_effect = [first_response, second_response]
+        second_response = make_llm_response(text="Both done.")
+        mock_backend.call.side_effect = [first_response, second_response]
 
         result = engine.run_turn("run both", session)
 
@@ -279,13 +266,13 @@ class TestToolConcurrencyPartition:
 
         engine, _ = make_engine(registry=registry)
 
-        block_a = make_tool_use_block("id_a", "tool_a", {})
-        block_b = make_tool_use_block("id_b", "tool_b", {})
-        batches = engine._partition_tools([block_a, block_b])
+        tc_a = make_tool_call("id_a", "tool_a", {})
+        tc_b = make_tool_call("id_b", "tool_b", {})
+        batches = engine._partition_tools([tc_a, tc_b])
 
         assert len(batches) == 1
         assert batches[0].concurrent is True
-        assert len(batches[0].blocks) == 2
+        assert len(batches[0].tool_calls) == 2
 
     def test_tool_concurrency_partition_write_sequential(self) -> None:
         """Write tools each get their own sequential batch."""
@@ -297,9 +284,9 @@ class TestToolConcurrencyPartition:
 
         engine, _ = make_engine(registry=registry)
 
-        block_a = make_tool_use_block("id_a", "write_a", {})
-        block_b = make_tool_use_block("id_b", "write_b", {})
-        batches = engine._partition_tools([block_a, block_b])
+        tc_a = make_tool_call("id_a", "write_a", {})
+        tc_b = make_tool_call("id_b", "write_b", {})
+        batches = engine._partition_tools([tc_a, tc_b])
 
         assert len(batches) == 2
         assert all(not b.concurrent for b in batches)
@@ -314,9 +301,9 @@ class TestToolConcurrencyPartition:
 
         engine, _ = make_engine(registry=registry)
 
-        block_ro = make_tool_use_block("id_ro", "ro", {})
-        block_wr = make_tool_use_block("id_wr", "wr", {})
-        batches = engine._partition_tools([block_ro, block_wr])
+        tc_ro = make_tool_call("id_ro", "ro", {})
+        tc_wr = make_tool_call("id_wr", "wr", {})
+        batches = engine._partition_tools([tc_ro, tc_wr])
 
         assert len(batches) == 2
         assert batches[0].concurrent is True
@@ -330,15 +317,15 @@ class TestCallbacks:
         tool = make_read_only_tool("my_tool", return_content="output")
         registry.register(tool)
 
-        engine, mock_client = make_engine(registry=registry)
+        engine, mock_backend = make_engine(registry=registry)
         session = make_session()
 
-        first_response = make_mock_response(
-            [make_tool_use_block("tool_1", "my_tool", {"key": "val"})],
+        first_response = make_llm_response(
+            tool_calls=[make_tool_call("tool_1", "my_tool", {"key": "val"})],
             stop_reason="tool_use",
         )
-        second_response = make_mock_response([make_text_block("done")])
-        mock_client.messages.create.side_effect = [first_response, second_response]
+        second_response = make_llm_response(text="done")
+        mock_backend.call.side_effect = [first_response, second_response]
 
         started: list[tuple[str, dict]] = []
         ended: list[tuple[str, ToolResult]] = []
@@ -364,47 +351,45 @@ class TestMaxTurns:
         tool = make_read_only_tool("loop_tool", return_content="looping")
         registry.register(tool)
 
-        engine, mock_client = make_engine(registry=registry, max_turns=2)
+        engine, mock_backend = make_engine(registry=registry, max_turns=2)
         session = make_session()
 
         # Every response calls loop_tool forever
-        looping_response = make_mock_response(
-            [make_tool_use_block("t1", "loop_tool", {})],
+        looping_response = make_llm_response(
+            tool_calls=[make_tool_call("t1", "loop_tool", {})],
             stop_reason="tool_use",
         )
-        mock_client.messages.create.return_value = looping_response
+        mock_backend.call.return_value = looping_response
 
-        result = engine.run_turn("loop", session)
+        engine.run_turn("loop", session)
 
-        # Engine must stop — API was called at most max_turns + 1 times
-        assert mock_client.messages.create.call_count <= 3  # initial + 2 tool loops
+        # Engine must stop — backend was called at most max_turns + 1 times
+        assert mock_backend.call.call_count <= 3  # initial + 2 tool loops
 
 
 class TestPermissions:
     def test_permission_deny_returns_error(self) -> None:
-        """Permission deny → tool not executed, error result sent to API."""
+        """Permission deny → tool not executed, error result sent to backend."""
         registry = ToolRegistry()
         tool = make_write_tool("dangerous_tool")
         tool.check_permissions.return_value = PermissionResult(behavior="deny", reason="nope")
         registry.register(tool)
 
         permissions = PermissionContext(deny_tools={"dangerous_tool"})
-        engine, mock_client = make_engine(registry=registry, permissions=permissions)
+        engine, mock_backend = make_engine(registry=registry, permissions=permissions)
         session = make_session()
 
-        first_response = make_mock_response(
-            [make_tool_use_block("t1", "dangerous_tool", {})],
+        first_response = make_llm_response(
+            tool_calls=[make_tool_call("t1", "dangerous_tool", {})],
             stop_reason="tool_use",
         )
-        second_response = make_mock_response([make_text_block("Denied.")])
-        mock_client.messages.create.side_effect = [first_response, second_response]
+        second_response = make_llm_response(text="Denied.")
+        mock_backend.call.side_effect = [first_response, second_response]
 
         result = engine.run_turn("do it", session)
 
-        # Tool.execute should NOT have been called
         tool.execute.assert_not_called()
 
-        # ToolCall recorded with permission_action denied
         assert len(result.tool_calls) == 1
         tc = result.tool_calls[0]
         assert tc.result.is_error is True
@@ -417,18 +402,17 @@ class TestPermissions:
         registry.register(tool)
 
         permissions = PermissionContext()  # default: will ask
-        engine, mock_client = make_engine(registry=registry, permissions=permissions)
+        engine, mock_backend = make_engine(registry=registry, permissions=permissions)
         session = make_session()
 
-        first_response = make_mock_response(
-            [make_tool_use_block("t1", "write_tool", {"data": "hello"})],
+        first_response = make_llm_response(
+            tool_calls=[make_tool_call("t1", "write_tool", {"data": "hello"})],
             stop_reason="tool_use",
         )
-        second_response = make_mock_response([make_text_block("Written.")])
-        mock_client.messages.create.side_effect = [first_response, second_response]
+        second_response = make_llm_response(text="Written.")
+        mock_backend.call.side_effect = [first_response, second_response]
 
-        # User approves
-        result = engine.run_turn("write it", session, ask_permission=lambda n, p: True)
+        result = engine.run_turn("write it", session, ask_permission=lambda n, p: "y")
 
         tool.execute.assert_called_once()
         assert len(result.tool_calls) == 1
@@ -443,17 +427,17 @@ class TestPermissions:
         registry.register(tool)
 
         permissions = PermissionContext()
-        engine, mock_client = make_engine(registry=registry, permissions=permissions)
+        engine, mock_backend = make_engine(registry=registry, permissions=permissions)
         session = make_session()
 
-        first_response = make_mock_response(
-            [make_tool_use_block("t1", "write_tool", {})],
+        first_response = make_llm_response(
+            tool_calls=[make_tool_call("t1", "write_tool", {})],
             stop_reason="tool_use",
         )
-        second_response = make_mock_response([make_text_block("User declined.")])
-        mock_client.messages.create.side_effect = [first_response, second_response]
+        second_response = make_llm_response(text="User declined.")
+        mock_backend.call.side_effect = [first_response, second_response]
 
-        result = engine.run_turn("write it", session, ask_permission=lambda n, p: False)
+        result = engine.run_turn("write it", session, ask_permission=lambda n, p: "n")
 
         tool.execute.assert_not_called()
         assert len(result.tool_calls) == 1
@@ -462,16 +446,16 @@ class TestPermissions:
         assert tc.permission_action == "asked_denied"
 
     def test_unknown_tool_returns_error(self) -> None:
-        """API calls a tool name not in registry → error ToolResult, not a crash."""
-        engine, mock_client = make_engine()
+        """Backend calls a tool name not in registry → error ToolResult, not a crash."""
+        engine, mock_backend = make_engine()
         session = make_session()
 
-        first_response = make_mock_response(
-            [make_tool_use_block("t1", "nonexistent_tool", {})],
+        first_response = make_llm_response(
+            tool_calls=[make_tool_call("t1", "nonexistent_tool", {})],
             stop_reason="tool_use",
         )
-        second_response = make_mock_response([make_text_block("ok")])
-        mock_client.messages.create.side_effect = [first_response, second_response]
+        second_response = make_llm_response(text="ok")
+        mock_backend.call.side_effect = [first_response, second_response]
 
         result = engine.run_turn("call unknown", session)
 
@@ -486,20 +470,47 @@ class TestPermissions:
         tool.execute.side_effect = RuntimeError("boom")
         registry.register(tool)
 
-        engine, mock_client = make_engine(registry=registry)
+        engine, mock_backend = make_engine(registry=registry)
         session = make_session()
 
-        first_response = make_mock_response(
-            [make_tool_use_block("t1", "crashy_tool", {})],
+        first_response = make_llm_response(
+            tool_calls=[make_tool_call("t1", "crashy_tool", {})],
             stop_reason="tool_use",
         )
-        second_response = make_mock_response([make_text_block("handled")])
-        mock_client.messages.create.side_effect = [first_response, second_response]
+        second_response = make_llm_response(text="handled")
+        mock_backend.call.side_effect = [first_response, second_response]
 
         result = engine.run_turn("crash it", session)
 
         assert result.tool_calls[0].result.is_error is True
         assert "boom" in result.tool_calls[0].result.content
+
+
+class TestAlwaysAllowPermission:
+    def test_ask_permission_returns_a_adds_to_session_allow(self) -> None:
+        """ask_permission returning 'a' calls permissions.add_always_allow and executes tool."""
+        registry = ToolRegistry()
+        tool = make_write_tool("write_tool")
+        registry.register(tool)
+
+        permissions = PermissionContext()  # default: will ask
+        engine, mock_backend = make_engine(registry=registry, permissions=permissions)
+        session = make_session()
+
+        first_response = make_llm_response(
+            tool_calls=[make_tool_call("t1", "write_tool", {"data": "hello"})],
+            stop_reason="tool_use",
+        )
+        second_response = make_llm_response(text="Written always.")
+        mock_backend.call.side_effect = [first_response, second_response]
+
+        result = engine.run_turn("write it", session, ask_permission=lambda n, p: "a")
+
+        tool.execute.assert_called_once()
+        assert "write_tool" in permissions.session_allow
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].permission_action == "asked_allowed"
+        assert not result.tool_calls[0].result.is_error
 
 
 class TestTurnResultFrozen:
@@ -545,59 +556,49 @@ class TestSessionIntegration:
         tool = make_read_only_tool("my_tool", return_content="data")
         registry.register(tool)
 
-        engine, mock_client = make_engine(registry=registry)
+        engine, mock_backend = make_engine(registry=registry)
         session = make_session()
 
-        first_response = make_mock_response(
-            [make_tool_use_block("t1", "my_tool", {})],
+        first_response = make_llm_response(
+            tool_calls=[make_tool_call("t1", "my_tool", {})],
             stop_reason="tool_use",
         )
-        second_response = make_mock_response([make_text_block("done")])
-        mock_client.messages.create.side_effect = [first_response, second_response]
+        second_response = make_llm_response(text="done")
+        mock_backend.call.side_effect = [first_response, second_response]
 
         engine.run_turn("go", session)
 
         messages = session.to_messages()
-        # Should have: user, assistant (tool_use), user (tool_result), assistant (final text)
         roles = [m["role"] for m in messages]
         assert roles.count("user") == 2  # initial + tool_result
         assert roles.count("assistant") == 2  # tool call response + final
 
     def test_session_usage_accumulated(self) -> None:
-        """Token usage is accumulated across all API calls in a turn."""
+        """Token usage is accumulated across all backend calls in a turn."""
         registry = ToolRegistry()
         tool = make_read_only_tool("my_tool")
         registry.register(tool)
 
-        engine, mock_client = make_engine(registry=registry)
+        engine, mock_backend = make_engine(registry=registry)
         session = make_session()
 
-        usage1 = MagicMock(
-            input_tokens=100,
-            output_tokens=50,
-            cache_read_input_tokens=0,
-            cache_creation_input_tokens=0,
-        )
-        usage2 = MagicMock(
-            input_tokens=200,
-            output_tokens=75,
-            cache_read_input_tokens=5,
-            cache_creation_input_tokens=0,
-        )
-        first_response = make_mock_response(
-            [make_tool_use_block("t1", "my_tool", {})],
+        first_response = make_llm_response(
+            tool_calls=[make_tool_call("t1", "my_tool", {})],
             stop_reason="tool_use",
-            usage=usage1,
+            usage=TokenUsage(input_tokens=100, output_tokens=50),
         )
-        second_response = make_mock_response(
-            [make_text_block("done")],
-            usage=usage2,
+        second_response = make_llm_response(
+            text="done",
+            usage=TokenUsage(
+                input_tokens=200,
+                output_tokens=75,
+                cache_read_tokens=5,
+            ),
         )
-        mock_client.messages.create.side_effect = [first_response, second_response]
+        mock_backend.call.side_effect = [first_response, second_response]
 
         result = engine.run_turn("go", session)
 
-        # TurnResult carries cumulative usage
         assert result.usage.input_tokens == 300
         assert result.usage.output_tokens == 125
         assert result.usage.cache_read_tokens == 5

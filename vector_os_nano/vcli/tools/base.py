@@ -48,6 +48,7 @@ class ToolContext:
     session: Any
     permissions: Any
     abort: threading.Event
+    app_state: dict[str, Any] | None = None  # mutable CLI state for runtime tools
 
 
 # ---------------------------------------------------------------------------

@@ -312,4 +312,54 @@ class TestVcliExports:
         assert hasattr(vcli, "ToolContext")
 
 
+# ---------------------------------------------------------------------------
+# discover_all_tools()
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverAllTools:
+    def test_returns_list(self) -> None:
+        """discover_all_tools() returns a plain list, not a ToolRegistry."""
+        from vector_os_nano.vcli.tools import discover_all_tools
+
+        result = discover_all_tools()
+        assert isinstance(result, list)
+
+    def test_returns_at_least_eight_tools(self) -> None:
+        """discover_all_tools() returns at least 8 tool instances."""
+        from vector_os_nano.vcli.tools import discover_all_tools
+
+        result = discover_all_tools()
+        assert len(result) >= 8
+
+    def test_each_item_has_required_attributes(self) -> None:
+        """Each tool instance has name, description, input_schema, and execute."""
+        from vector_os_nano.vcli.tools import discover_all_tools
+
+        for tool_instance in discover_all_tools():
+            assert hasattr(tool_instance, "name"), f"Missing name on {tool_instance!r}"
+            assert hasattr(tool_instance, "description"), f"Missing description on {tool_instance!r}"
+            assert hasattr(tool_instance, "input_schema"), f"Missing input_schema on {tool_instance!r}"
+            assert hasattr(tool_instance, "execute"), f"Missing execute on {tool_instance!r}"
+
+    def test_known_tool_names_present(self) -> None:
+        """All eight canonical tool names are present in the returned list."""
+        from vector_os_nano.vcli.tools import discover_all_tools
+
+        expected_names = {
+            "file_read",
+            "file_write",
+            "file_edit",
+            "bash",
+            "glob",
+            "grep",
+            "world_query",
+            "robot_status",
+        }
+        actual_names = {t.name for t in discover_all_tools()}
+        assert expected_names.issubset(actual_names), (
+            f"Missing tool names: {expected_names - actual_names}"
+        )
+
+
 import pytest

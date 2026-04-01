@@ -301,3 +301,37 @@ def test_list_sessions_empty_directory(tmp_path: Path) -> None:
     """list_sessions() returns empty list when no sessions exist."""
     summaries = list_sessions(directory=tmp_path)
     assert summaries == []
+
+
+# ---------------------------------------------------------------------------
+# Session.read_files tracking
+# ---------------------------------------------------------------------------
+
+
+def test_new_session_has_empty_read_files(tmp_path: Path) -> None:
+    """A freshly created session starts with an empty read_files set."""
+    session = create_session(directory=tmp_path)
+    assert isinstance(session.read_files, set)
+    assert len(session.read_files) == 0
+
+
+def test_can_add_paths_to_read_files(tmp_path: Path) -> None:
+    """Paths can be added to read_files and are retrievable."""
+    session = create_session(directory=tmp_path)
+    session.read_files.add("/tmp/foo.txt")
+    session.read_files.add("/tmp/bar.txt")
+    assert "/tmp/foo.txt" in session.read_files
+    assert "/tmp/bar.txt" in session.read_files
+    assert len(session.read_files) == 2
+
+
+def test_read_files_not_persisted_on_save_and_load(tmp_path: Path) -> None:
+    """read_files is runtime-only — it is NOT written to or loaded from disk."""
+    session = create_session(directory=tmp_path)
+    session.read_files.add("/tmp/important.txt")
+    session.save()
+
+    loaded = load_session(session.session_id, directory=tmp_path)
+    # After loading, read_files must be empty (runtime tracking resets)
+    assert len(loaded.read_files) == 0
+    assert "/tmp/important.txt" not in loaded.read_files

@@ -97,6 +97,7 @@ class Session:
         self._entries: list[dict[str, Any]] = entries if entries is not None else []
         self.token_usage: TokenUsage = token_usage if token_usage is not None else TokenUsage()
         self.metadata: dict[str, Any] = metadata if metadata is not None else {}
+        self.read_files: set[str] = set()  # Tracks files read this session (for write-guard)
 
     # ------------------------------------------------------------------
     # Internal helpers

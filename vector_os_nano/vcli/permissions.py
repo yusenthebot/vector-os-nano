@@ -71,8 +71,9 @@ class PermissionContext:
             return PermissionResult("deny", f"Tool '{tool_name}' is denied")
 
         # 2. Tool-specific safety check (can deny even if session-allow exists)
+        tool_perm: PermissionResult | None = None
         if hasattr(tool, "check_permissions"):
-            tool_perm: PermissionResult = tool.check_permissions(params, tool_context)
+            tool_perm = tool.check_permissions(params, tool_context)
             if tool_perm.behavior == "deny":
                 return tool_perm
 
@@ -84,11 +85,9 @@ class PermissionContext:
         if hasattr(tool, "is_read_only") and tool.is_read_only(params):
             return PermissionResult("allow")
 
-        # 5. Propagate tool-specific "ask" (already retrieved in step 2)
-        if hasattr(tool, "check_permissions"):
-            tool_perm = tool.check_permissions(params, tool_context)
-            if tool_perm.behavior == "ask":
-                return tool_perm
+        # 5. Propagate tool-specific "ask" (reuse result from step 2)
+        if tool_perm is not None and tool_perm.behavior == "ask":
+            return tool_perm
 
         # 6. Default: ask
         return PermissionResult("ask", f"Allow {tool_name}?")

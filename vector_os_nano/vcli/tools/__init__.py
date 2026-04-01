@@ -17,16 +17,30 @@ __all__ = [
     "ToolRegistry",
     "ToolResult",
     "tool",
+    "discover_all_tools",
 ]
 
 
-def discover_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
-    """Discover and register all built-in tools, returning the registry.
+def discover_all_tools() -> list:
+    """Instantiate and return all built-in tool objects.
 
-    Pass an existing *registry* to extend it; otherwise a new one is created.
-    Currently a placeholder — concrete tool modules are imported here as they
-    are added to the harness.
+    Each tool class is imported here to avoid circular imports at module level.
+    The caller registers the returned instances into a ToolRegistry.
     """
-    if registry is None:
-        registry = ToolRegistry()
-    return registry
+    from vector_os_nano.vcli.tools.bash_tool import BashTool
+    from vector_os_nano.vcli.tools.file_tools import FileEditTool, FileReadTool, FileWriteTool
+    from vector_os_nano.vcli.tools.robot import RobotStatusTool, WorldQueryTool
+    from vector_os_nano.vcli.tools.search_tools import GlobTool, GrepTool
+    from vector_os_nano.vcli.tools.sim_tool import SimStartTool
+
+    return [
+        FileReadTool(),
+        FileWriteTool(),
+        FileEditTool(),
+        BashTool(),
+        GlobTool(),
+        GrepTool(),
+        WorldQueryTool(),
+        RobotStatusTool(),
+        SimStartTool(),
+    ]

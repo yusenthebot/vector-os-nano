@@ -24,6 +24,7 @@ from rich.prompt import Prompt
 from rich.text import Text
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 
@@ -191,6 +192,7 @@ def _handle_slash_command(
     args_rest: list[str],
     registry: ToolRegistry,
     session: Session | None = None,
+    app_state: dict[str, Any] | None = None,
 ) -> bool:
     """Handle /command. Returns True to continue REPL, False to exit."""
     if cmd == "help":
@@ -200,6 +202,8 @@ def _handle_slash_command(
         console.print("  /tools     list registered tools")
         console.print("  /sessions  list saved sessions")
         console.print("  /usage     token usage this session")
+        console.print("  /compact   summarize + reset context window")
+        console.print("  /status    show system status")
         console.print()
     elif cmd in ("quit", "exit", "q"):
         return False
@@ -228,6 +232,35 @@ def _handle_slash_command(
             console.print(f"[bold {TEAL}]Usage:[/] in={u.input_tokens:,} out={u.output_tokens:,} total={total:,}")
         else:
             console.print("[dim]No session.[/dim]")
+    elif cmd == "compact":
+        if session is not None:
+            entries = session.to_messages()
+            keep = entries[-4:] if len(entries) > 4 else entries
+            session._entries = list(keep)
+            console.print(f"[dim]Compacted: kept last {len(keep)} messages[/dim]")
+        else:
+            console.print("[dim]No session.[/dim]")
+    elif cmd == "status":
+        agent = (app_state or {}).get("agent")
+        arm = getattr(agent, "_arm", None) if agent else None
+        base = getattr(agent, "_base", None) if agent else None
+        perception = getattr(agent, "_perception", None) if agent else None
+        tool_count = len(registry.list_tools())
+        skill_count = 0
+        if agent is not None:
+            ctx = getattr(agent, "_context", None)
+            if ctx is not None:
+                skills_attr = getattr(ctx, "skills", None)
+                if skills_attr is not None:
+                    skill_count = len(skills_attr) if hasattr(skills_attr, "__len__") else 0
+        msg_count = len(session.to_messages()) if session is not None else 0
+        console.print(f"[bold {TEAL}]Status:[/]")
+        console.print(f"  Arm:         {getattr(arm, 'name', type(arm).__name__) if arm else 'none'}")
+        console.print(f"  Base:        {getattr(base, 'name', type(base).__name__) if base else 'none'}")
+        console.print(f"  Perception:  {getattr(perception, 'name', type(perception).__name__) if perception else 'none'}")
+        console.print(f"  Tools:       {tool_count}")
+        console.print(f"  Skills:      {skill_count}")
+        console.print(f"  Messages:    {msg_count}")
     else:
         console.print(f"[yellow]Unknown: /{cmd}[/]  (try /help)")
     return True
@@ -307,6 +340,13 @@ def main(argv: list[str] | None = None) -> None:
     backend = create_backend(provider=provider, api_key=api_key, model=model, base_url=base_url)
     engine = VectorEngine(backend=backend, registry=registry, system_prompt=system_prompt, permissions=permissions)
 
+    # Mutable app state — shared with runtime tools (SimStartTool etc.)
+    app_state: dict[str, Any] = {
+        "agent": agent,
+        "registry": registry,
+        "engine": engine,
+    }
+
     # Banner
     provider_display = "OpenRouter" if provider == "openrouter" else "Anthropic"
     if base_url and "localhost" in base_url:
@@ -317,12 +357,44 @@ def main(argv: list[str] | None = None) -> None:
     # REPL
     history_dir = Path.home() / ".vector"
     history_dir.mkdir(parents=True, exist_ok=True)
-    pt_session: PromptSession = PromptSession(history=FileHistory(str(history_dir / "history")))
+
+    _slash_commands = [
+        "/help", "/quit", "/tools", "/sessions", "/usage", "/compact", "/status",
+    ]
+    _completer = WordCompleter(
+        _slash_commands + list(EXIT_COMMANDS),
+        sentence=True,
+    )
+
+    def _get_toolbar() -> HTML:
+        agent_now = app_state.get("agent")
+        parts: list[str] = ["V"]
+        arm_now = getattr(agent_now, "_arm", None) if agent_now else None
+        base_now = getattr(agent_now, "_base", None) if agent_now else None
+        if arm_now is not None:
+            parts.append(f"arm:{getattr(arm_now, 'name', 'arm')}")
+        if base_now is not None:
+            parts.append(f"base:{getattr(base_now, 'name', 'base')}")
+        parts.append(f"tools:{len(registry.list_tools())}")
+        msg_count = len(session.to_messages())
+        parts.append(f"msgs:{msg_count}")
+        return HTML(f' {" | ".join(parts)} ')
+
+    pt_session: PromptSession = PromptSession(
+        history=FileHistory(str(history_dir / "history")),
+        completer=_completer,
+    )
+
+    # Per-tool timing state (keyed by tool name, last-started)
+    _tool_start_times: dict[str, float] = {}
 
     try:
         while True:
             try:
-                raw = pt_session.prompt(HTML(f'<style fg="{TEAL}" bold="true">vector&gt;</style> '))
+                raw = pt_session.prompt(
+                    HTML(f'<style fg="{TEAL}" bold="true">vector&gt;</style> '),
+                    bottom_toolbar=_get_toolbar,
+                )
             except EOFError:
                 break
             except KeyboardInterrupt:
@@ -336,7 +408,7 @@ def main(argv: list[str] | None = None) -> None:
                 break
             if is_slash_command(user_input):
                 parts = user_input.split()
-                if not _handle_slash_command(parts[0][1:], parts[1:], registry, session):
+                if not _handle_slash_command(parts[0][1:], parts[1:], registry, session, app_state):
                     break
                 continue
 
@@ -359,12 +431,36 @@ def main(argv: list[str] | None = None) -> None:
                             )
                         )
 
+                def _format_params_brief(p: dict[str, Any]) -> str:
+                    """Return a short one-line param summary, truncating long values."""
+                    if not p:
+                        return ""
+                    parts_inner: list[str] = []
+                    for k, v in list(p.items())[:3]:
+                        v_str = str(v)
+                        if len(v_str) > 40:
+                            v_str = v_str[:37] + "..."
+                        if isinstance(v, str):
+                            v_str = f'"{v_str}"'
+                        parts_inner.append(f"{k}={v_str}")
+                    suffix = ", ..." if len(p) > 3 else ""
+                    return ", ".join(parts_inner) + suffix
+
                 def on_tool_start(name: str, p: dict[str, Any]) -> None:
-                    console.print(f"  [{DIM_TEAL}]{name}[/]", end="")
+                    _tool_start_times[name] = time.monotonic()
+                    param_summary = _format_params_brief(p)
+                    if param_summary:
+                        console.print(
+                            f"  [{TEAL}]{name}[/]([dim]{param_summary}[/]) ...",
+                            end="",
+                        )
+                    else:
+                        console.print(f"  [{TEAL}]{name}[/]() ...", end="")
 
                 def on_tool_end(name: str, result: Any) -> None:
-                    tag = f"[green]ok[/]" if not result.is_error else "[red]fail[/]"
-                    console.print(f" {tag}")
+                    elapsed = time.monotonic() - _tool_start_times.pop(name, time.monotonic())
+                    tag = "[green]ok[/]" if not result.is_error else "[red]fail[/]"
+                    console.print(f" {tag} {elapsed:.1f}s")
 
                 # Show final panel via Live (progressive update)
                 empty_panel = Panel("", title="[bold]V[/]", title_align="left", border_style=TEAL, padding=(0, 1), width=min(console.width, 80))
@@ -373,11 +469,12 @@ def main(argv: list[str] | None = None) -> None:
                     turn_result: TurnResult = engine.run_turn(
                         user_message=user_input,
                         session=session,
-                        agent=agent,
+                        agent=app_state.get("agent"),
                         on_text=on_text,
                         on_tool_start=on_tool_start,
                         on_tool_end=on_tool_end,
                         ask_permission=lambda n, p: ask_permission(n, p),
+                        app_state=app_state,
                     )
 
                 # Print final response in V panel (replaces transient Live)
