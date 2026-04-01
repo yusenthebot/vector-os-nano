@@ -25,7 +25,8 @@ llm:
     plan_simple: "anthropic/claude-haiku-4-5"
     plan_complex: "anthropic/claude-sonnet-4-6"
     chat: "anthropic/claude-haiku-4-5"
-    query: "openai/gpt-4o-mini"              # vision-capable model for visual queries
+    query: "qwen/qwen2.5-vl-72b-instruct"   # vision-capable model for visual queries (no tool calling needed)
+    agent: "openai/gpt-4o"                    # agent mode default (reliable tool calling + vision)
     summarize: "anthropic/claude-haiku-4-5"
 
 arm:

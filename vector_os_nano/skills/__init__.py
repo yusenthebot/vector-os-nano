@@ -4,6 +4,7 @@ from __future__ import annotations
 from vector_os_nano.skills.describe import DescribeSkill
 from vector_os_nano.skills.detect import DetectSkill
 from vector_os_nano.skills.gripper import GripperCloseSkill, GripperOpenSkill
+from vector_os_nano.skills.handover import HandoverSkill
 from vector_os_nano.skills.home import HomeSkill
 from vector_os_nano.skills.pick import PickSkill
 from vector_os_nano.skills.place import PlaceSkill
@@ -15,6 +16,7 @@ __all__ = [
     "DetectSkill",
     "GripperCloseSkill",
     "GripperOpenSkill",
+    "HandoverSkill",
     "HomeSkill",
     "PickSkill",
     "PlaceSkill",
@@ -33,6 +35,7 @@ def get_default_skills() -> list:
         DetectSkill(),
         PickSkill(),
         PlaceSkill(),
+        HandoverSkill(),
         GripperOpenSkill(),
         GripperCloseSkill(),
         WaveSkill(),

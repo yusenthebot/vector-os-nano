@@ -53,6 +53,51 @@ CURRENT STATE:
 {state_info}
 """
 
+# System prompt for Go2 quadruped mode
+_SYSTEM_PROMPT_GO2 = """\
+You are V, the AI agent for Vector OS Nano — controlling a Unitree Go2 quadruped robot dog in an indoor house.
+You control the Go2 through tool calls. You communicate in whatever language the user uses.
+Call the user "主人" in Chinese.
+
+PERSONALITY:
+You are proactive and action-oriented. When the user says to move or perform a posture, ACT on it immediately. Do NOT repeatedly ask for confirmation. You are a robot dog — enthusiastic, responsive, and capable.
+
+HOUSE LAYOUT:
+You are in a 20m x 14m house with these rooms:
+- living_room (客厅): bottom-left, has sofa, TV, coffee table
+- dining_room (餐厅): mid-left, has dining table and chairs
+- kitchen (厨房): bottom-right, has counter, island, fridge
+- study (书房): mid-right, has desk, monitor, bookshelf
+- master_bedroom (主卧): top-left, has king bed, wardrobe
+- guest_bedroom (客房): top-right, has bed, dresser
+- bathroom (卫生间): top-center, has bathtub, vanity
+- hallway (走廊): central open area connecting all rooms
+
+CAPABILITIES:
+- navigate(room): Go to a room by name. Use this for all room navigation.
+- explore(): Autonomously visit all rooms in the house, building a map.
+- remember_location(name): Save current position with a custom name.
+- where_am_i(): Report which room you are currently in.
+- walk(direction, distance): Short movements (forward, backward, left, right).
+- turn(direction, angle): Turn in place.
+- stand/sit/lie_down: Posture changes.
+
+RULES:
+1. For room navigation, ALWAYS use navigate (not walk). navigate(room="kitchen") or navigate(room="厨房").
+2. For exploring the house, use explore(). You will visit each room and report what you find.
+3. Use remember_location(name) to bookmark custom locations for the user.
+4. Use where_am_i() when the user asks where you are.
+5. After tool calls, briefly report what happened. Keep it concise. Plain text only.
+6. You have SPATIAL MEMORY: you remember which rooms you visited and what you saw.
+7. When in doubt, ACT rather than ASK.
+
+SPATIAL MEMORY:
+{memory_info}
+
+CURRENT STATE:
+{state_info}
+"""
+
 
 class ToolAgent:
     """Agent that uses LLM-native function calling for conversation + skill execution.
@@ -71,7 +116,7 @@ class ToolAgent:
         self,
         agent_ref: Any,
         api_key: str,
-        model: str = "openai/gpt-4o-mini",
+        model: str = "openai/gpt-4o",
         api_base: str = "https://openrouter.ai/api/v1",
     ) -> None:
         self._agent = agent_ref
@@ -94,7 +139,35 @@ class ToolAgent:
 
     def _build_system_prompt(self) -> str:
         """Build system prompt with current state."""
+        import math
         agent = self._agent
+
+        # Go2 quadruped mode — arm is absent, base is present
+        if agent._base is not None:
+            parts = []
+            parts.append("Mode: Go2 quadruped robot in MuJoCo simulation")
+            parts.append("Robot type: Unitree Go2 (4-legged robot dog)")
+            try:
+                pos = agent._base.get_position()
+                heading = agent._base.get_heading()
+                parts.append(f"Position: ({pos[0]:.1f}, {pos[1]:.1f}) m")
+                parts.append(f"Heading: {math.degrees(heading):.0f} deg")
+            except Exception:
+                pass
+
+            # Spatial memory summary
+            memory_info = "No spatial memory yet."
+            ctx = agent._build_context()
+            spatial_mem = ctx.services.get("spatial_memory")
+            if spatial_mem is not None:
+                memory_info = spatial_mem.summary_for_llm()
+
+            return _SYSTEM_PROMPT_GO2.format(
+                state_info="\n".join(parts),
+                memory_info=memory_info,
+            )
+
+        # Arm (SO-101 or MuJoCo sim) mode
         parts = []
         if agent._arm:
             mode = "MuJoCo simulation" if hasattr(agent._arm, "get_object_positions") else "real hardware"
@@ -163,7 +236,7 @@ class ToolAgent:
                 "tools": self._tools,
                 "tool_choice": "auto",
                 "temperature": 0.3,
-                "max_tokens": 1024,
+                "max_tokens": 2048,
             }
 
             _dbg("LLM_CALL", f"round={round_idx}, model={self._model}, msgs={len(self._messages)}")
@@ -173,14 +246,28 @@ class ToolAgent:
                 resp.raise_for_status()
                 data = resp.json()
             except Exception as exc:
-                logger.warning("[ToolAgent] API error: %s", exc)
+                # Log response body for debugging
+                body = ""
+                if hasattr(exc, 'response') and exc.response is not None:
+                    body = exc.response.text[:500]
+                logger.warning("[ToolAgent] API error: %s | body: %s", exc, body)
                 error_msg = f"API error: {exc}"
+                if body:
+                    error_msg += f"\n{body}"
                 self._messages.append({"role": "assistant", "content": error_msg})
                 return error_msg
 
-            choice = data["choices"][0]
-            message = choice["message"]
-            finish_reason = choice.get("finish_reason", "")
+            try:
+                choice = data["choices"][0]
+                message = choice["message"]
+                finish_reason = choice.get("finish_reason", "")
+            except (KeyError, IndexError, TypeError) as exc:
+                _dbg("PARSE_ERROR", f"Unexpected response structure: {str(data)[:300]}")
+                error_msg = f"Unexpected API response: {str(data)[:200]}"
+                self._messages.append({"role": "assistant", "content": error_msg})
+                return error_msg
+
+            _dbg("RESPONSE_RAW", f"finish_reason={finish_reason}, has_tool_calls={bool(message.get('tool_calls'))}, content_len={len(message.get('content') or '')}")
 
             # Case 1: LLM wants to call tool(s)
             tool_calls = message.get("tool_calls")
@@ -215,8 +302,10 @@ class ToolAgent:
                 continue
 
             # Case 2: LLM responds with text (no tool call)
-            text = message.get("content", "")
-            _dbg("RESPONSE", f"text ({len(text)} chars)")
+            text = message.get("content") or ""
+            if finish_reason == "length" and not text:
+                text = "(Response truncated — try a shorter question)"
+            _dbg("RESPONSE", f"text ({len(text)} chars, finish={finish_reason})")
             self._messages.append({"role": "assistant", "content": text})
             return text
 

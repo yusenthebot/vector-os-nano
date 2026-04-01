@@ -34,12 +34,12 @@ class DetectSkill:
     """
 
     name: str = "detect"
-    description: str = "Detect objects in the workspace using VLM"
+    description: str = "Detect objects in the workspace using VLM. IMPORTANT: use simple English queries like 'all objects', 'red cup', 'bottle'. Do NOT use Chinese or long phrases as the query."
     parameters: dict = {
         "query": {
             "type": "string",
             "required": True,
-            "description": "What to detect (e.g. 'red cup', 'all objects')",
+            "description": "Simple English noun or phrase: 'all objects', 'red cup', 'banana', 'bottle'. Must be English. Do NOT use Chinese.",
         }
     }
     preconditions: list[str] = []

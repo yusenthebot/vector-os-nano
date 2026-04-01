@@ -86,6 +86,8 @@ class RobotState:
     held_object: str | None = None
     is_moving: bool = False
     ee_position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    position_xy: tuple[float, float] = (0.0, 0.0)  # base position in world XY plane (meters)
+    heading: float = 0.0  # radians, 0 = +X axis
 
     def to_dict(self) -> dict:
         return {
@@ -94,6 +96,8 @@ class RobotState:
             "held_object": self.held_object,
             "is_moving": self.is_moving,
             "ee_position": list(self.ee_position),
+            "position_xy": list(self.position_xy),
+            "heading": self.heading,
         }
 
     @classmethod
@@ -104,6 +108,8 @@ class RobotState:
             held_object=d.get("held_object"),
             is_moving=bool(d.get("is_moving", False)),
             ee_position=tuple(float(v) for v in d.get("ee_position", [0.0, 0.0, 0.0])),
+            position_xy=tuple(float(v) for v in d.get("position_xy", [0.0, 0.0])),  # type: ignore[arg-type]
+            heading=float(d.get("heading", 0.0)),
         )
 
 
@@ -180,6 +186,8 @@ class WorldModel:
             "held_object",
             "is_moving",
             "ee_position",
+            "position_xy",
+            "heading",
         }
         updates = {k: v for k, v in kwargs.items() if k in valid_fields}
         self._robot = RobotState(
@@ -188,6 +196,8 @@ class WorldModel:
             held_object=updates.get("held_object", current.held_object),
             is_moving=updates.get("is_moving", current.is_moving),
             ee_position=updates.get("ee_position", current.ee_position),
+            position_xy=updates.get("position_xy", current.position_xy),
+            heading=updates.get("heading", current.heading),
         )
 
     # ------------------------------------------------------------------

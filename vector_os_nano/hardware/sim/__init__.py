@@ -12,6 +12,7 @@ All physics engines are imported lazily; importing this module does NOT
 require mujoco or pybullet to be installed.
 """
 from vector_os_nano.hardware.sim.mujoco_arm import MuJoCoArm
+from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
 from vector_os_nano.hardware.sim.mujoco_gripper import MuJoCoGripper
 from vector_os_nano.hardware.sim.mujoco_perception import MuJoCoPerception
 from vector_os_nano.hardware.sim.pybullet_arm import SimulatedArm
@@ -19,6 +20,7 @@ from vector_os_nano.hardware.sim.pybullet_gripper import SimulatedGripper
 
 __all__ = [
     "MuJoCoArm",
+    "MuJoCoGo2",
     "MuJoCoGripper",
     "MuJoCoPerception",
     "SimulatedArm",

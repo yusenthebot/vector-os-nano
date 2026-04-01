@@ -222,14 +222,16 @@ python run.py --dashboard      # Textual TUI dashboard
 python run.py --web --sim      # Web dashboard at localhost:8000
 
 # Agent mode (LLM tool-calling — smarter, context-aware)
-python run.py --agent                                     # Default: gpt-4o-mini
-python run.py --agent --agent-model openai/gpt-4o         # Stronger reasoning
+python run.py --agent                                     # Default: GPT-4o (reliable tool calling + vision)
+python run.py --agent --agent-model openai/gpt-4o-mini    # Cheaper alternative
 python run.py --agent --agent-model anthropic/claude-sonnet-4-6  # Claude Sonnet
 python run.py --agent -v                                  # Agent + debug output
 python run.py --sim --agent                               # Sim + agent mode
 ```
 
 **Classic vs Agent mode**: Classic mode uses a rigid classify→plan→execute pipeline — fast for simple commands ("抓杯子") but can't handle multi-turn context. Agent mode uses LLM-native function calling — the LLM sees full conversation history, decides when to chat vs call tools, and understands context ("我饿了" → picks food proactively).
+
+**Model selection**: Agent mode defaults to GPT-4o (most reliable tool calling + vision). Qwen2.5-VL-72B has better vision + Chinese but doesn't support tool calling on OpenRouter. GPT-5 Nano ($0.05/MTok) is cheapest but unstable (slow responses, frequent truncation, poor tool argument quality). Override with `--agent-model` or in `config/user.yaml` under `llm.models.agent`.
 
 ## REST API
 

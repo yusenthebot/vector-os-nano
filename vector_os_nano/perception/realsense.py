@@ -176,7 +176,7 @@ class RealSenseCamera:
         if not color_frame or not depth_frame:
             raise RuntimeError("Invalid frames from RealSense pipeline")
 
-        color = np.asanyarray(color_frame.get_data())  # (H, W, 3) RGB uint8
+        color = np.asanyarray(color_frame.get_data())  # (H, W, 3) RGB uint8 (rs.format.rgb8)
         depth = np.asanyarray(depth_frame.get_data())  # (H, W) uint16 mm
         return color, depth
 
