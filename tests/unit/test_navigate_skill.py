@@ -205,8 +205,9 @@ class TestNavigateFromGo2Package:
         from vector_os_nano.skills.navigate import NavigateSkill as UnifiedNav
         assert Go2Nav is UnifiedNav
 
-    def test_go2_navigate_module_reexport(self):
-        """go2/navigate.py re-exports from unified module."""
-        from vector_os_nano.skills.go2.navigate import NavigateSkill as Go2ModNav
-        from vector_os_nano.skills.navigate import NavigateSkill as UnifiedNav
-        assert Go2ModNav is UnifiedNav
+    def test_go2_navigate_module_removed(self):
+        """go2/navigate.py shim has been removed -- import must fail."""
+        import importlib
+        import pytest
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module("vector_os_nano.skills.go2.navigate")

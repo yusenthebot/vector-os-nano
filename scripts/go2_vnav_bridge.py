@@ -109,8 +109,8 @@ class Go2VNavBridge(Node):
         )
         self._joy_pub = self.create_publisher(Joy, "/joy", 5)
         self._speed_pub = self.create_publisher(Float32, "/speed", 5)
-        self._img_pub = self.create_publisher(Image, "/camera/image", sensor_qos)
-        self._depth_pub = self.create_publisher(Image, "/camera/depth", sensor_qos)
+        self._img_pub = self.create_publisher(Image, "/camera/image", reliable_qos)
+        self._depth_pub = self.create_publisher(Image, "/camera/depth", reliable_qos)
 
         self._tf_broadcaster = TransformBroadcaster(self)
         # NOTE: static TF sensor→base_link is published by local_planner.launch.py
@@ -317,42 +317,42 @@ class Go2VNavBridge(Node):
         self._speed_pub.publish(speed)
 
     def _publish_camera(self) -> None:
-        """Render camera from MuJoCo using a free camera at camera_link position."""
+        """Render first-person camera from Go2 head (camera_link)."""
         try:
             import mujoco
             if not hasattr(self, '_renderer'):
                 self._renderer = mujoco.Renderer(
                     self._go2._mj.model, 240, 320
                 )
+                self._cam = mujoco.MjvCamera()
+                self._cam.type = mujoco.mjtCamera.mjCAMERA_FREE
 
             model = self._go2._mj.model
             data = self._go2._mj.data
 
-            # Camera at sensor + camera offset, looking forward
+            # First-person: camera at sensor + forward offset, looking ahead
             odom = self._go2.get_odometry()
             heading = self._go2.get_heading()
             cos_h = math.cos(heading)
             sin_h = math.sin(heading)
 
-            # Camera position (sensor + camera offset from go2 config)
+            # Camera mounted on Go2 head (sensor + 0.1m forward, slight down)
             cam_x = odom.x + cos_h * (_SENSOR_X + 0.1)
             cam_y = odom.y + sin_h * (_SENSOR_X + 0.1)
             cam_z = odom.z + _SENSOR_Z - 0.04
 
-            scene = mujoco.MjvScene(model, maxgeom=1000)
-            cam = mujoco.MjvCamera()
-            cam.type = mujoco.mjtCamera.mjCAMERA_FREE
-            cam.lookat[:] = [cam_x + cos_h * 2, cam_y + sin_h * 2, cam_z]
-            cam.distance = 2.0
-            cam.azimuth = math.degrees(heading) + 180
-            cam.elevation = -15
+            # Look at a point 1m ahead of camera
+            self._cam.lookat[:] = [
+                cam_x + cos_h * 1.0,
+                cam_y + sin_h * 1.0,
+                cam_z - 0.1,
+            ]
+            self._cam.distance = 1.0
+            self._cam.azimuth = math.degrees(heading) + 180
+            self._cam.elevation = -10
 
-            opt = mujoco.MjvOption()
-            mujoco.mjv_updateScene(model, data, opt, None, cam,
-                                   mujoco.mjtCatBit.mjCAT_ALL, scene)
-
-            # RGB render
-            self._renderer.update_scene(data)
+            # Render with the first-person camera
+            self._renderer.update_scene(data, camera=self._cam)
             rgb = self._renderer.render().copy()
             now = self.get_clock().now().to_msg()
 
@@ -378,7 +378,7 @@ class Go2VNavBridge(Node):
 
             if self._depth_renderer is not None:
                 try:
-                    self._depth_renderer.update_scene(data)
+                    self._depth_renderer.update_scene(data, camera=self._cam)
                     depth = self._depth_renderer.render().copy()
 
                     depth_msg = Image()
