@@ -350,6 +350,66 @@ def _build_fov_cone(
     return cone
 
 
+def _compute_object_position(
+    obj: Any,
+    obj_index: int,
+    total_objs: int,
+    scene_graph: Any,
+    room_id: str,
+) -> tuple[float, float]:
+    """Compute world position for an object marker.
+
+    Strategy (in priority order):
+    1. Project from the viewpoint that first saw this object: place
+       at distance 1.5-2.5m along the viewpoint's heading direction,
+       with objects fanned out within the FOV.
+    2. Fall back to room center if no viewpoint data is available.
+
+    The result is clamped inside the room boundary so markers never
+    appear outside the walls.
+    """
+    # Try to get the viewpoint that observed this object
+    vp = None
+    if obj.viewpoint_ids and scene_graph is not None:
+        for vp_id in obj.viewpoint_ids:
+            vps = scene_graph._viewpoints.get(vp_id)
+            if vps is not None:
+                vp = vps
+                break
+
+    bounds = _ROOM_BOUNDS.get(room_id)
+    margin = 0.5
+
+    if vp is not None and (vp.x != 0.0 or vp.y != 0.0):
+        # Project along the viewpoint's heading direction.
+        # Fan objects within the FOV cone so they don't overlap.
+        half_fov = math.radians(_VIEWPOINT_FOV_DEG / 2)
+        if total_objs > 1:
+            # Spread across FOV: from -half_fov to +half_fov
+            angle_offset = -half_fov + (2 * half_fov) * obj_index / (total_objs - 1)
+        else:
+            angle_offset = 0.0
+        direction = vp.heading + angle_offset
+        dist = 1.8 + 0.3 * (obj_index % 3)  # stagger depth slightly
+
+        ox = vp.x + dist * math.cos(direction)
+        oy = vp.y + dist * math.sin(direction)
+    else:
+        # No viewpoint — use room center with circular arrangement
+        cx, cy = _ROOM_CENTERS.get(room_id, (0.0, 0.0))
+        angle = obj_index * 2 * math.pi / max(total_objs, 1)
+        ox = cx + 1.2 * math.cos(angle)
+        oy = cy + 1.2 * math.sin(angle)
+
+    # Clamp inside room bounds
+    if bounds:
+        x0, y0, x1, y1 = bounds
+        ox = max(x0 + margin, min(x1 - margin, ox))
+        oy = max(y0 + margin, min(y1 - margin, oy))
+
+    return ox, oy
+
+
 def _build_object_markers(
     header: Any,
     scene_graph: Any,
@@ -367,31 +427,11 @@ def _build_object_markers(
         if not objs:
             continue
 
-        # Place objects INSIDE the room bounds (not at center point).
-        # VLM can't give world coords, so we distribute objects in a grid
-        # pattern within the room boundary.
-        bounds = _ROOM_BOUNDS.get(room.room_id)
-        if bounds:
-            x0, y0, x1, y1 = bounds
-        else:
-            cx, cy = _ROOM_CENTERS.get(room.room_id, (room.center_x, room.center_y))
-            x0, y0, x1, y1 = cx - 2, cy - 2, cx + 2, cy + 2
-
-        # Shrink bounds by margin so objects don't sit on walls
-        margin = 0.6
-        ix0, iy0 = x0 + margin, y0 + margin
-        ix1, iy1 = x1 - margin, y1 - margin
-        w, h = max(ix1 - ix0, 0.5), max(iy1 - iy0, 0.5)
-
         n = len(objs)
-        # Grid layout: compute rows/cols to fill the room
-        cols = max(1, int(math.ceil(math.sqrt(n * w / h))))
-        rows = max(1, int(math.ceil(n / cols)))
-
         for i, obj in enumerate(objs):
-            row, col = divmod(i, cols)
-            ox = ix0 + (col + 0.5) * w / cols
-            oy = iy0 + (row + 0.5) * h / rows
+            ox, oy = _compute_object_position(
+                obj, i, n, scene_graph, room.room_id,
+            )
 
             cat_lower = obj.category.lower()
             r, g, b = _OBJECT_COLORS.get(cat_lower, _OBJECT_COLOR_DEFAULT)
