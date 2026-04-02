@@ -364,7 +364,9 @@ def _build_object_markers(
 
     for room in scene_graph.get_all_rooms():
         objs = scene_graph.find_objects_in_room(room.room_id)
-        cx, cy = room.center_x, room.center_y
+        # Use map-defined room center, NOT the dynamic SceneGraph center
+        # (which is set to robot position at visit time and may be wrong)
+        cx, cy = _ROOM_CENTERS.get(room.room_id, (room.center_x, room.center_y))
         n = max(len(objs), 1)
 
         for i, obj in enumerate(objs):
