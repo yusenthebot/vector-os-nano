@@ -525,6 +525,7 @@ class SceneGraph:
                         self.merge_object(
                             category=obj_name, room_id=room,
                             viewpoint_id=nearest_vp,
+                            x=x, y=y,
                         )
             return None
 
