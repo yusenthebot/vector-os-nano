@@ -352,25 +352,33 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                         "all_rooms": sorted(_explore_visited),
                     })
 
-                    # Auto-look: VLM scene capture at each new room
+                    # Auto-look: VLM scene capture in a SEPARATE thread.
+                    # VLM calls can take 45-90s (timeout/retry). Running them
+                    # here would block wander velocity → robot stops → TARE
+                    # starves. Fire-and-forget thread keeps exploration moving.
                     if _auto_look is not None:
-                        try:
-                            obs = _auto_look(room)
-                            if obs:
-                                _emit("room_observed", {
-                                    "room": room,
-                                    "summary": obs.get("summary", ""),
-                                    "objects": obs.get("objects", []),
-                                })
-                                logger.info(
-                                    "[EXPLORE] Auto-look %s: %s",
-                                    room, obs.get("summary", "")[:80],
+                        def _run_auto_look(r: str = room) -> None:
+                            try:
+                                obs = _auto_look(r)
+                                if obs:
+                                    _emit("room_observed", {
+                                        "room": r,
+                                        "summary": obs.get("summary", ""),
+                                        "objects": obs.get("objects", []),
+                                    })
+                                    logger.info(
+                                        "[EXPLORE] Auto-look %s: %s",
+                                        r, obs.get("summary", "")[:80],
+                                    )
+                            except Exception as exc:
+                                logger.warning(
+                                    "[EXPLORE] Auto-look failed for %s: %s",
+                                    r, exc,
                                 )
-                        except Exception as exc:
-                            logger.warning(
-                                "[EXPLORE] Auto-look failed for %s: %s",
-                                room, exc,
-                            )
+
+                        threading.Thread(
+                            target=_run_auto_look, daemon=True,
+                        ).start()
 
             except Exception:
                 pass
