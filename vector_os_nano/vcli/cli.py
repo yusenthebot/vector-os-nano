@@ -409,6 +409,14 @@ def _init_agent(args: argparse.Namespace) -> Any:
             except Exception:
                 agent._vlm = None
 
+        # Object detector (GroundingDINO — lazy loads model on first call)
+        try:
+            from vector_os_nano.perception.object_detector import detect_and_project, RobotPose  # noqa: F401
+            agent._detector = detect_and_project  # function reference, not instance
+            console.print(f"[dim]  Detector: GroundingDINO (lazy — loads on first call)[/dim]")
+        except ImportError:
+            agent._detector = None
+
         # Scene graph (SysNav-style) with persistence
         import os as _os
         from vector_os_nano.core.scene_graph import SceneGraph

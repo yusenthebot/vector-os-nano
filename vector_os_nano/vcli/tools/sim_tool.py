@@ -174,6 +174,13 @@ class SimStartTool:
             except Exception:
                 agent._vlm = None
 
+        # Object detector (GroundingDINO — lazy loads model on first call)
+        try:
+            from vector_os_nano.perception.object_detector import detect_and_project, RobotPose  # noqa: F401
+            agent._detector = detect_and_project  # function reference, not instance
+        except ImportError:
+            agent._detector = None
+
         # Scene graph — persistent, also attach to proxy for RViz marker publishing
         import os as _os
         from vector_os_nano.core.scene_graph import SceneGraph
