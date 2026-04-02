@@ -975,6 +975,15 @@ class Agent:
             except Exception as exc:
                 logger.debug("Calibration not available: %s", exc)
 
+        # Build services dict for skills that need injected dependencies
+        services: dict = {}
+        if hasattr(self, "_vlm") and self._vlm is not None:
+            services["vlm"] = self._vlm
+        if hasattr(self, "_spatial_memory") and self._spatial_memory is not None:
+            services["spatial_memory"] = self._spatial_memory
+        if hasattr(self, "_skill_registry"):
+            services["skill_registry"] = self._skill_registry
+
         return SkillContext(
             arms={"default": self._arm} if self._arm else {},
             grippers={"default": self._gripper} if self._gripper else {},
@@ -982,6 +991,7 @@ class Agent:
             perception_sources=(
                 {"default": self._perception} if self._perception else {}
             ),
+            services=services,
             world_model=self._world_model,
             calibration=self._calibration,
             config=self._config,

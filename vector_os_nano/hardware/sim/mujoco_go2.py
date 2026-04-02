@@ -754,6 +754,47 @@ class MuJoCoGo2:
             self._update_lidar()
         return self._last_pointcloud
 
+    def get_camera_frame(
+        self, width: int = 320, height: int = 240,
+    ) -> "np.ndarray":
+        """Render first-person RGB frame from Go2 head camera.
+
+        Returns an (H, W, 3) uint8 numpy array in RGB order.
+        Lazily creates a MuJoCo Renderer on first call.
+
+        The camera is positioned at the sensor mount (0.2m forward, 0.1m up)
+        looking 1m ahead with a slight downward tilt — matching the bridge's
+        _publish_camera() rendering.
+        """
+        self._require_connection()
+        mj = _get_mujoco()
+
+        if not hasattr(self, "_cam_renderer"):
+            self._cam_renderer = mj.Renderer(self._mj.model, height, width)
+            self._cam_obj = mj.MjvCamera()
+            self._cam_obj.type = mj.mjtCamera.mjCAMERA_FREE
+
+        heading = self.get_heading()
+        cos_h = math.cos(heading)
+        sin_h = math.sin(heading)
+        odom = self.get_odometry()
+
+        cam_x = odom.x + cos_h * 0.3  # sensor_x(0.2) + forward(0.1)
+        cam_y = odom.y + sin_h * 0.3
+        cam_z = odom.z + 0.15          # raised to see furniture, not just floor
+
+        self._cam_obj.lookat[:] = [
+            cam_x + cos_h * 2.0,        # look further ahead (2m vs 1m)
+            cam_y + sin_h * 2.0,
+            cam_z + 0.1,                # look slightly UP to see room features
+        ]
+        self._cam_obj.distance = 2.0    # wider field of view
+        self._cam_obj.azimuth = math.degrees(heading) + 180
+        self._cam_obj.elevation = -5    # less downward tilt
+
+        self._cam_renderer.update_scene(self._mj.data, camera=self._cam_obj)
+        return self._cam_renderer.render().copy()
+
     # ------------------------------------------------------------------
     # Sensor update helpers
     # ------------------------------------------------------------------

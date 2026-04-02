@@ -850,6 +850,23 @@ def main() -> None:
         for skill in get_go2_skills():
             agent._skill_registry.register(skill)
 
+        # Initialize VLM perception (GPT-4o via OpenRouter) for Go2
+        if api_key:
+            try:
+                from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
+                agent._vlm = Go2VLMPerception(config={"api_key": api_key})
+                print("VLM       : GPT-4o via OpenRouter (ready)")
+            except Exception as exc:
+                print(f"VLM       : not available ({exc})")
+                agent._vlm = None
+        else:
+            agent._vlm = None
+
+        # Initialize spatial memory for Go2
+        from vector_os_nano.core.spatial_memory import SpatialMemory
+        agent._spatial_memory = SpatialMemory()
+        print("Memory    : spatial memory initialized")
+
     # Status summary
     print()
     if go2_mode:

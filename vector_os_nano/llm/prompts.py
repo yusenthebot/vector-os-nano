@@ -294,6 +294,8 @@ def build_tool_definitions(skill_schemas: list[dict[str, Any]]) -> list[dict[str
                 clean["enum"] = pdef["enum"]
             if "default" in pdef:
                 clean["default"] = pdef["default"]
+            if "items" in pdef:
+                clean["items"] = pdef["items"]
             properties[pname] = clean
 
             # Determine required

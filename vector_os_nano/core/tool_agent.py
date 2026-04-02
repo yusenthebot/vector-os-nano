@@ -157,10 +157,9 @@ class ToolAgent:
 
             # Spatial memory summary
             memory_info = "No spatial memory yet."
-            ctx = agent._build_context()
-            spatial_mem = ctx.services.get("spatial_memory")
+            spatial_mem = getattr(agent, "_spatial_memory", None)
             if spatial_mem is not None:
-                memory_info = spatial_mem.summary_for_llm()
+                memory_info = spatial_mem.get_room_summary() or "No rooms visited yet."
 
             return _SYSTEM_PROMPT_GO2.format(
                 state_info="\n".join(parts),
