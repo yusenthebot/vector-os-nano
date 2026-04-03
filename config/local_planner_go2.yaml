@@ -34,11 +34,12 @@ localPlanner:
     # Obstacle height threshold — Go2 can step over ~3cm obstacles
     obstacleHeightThre: 0.08
 
-    # Vehicle dimensions — actual Go2 body with legs extended
-    # MJCF: body box 0.376x0.094m, legs add ~0.1m each side
-    # Total footprint: ~0.6m long x 0.3m wide
-    vehicleLength: 0.6
-    vehicleWidth: 0.35     # was 0.5 — too wide, blocks narrow doorways (0.8m wide)
+    # Vehicle dimensions from MJCF collision geoms:
+    # front: 0.34m, back: 0.30m → total 0.64m
+    # left: 0.25m, right: 0.25m → total 0.50m
+    # Add 0.1m safety margin on each side for clearance
+    vehicleLength: 0.75    # 0.64 + 0.1 margin
+    vehicleWidth: 0.60     # 0.50 + 0.1 margin — prevents head/legs touching walls
 
     # Speed limits
     maxSpeed: 0.8
