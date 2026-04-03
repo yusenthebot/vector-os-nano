@@ -449,9 +449,10 @@ class ExploreSkill:
         # Wire auto-look if VLM + camera are available
         vlm = context.services.get("vlm")
         spatial_memory = context.services.get("spatial_memory")
+        detector = context.services.get("detector")
         if vlm is not None:
             def _do_auto_look(room: str) -> dict | None:
-                """Capture RGB, run VLM, record to scene graph."""
+                """Capture RGB, run VLM + optional detector, record to scene graph."""
                 try:
                     frame = base.get_camera_frame()
                     scene = vlm.describe_scene(frame)
@@ -462,13 +463,55 @@ class ExploreSkill:
                     pos = base.get_position()
                     heading = base.get_heading()
 
-                    # Viewpoint = robot position. Objects have no individual
-                    # coords — viz places them in a cluster 2m along heading.
+                    # Attempt GroundingDINO detection for per-object world coords.
+                    # Falls back to VLM object names if detector is absent or fails.
+                    detected_objects: list[tuple[str, float, float]] | None = None
+                    result_objects: list[dict] = [
+                        {"name": o.name, "confidence": o.confidence}
+                        for o in scene.objects
+                    ]
+
+                    if detector is not None and hasattr(base, "get_depth_frame"):
+                        try:
+                            from vector_os_nano.perception.object_detector import RobotPose
+                            depth = base.get_depth_frame()
+                            dets = detector(
+                                frame, depth,
+                                RobotPose(
+                                    x=float(pos[0]),
+                                    y=float(pos[1]),
+                                    z=float(pos[2]),
+                                    heading=float(heading),
+                                ),
+                            )
+                            if dets:
+                                detected_objects = [
+                                    (d.label, d.world_x, d.world_y)
+                                    for d in dets
+                                    if d.world_x != 0.0 or d.world_y != 0.0
+                                ]
+                                result_objects = [
+                                    {
+                                        "name": d.label,
+                                        "confidence": d.confidence,
+                                        "world_x": d.world_x,
+                                        "world_y": d.world_y,
+                                        "depth_m": d.depth_m,
+                                    }
+                                    for d in dets
+                                ]
+                        except Exception as det_exc:
+                            logger.warning(
+                                "[EXPLORE] auto-look detector error: %s", det_exc,
+                            )
+                            detected_objects = None
+
                     if spatial_memory is not None:
                         if hasattr(spatial_memory, "observe_with_viewpoint"):
                             spatial_memory.observe_with_viewpoint(
                                 detected_room, float(pos[0]), float(pos[1]),
                                 float(heading), obj_names, scene.summary,
+                                detected_objects=detected_objects or None,
                             )
                         else:
                             spatial_memory.visit(detected_room, float(pos[0]), float(pos[1]))
@@ -477,8 +520,7 @@ class ExploreSkill:
                     return {
                         "room": detected_room,
                         "summary": scene.summary,
-                        "objects": [{"name": o.name, "confidence": o.confidence}
-                                    for o in scene.objects],
+                        "objects": result_objects,
                         "room_confidence": room_id.confidence,
                     }
                 except Exception as exc:
