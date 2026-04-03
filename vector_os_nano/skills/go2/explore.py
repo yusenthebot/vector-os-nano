@@ -69,7 +69,6 @@ def _start_tare() -> bool:
             "~/Desktop/vector_navigation_stack/install/tare_planner/share/tare_planner"
         )
         if os.path.isfile(go2_cfg) and os.path.isdir(tare_install):
-            import shutil
             shutil.copy2(go2_cfg, os.path.join(tare_install, "indoor_small.yaml"))
             logger.info("[EXPLORE] Installed Go2-tuned TARE config")
         cmd += "ros2 launch tare_planner explore.launch scenario:=indoor_small"
