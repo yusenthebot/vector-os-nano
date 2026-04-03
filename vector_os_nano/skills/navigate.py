@@ -101,7 +101,7 @@ _ROOM_ALIASES: dict[str, str] = {
     "洗衣房": "hallway",
 }
 
-_WALK_SPEED: float = 0.4     # m/s
+_WALK_SPEED: float = 0.6     # m/s
 _TURN_SPEED: float = 0.8     # rad/s
 _ARRIVAL_RADIUS: float = 0.5  # meters -- close enough to target
 

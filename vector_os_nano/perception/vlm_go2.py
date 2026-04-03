@@ -40,7 +40,7 @@ _COST_PER_INPUT_TOKEN: float = 2.50 / 1_000_000   # USD per input token
 _COST_PER_OUTPUT_TOKEN: float = 10.00 / 1_000_000  # USD per output token
 
 _OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
-_MODEL: str = "openai/gpt-4o-mini"
+_MODEL: str = "google/gemma-4-31b-it"
 _TIMEOUT_S: float = 15.0
 _MAX_RETRIES: int = 2
 _JPEG_QUALITY: int = 50

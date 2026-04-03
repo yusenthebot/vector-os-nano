@@ -266,18 +266,36 @@ def detect_and_project(
         valid = patch[(patch > 0.1) & (patch < 10.0)]
         d_m = float(np.median(valid)) if len(valid) > 0 else 0.0
 
+        # Only record objects within reliable depth range (< 4m).
+        # Beyond 4m: depth noise is high, bbox is small → inaccurate position.
+        if d_m <= 0.0 or d_m > 4.0:
+            continue
+
         # Project to world using camera pose (exact) or robot heading (fallback)
         wx, wy, wz = 0.0, 0.0, 0.0
-        if d_m > 0.0:
-            from vector_os_nano.perception.depth_projection import pixel_to_camera, camera_to_world
-            x_cam, y_cam, z_cam = pixel_to_camera(cu, cv, d_m, intrinsics)
-            world_pt = camera_to_world(
-                x_cam, y_cam, z_cam,
-                pose.x, pose.y, pose.z, pose.heading,
-                cam_xpos=pose.cam_xpos, cam_xmat=pose.cam_xmat,
-            )
-            if world_pt is not None:
-                wx, wy, wz = world_pt
+        from vector_os_nano.perception.depth_projection import pixel_to_camera, camera_to_world
+        x_cam, y_cam, z_cam = pixel_to_camera(cu, cv, d_m, intrinsics)
+        world_pt = camera_to_world(
+            x_cam, y_cam, z_cam,
+            pose.x, pose.y, pose.z, pose.heading,
+            cam_xpos=pose.cam_xpos, cam_xmat=pose.cam_xmat,
+        )
+        if world_pt is not None:
+            wx, wy, wz = world_pt
+
+        if wx == 0.0 and wy == 0.0:
+            continue
+
+        # Deduplicate: skip if same category already detected within 1.5m
+        duplicate = False
+        for existing in results:
+            if existing.label == det["label"]:
+                dist = math.sqrt((wx - existing.world_x)**2 + (wy - existing.world_y)**2)
+                if dist < 1.5:
+                    duplicate = True
+                    break
+        if duplicate:
+            continue
 
         results.append(Detection(
             label=det["label"],

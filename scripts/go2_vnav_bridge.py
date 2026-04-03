@@ -499,7 +499,7 @@ class Go2VNavBridge(Node):
         # Forward: ALWAYS positive. cos(err) gives natural speed curve.
         # At 0 error: full speed. At 90 deg: minimum speed. At 180: minimum.
         alignment = max(0.2, math.cos(min(abs(err), 1.4)))
-        vx_target = float(np.clip(0.5 * alignment, 0.1, 0.5))
+        vx_target = float(np.clip(0.8 * alignment, 0.15, 0.8))
 
         # If very close to target, slow down but don't stop
         if dist < 0.5:
