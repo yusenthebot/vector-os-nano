@@ -192,6 +192,44 @@ class Go2ROS2Proxy:
         """
         return self.get_camera_frame(width, height), self.get_depth_frame(width, height)
 
+    def get_camera_pose(self) -> tuple:
+        """Compute D435 camera world pose from robot odometry + mount config.
+
+        Returns (cam_xpos, cam_xmat) matching MuJoCoGo2.get_camera_pose().
+        Camera mounted at: 0.3m forward, 0.05m up, -5deg pitch on base_link.
+        """
+        import numpy as np
+
+        pos = self._position
+        heading = self._heading
+
+        # Mount offset in body frame
+        mount_fwd, mount_up = 0.3, 0.05
+        pitch = math.radians(-5.0)  # -5 deg downward tilt
+
+        cos_h = math.cos(heading)
+        sin_h = math.sin(heading)
+        cos_p = math.cos(pitch)
+        sin_p = math.sin(pitch)
+
+        # Camera world position
+        cam_x = pos[0] + cos_h * mount_fwd
+        cam_y = pos[1] + sin_h * mount_fwd
+        cam_z = pos[2] + mount_up
+        cam_xpos = np.array([cam_x, cam_y, cam_z])
+
+        # Camera rotation: MuJoCo convention columns = [right, up, -forward]
+        # Body frame: forward=(cos_h, sin_h, 0), right=(-sin_h, cos_h, 0)
+        # With pitch: forward rotated by pitch around right axis
+        fwd = np.array([cos_h * cos_p, sin_h * cos_p, sin_p])
+        right = np.array([-sin_h, cos_h, 0.0])
+        up = np.cross(right, fwd)  # ensure orthogonal
+
+        # MuJoCo xmat: columns = [right, up, -forward]
+        cam_xmat = np.column_stack([right, up, -fwd]).flatten()
+
+        return (cam_xpos, cam_xmat)
+
     def get_odometry(self) -> Any:
         """Return latest Odometry data as a types.Odometry dataclass."""
         from vector_os_nano.core.types import Odometry
