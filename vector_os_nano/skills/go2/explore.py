@@ -152,6 +152,7 @@ _explore_running: bool = False
 _tare_proc: subprocess.Popen | None = None
 _on_event: Any = None  # callback(event_type: str, data: dict) — set by CLI
 _auto_look: Any = None  # callback(room: str) -> dict | None — VLM look on new room
+_spatial_memory: Any = None  # SceneGraph — set by ExploreSkill.execute()
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +499,17 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                     break
 
                 room = _detect_current_room(float(pos[0]), float(pos[1]))
+
+                # Record EVERY position sample in SceneGraph.
+                # visit() uses running average → center converges as
+                # robot moves through the room. Critical for sim-to-real:
+                # navigation targets come from these learned positions.
+                if _spatial_memory is not None:
+                    try:
+                        _spatial_memory.visit(room, float(pos[0]), float(pos[1]))
+                    except Exception:
+                        pass
+
                 if room not in _explore_visited:
                     _explore_visited.add(room)
                     _emit("room_entered", {
@@ -508,9 +520,6 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                     })
 
                     # Auto-look: VLM scene capture in a SEPARATE thread.
-                    # VLM calls can take 45-90s (timeout/retry). Running them
-                    # here would block wander velocity → robot stops → TARE
-                    # starves. Fire-and-forget thread keeps exploration moving.
                     if _auto_look is not None:
                         def _run_auto_look(r: str = room) -> None:
                             try:
@@ -605,10 +614,14 @@ class ExploreSkill:
 
         base = context.base
 
+        # Wire spatial memory for position recording during exploration
+        global _spatial_memory
+        _spatial_memory = context.services.get("spatial_memory")
+
         # Wire auto-look if VLM + camera are available
         # Room identification only — no object detection/labeling
         vlm = context.services.get("vlm")
-        spatial_memory = context.services.get("spatial_memory")
+        spatial_memory = _spatial_memory
         if vlm is not None:
             def _do_auto_look(room: str) -> dict | None:
                 """Capture frame, identify room, record to spatial memory."""

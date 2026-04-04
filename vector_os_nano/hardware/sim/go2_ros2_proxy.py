@@ -59,9 +59,11 @@ class Go2ROS2Proxy:
             from sensor_msgs.msg import Image
 
             self._cmd_pub = self._node.create_publisher(Twist, "/cmd_vel_nav", 10)
-            # Publish to /way_point directly (same topic as TARE output).
-            # localPlanner subscribes to /way_point for its goal.
-            # During navigate, we publish at 2Hz to override TARE's 1Hz.
+            # /goal_point → FAR planner (global route planning)
+            self._goal_pub = self._node.create_publisher(
+                PointStamped, "/goal_point", 10
+            )
+            # /way_point → localPlanner (direct goal, overrides TARE at 2Hz)
             self._waypoint_pub = self._node.create_publisher(
                 PointStamped, "/way_point", 10
             )
@@ -331,8 +333,13 @@ class Go2ROS2Proxy:
         deadline = time.time() + timeout
         _ARRIVAL_DIST: float = 0.8
 
+        # Send goal to FAR planner once for global route planning
+        self._publish_goal_point(x, y)
+
         while time.time() < deadline:
-            # Publish at 2Hz to override TARE's 1Hz /way_point
+            # Publish at 2Hz to /way_point (overrides TARE's 1Hz)
+            # FAR also publishes to /way_point with routed intermediate
+            # waypoints — localPlanner follows whichever is latest.
             self._publish_waypoint(x, y)
             time.sleep(0.5)
 
@@ -366,6 +373,23 @@ class Go2ROS2Proxy:
             self._waypoint_pub.publish(msg)
         except Exception as exc:
             logger.warning("[NAV] Failed to publish waypoint: %s", exc)
+
+    def _publish_goal_point(self, x: float, y: float) -> None:
+        """Publish PointStamped to /goal_point (FAR planner input for routing)."""
+        if self._node is None:
+            return
+        try:
+            from geometry_msgs.msg import PointStamped
+
+            msg = PointStamped()
+            msg.header.stamp = self._node.get_clock().now().to_msg()
+            msg.header.frame_id = "map"
+            msg.point.x = float(x)
+            msg.point.y = float(y)
+            msg.point.z = 0.0
+            self._goal_pub.publish(msg)
+        except Exception as exc:
+            logger.warning("[NAV] Failed to publish goal point: %s", exc)
 
     def cancel_navigation(self) -> None:
         """Cancel active navigation: publish zero velocity and clear goal.

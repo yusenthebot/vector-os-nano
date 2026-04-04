@@ -312,22 +312,24 @@ class NavigateSkill:
                 diagnosis_code="unknown_room",
             )
 
-        target = _ROOM_CENTERS[room_key]
-
-        # Prefer explored room position from SceneGraph over hardcoded map center.
-        # SceneGraph.visit() stores the actual robot position when each room was
-        # visited during exploration — more accurate than the static room map.
+        # Prefer learned room positions from SceneGraph (sim-to-real ready).
+        # SceneGraph.visit() computes running average of all positions recorded
+        # in a room — converges to room center as robot explores.
+        # Fall back to hardcoded _ROOM_CENTERS only for this sim environment.
+        target = _ROOM_CENTERS.get(room_key)
         memory_for_target = context.services.get("spatial_memory")
         if memory_for_target is not None:
             explored_pos = _get_room_center_from_memory(memory_for_target, room_key)
             if explored_pos is not None:
-                logger.info(
-                    "[NAV] Using SceneGraph position for %s: (%.1f, %.1f) "
-                    "[static: (%.1f, %.1f)]",
-                    room_key, explored_pos[0], explored_pos[1],
-                    target[0], target[1],
-                )
                 target = explored_pos
+                logger.info("[NAV] Using learned position for %s: (%.1f, %.1f)",
+                            room_key, target[0], target[1])
+        if target is None:
+            return SkillResult(
+                success=False,
+                error_message=f"Room '{room_key}' has no known position. Explore first.",
+                diagnosis_code="room_not_explored",
+            )
 
         # Cancel background exploration if running (navigate takes priority)
         try:

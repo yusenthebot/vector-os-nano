@@ -415,16 +415,25 @@ class SceneGraph:
     # ------------------------------------------------------------------
 
     def visit(self, room: str, x: float, y: float) -> None:
-        """Record visiting a room. Creates RoomNode if needed."""
+        """Record visiting a room. Creates RoomNode if needed.
+
+        Room center is computed as running average of all visit positions.
+        This gives a more accurate center than a single detection point
+        (which is often at the doorway).
+        """
         with self._lock:
             existing = self._rooms.get(room)
             if existing:
+                n = existing.visit_count
+                # Running average: new_center = (old_center * n + new_pos) / (n + 1)
+                new_cx = (existing.center_x * n + x) / (n + 1)
+                new_cy = (existing.center_y * n + y) / (n + 1)
                 self._rooms[room] = RoomNode(
                     room_id=room,
-                    center_x=existing.center_x or x,
-                    center_y=existing.center_y or y,
+                    center_x=new_cx,
+                    center_y=new_cy,
                     area=existing.area,
-                    visit_count=existing.visit_count + 1,
+                    visit_count=n + 1,
                     last_visited=time.time(),
                     representative_description=existing.representative_description,
                     connected_rooms=existing.connected_rooms,
