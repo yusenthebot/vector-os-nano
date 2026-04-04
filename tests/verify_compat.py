@@ -40,7 +40,6 @@ CRITICAL_IMPORTS = [
     ("vector_os_nano.core.skill", "Skill framework"),
     ("vector_os_nano.perception.vlm_go2", "VLM perception"),
     ("vector_os_nano.perception.depth_projection", "Depth projection"),
-    ("vector_os_nano.perception.object_detector", "Object detector"),
 ]
 
 def main():

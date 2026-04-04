@@ -36,20 +36,10 @@ dependencies = [
 
 [project.optional-dependencies]
 # Perception: Camera + VLM support
-# CRITICAL: Use PyTorch nightly (cu128) for RTX 5080 Blackwell support
-# transformers==4.57.6 is pinned because:
-#   - 4.44 lacks EdgeTAM model support
-#   - 5.x+ has tied_weights bug with Moondream (breaks VLM)
-# timm required by EdgeTAM (open-vocabulary detection)
 perception = [
     "pyrealsense2>=2.50",
-    "torch>=2.0",
-    "torchvision>=0.15",
-    "transformers==4.57.6",
-    "timm>=1.0.25",
     "open3d>=0.17",
     "opencv-python>=4.8",
-    "safetensors>=0.7.0",
 ]
 
 gpu = [

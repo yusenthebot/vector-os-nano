@@ -49,31 +49,27 @@ def _make_base(room_sequence):
 class TestSeedBehavior:
     """Verify seed is brief and ends with zero velocity."""
 
-    def test_seed_sends_zero_velocity_at_end(self):
-        """After seed phase, set_velocity(0,0,0) must be called."""
+    def test_seed_walk_called_with_bridge(self):
+        """Seed walk uses base.walk() when has_bridge=True."""
         base = _make_base(["hallway"] * 50)
         _explore_cancel.clear()
         _explore_visited.clear()
 
         def cancel_later():
-            time.sleep(12.0)  # seed takes ~10.6s, cancel after it finishes
+            time.sleep(0.1)
             _explore_cancel.set()
 
         t = threading.Thread(target=cancel_later, daemon=True)
         t.start()
 
         with patch("vector_os_nano.skills.go2.explore._start_tare", return_value=True):
-            _exploration_loop(base, has_bridge=True)
+            with patch("time.sleep", return_value=None):
+                _exploration_loop(base, has_bridge=True)
 
-        t.join(timeout=15)
+        t.join(timeout=3)
 
-        # Check that set_velocity was called with (0,0,0) at some point
-        from unittest.mock import call
-        zero_calls = [
-            c for c in base.set_velocity.call_args_list
-            if c == call(0.0, 0.0, 0.0)
-        ]
-        assert len(zero_calls) >= 1, f"Must send zero velocity after seed. Calls: {base.set_velocity.call_args_list}"
+        # Seed walk should have called base.walk()
+        assert base.walk.call_count >= 1, f"Seed walk should call base.walk(). Calls: {base.walk.call_args_list}"
 
     def test_no_velocity_in_main_loop(self):
         """After seed, no more set_velocity calls during monitoring loop."""
@@ -124,10 +120,9 @@ class TestAutoLookOnExplore:
         assert len(rooms_seen) >= 2, f"Expected >=2 rooms, got {rooms_seen}"
         set_auto_look(None)
 
-    def test_explore_skill_wires_detector(self):
-        """ExploreSkill.execute should wire detector from context."""
+    def test_explore_skill_works_without_detector(self):
+        """ExploreSkill.execute works with VLM only, no detector."""
         base = _make_base(["hallway"])
-        mock_detector = MagicMock(return_value=[])
         mock_vlm = MagicMock()
         mock_vlm.describe_scene.return_value = MagicMock(
             summary="test", objects=[], room_type="hallway"
@@ -140,7 +135,6 @@ class TestAutoLookOnExplore:
             bases={"default": base},
             services={
                 "vlm": mock_vlm,
-                "detector": mock_detector,
                 "spatial_memory": MagicMock(),
             },
         )

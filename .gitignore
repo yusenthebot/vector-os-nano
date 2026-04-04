@@ -36,3 +36,4 @@ mjmodel.mjb
 # Vector CLI OAuth credentials
 .vector/
 oauth_credentials.json
+.gitnexus

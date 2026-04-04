@@ -361,11 +361,10 @@ def _compute_object_position(
     """Compute world position for an object marker.
 
     Priority order:
-    1. If the object has world coordinates from depth projection (obj.x, obj.y
-       are non-zero), use them directly. This is the most accurate path --
-       GroundingDINO bbox center + depth + camera_to_world.
+    1. If the object has world coordinates (obj.x, obj.y are non-zero),
+       use them directly.
     2. If a viewpoint is available, place objects in a cluster 2m along the
-       viewpoint heading (heuristic for VLM-only detections).
+       viewpoint heading (heuristic for VLM detections).
     3. Fall back to room center.
 
     All positions are clamped inside room bounds.
@@ -656,9 +655,9 @@ def build_scene_graph_markers(
     vp_markers, mid = _build_viewpoint_markers(header, scene_graph, mid)
     markers.extend(vp_markers)
 
-    # Objects + labels
-    obj_markers, mid = _build_object_markers(header, scene_graph, mid)
-    markers.extend(obj_markers)
+    # Objects + labels — disabled (object detection removed)
+    # obj_markers, mid = _build_object_markers(header, scene_graph, mid)
+    # markers.extend(obj_markers)
 
     # Robot arrow + body
     robot_markers, mid = _build_robot_markers(

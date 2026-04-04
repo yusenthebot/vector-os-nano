@@ -48,12 +48,16 @@ cleanup() {
                 odom_transformer vehicleTransPublisher sensorTransPublisher; do
         pkill -9 -f "$proc" 2>/dev/null || true
     done
-    # Clean stale SHM to prevent port exhaustion on next run
+    # Clean stale SHM and nav flag
     rm -f /dev/shm/fastrtps_* 2>/dev/null
+    rm -f /tmp/vector_nav_active 2>/dev/null
     wait 2>/dev/null
     echo "Done."
 }
 trap cleanup EXIT INT TERM
+
+# Clean stale nav flag from previous session
+rm -f /tmp/vector_nav_active 2>/dev/null
 
 RVIZ_CFG="$REPO_DIR/config/vnav.rviz"
 
@@ -89,10 +93,23 @@ PIDS+=($!)
 sleep 1
 
 # 4. Terrain analysis (local + extended)
+# Use ros2 run (same as working launch_explore.sh — the launch.py version
+# loads different params that may break sensorScanGeneration sync)
 echo "[4/6] Starting terrain analysis..."
-ros2 run terrain_analysis terrainAnalysis &
+ros2 run terrain_analysis terrainAnalysis --ros-args \
+  -p clearDyObs:=true \
+  -p minDyObsDis:=0.14 \
+  -p minOutOfFovPointNum:=20 \
+  -p obstacleHeightThre:=0.15 \
+  -p maxRelZ:=0.3 \
+  -p limitGroundLift:=true \
+  -p maxGroundLift:=0.05 \
+  -p minDyObsVFOV:=-55.0 \
+  -p maxDyObsVFOV:=10.0 &
 PIDS+=($!)
-ros2 run terrain_analysis_ext terrainAnalysisExt &
+ros2 run terrain_analysis_ext terrainAnalysisExt --ros-args \
+  -p obstacleHeightThre:=0.15 \
+  -p maxRelZ:=0.3 &
 PIDS+=($!)
 sleep 3
 
@@ -109,9 +126,12 @@ PIDS+=($!)
 rviz2 -d "$RVIZ_CFG" 2>/dev/null &
 PIDS+=($!)
 
-# Brief initial movement to seed FAR planner's visibility graph
+# Seed FAR planner with initial scan data.
+# Path follower is DISABLED (no /tmp/vector_nav_active flag yet),
+# so these velocity commands move the robot directly via _cmd_vel_cb
+# without triggering autonomous path following.
 echo ""
-echo "Seeding FAR planner with initial scan data..."
+echo "Seeding FAR planner..."
 sleep 2
 for i in $(seq 1 4); do
     ros2 topic pub --once /cmd_vel_nav geometry_msgs/msg/Twist "{linear: {x: 0.2}}" 2>/dev/null

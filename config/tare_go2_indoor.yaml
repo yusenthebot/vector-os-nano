@@ -23,16 +23,16 @@ tare_planner_node:
     kExtendWayPoint : true
     kUseLineOfSightLookAheadPoint : true
     kNoExplorationReturnHome : true
-    kExtendWayPointDistanceBig : 4.0
-    kExtendWayPointDistanceSmall : 1.5
+    kExtendWayPointDistanceBig : 1.5
+    kExtendWayPointDistanceSmall : 0.8
     kKeyposeCloudDwzFilterLeafSize : 0.05
     kRushHomeDist : 3.0
     kAtHomeDistThreshold : 0.5
     kTerrainCollisionThreshold : 0.3
-    kLookAheadDistance : 6.0
-    kUseMomentum : true
-    kDirectionChangeCounterThr : 10
-    kDirectionNoChangeCounterThr : 8
+    kLookAheadDistance : 4.0
+    kUseMomentum : false 
+    kDirectionChangeCounterThr : 6
+    kDirectionNoChangeCounterThr : 5
     kResetWaypointJoystickAxesID : 2
 
     # PlanningEnv
@@ -81,22 +81,22 @@ tare_planner_node:
     kConnectivityHeightDiffThr : 0.25
     kGreedyViewPointSampleRange : 3
     kLocalPathOptimizationItrMax : 10
-    kViewPointCollisionMargin : 0.18
-    kViewPointCollisionMarginZPlus : 0.15
-    kViewPointCollisionMarginZMinus : 0.15
+    kViewPointCollisionMargin : 0.35
+    kViewPointCollisionMarginZPlus : 0.25
+    kViewPointCollisionMarginZMinus : 0.25
     kCollisionGridZScale : 1.0
     kCollisionGridResolutionX : 0.02
     kCollisionGridResolutionY : 0.02
     kCollisionGridResolutionZ : 0.0
     kCollisionPointThr : 1
     kLineOfSightStopAtNearestObstacle : true 
-    kViewPointHeightFromTerrain : 0.25
-    kViewPointHeightFromTerrainChangeThreshold : 0.3
+    kViewPointHeightFromTerrain : 0.75
+    kViewPointHeightFromTerrainChangeThreshold : 0.6
     kCheckDynamicObstacleCollision : false
     kCollisionFrameCountMax : 3
 
-    kSensorRange : 5.0
-    kNeighborRange : 2.0
+    kSensorRange : 3.0
+    kNeighborRange : 1.5
     kCoverageOcclusionThr : 0.2
     kCoverageDilationRadius : 0.25
 

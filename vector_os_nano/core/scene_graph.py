@@ -521,8 +521,7 @@ class SceneGraph:
                 detected_objects is None or empty).
             description: VLM scene description.
             detected_objects: Optional list of (category, obj_x, obj_y)
-                tuples carrying per-object world coordinates from a
-                downstream detector (e.g. GroundingDINO + depth projection).
+                tuples carrying per-object world coordinates.
                 When non-empty this overrides the plain ``objects`` list.
         """
         # Determine which object source to use.

@@ -117,7 +117,11 @@ class SimStartTool:
         repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__)
         ))))
-        vnav_script = os.path.join(repo, "scripts", "launch_vnav.sh")
+        # Use launch_explore.sh — all nodes (bridge + nav stack + TARE) must be
+        # in ONE process group for reliable DDS communication. The nav flag
+        # (/tmp/vector_nav_active) is NOT created here — dog stays still.
+        # explore.py creates the flag to start movement.
+        vnav_script = os.path.join(repo, "scripts", "launch_explore.sh")
         gui_flag = [] if gui else ["--no-gui"]
 
         log_fh = open("/tmp/vector_vnav.log", "w")
@@ -173,13 +177,6 @@ class SimStartTool:
                 agent._vlm = Go2VLMPerception(config={"api_key": api_key})
             except Exception:
                 agent._vlm = None
-
-        # Object detector (GroundingDINO — lazy loads model on first call)
-        try:
-            from vector_os_nano.perception.object_detector import detect_and_project, RobotPose  # noqa: F401
-            agent._detector = detect_and_project  # function reference, not instance
-        except ImportError:
-            agent._detector = None
 
         # Scene graph — persistent, also attach to proxy for RViz marker publishing
         import os as _os

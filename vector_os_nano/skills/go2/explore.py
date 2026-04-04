@@ -42,35 +42,62 @@ _POSITION_SAMPLE_INTERVAL: float = 2.0
 _nav_stack_proc: subprocess.Popen | None = None
 _bridge_thread: threading.Thread | None = None
 
+def _deploy_tare_config() -> None:
+    """Always copy Go2-tuned TARE config to nav stack install dir.
+
+    Must run BEFORE the "already running" check so that even a pre-existing
+    TARE process picks up the latest config on its next restart.
+    """
+    _repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)
+    ))))
+    go2_cfg = os.path.join(_repo, "config", "tare_go2_indoor.yaml")
+    tare_install = os.path.expanduser(
+        "~/Desktop/vector_navigation_stack/install/tare_planner/share/tare_planner"
+    )
+    if os.path.isfile(go2_cfg) and os.path.isdir(tare_install):
+        shutil.copy2(go2_cfg, os.path.join(tare_install, "indoor_small.yaml"))
+        logger.info("[EXPLORE] Deployed Go2-tuned TARE config")
+
+
 def _start_tare() -> bool:
     """Start TARE autonomous exploration planner as a subprocess."""
     global _tare_proc
-    if _tare_proc is not None and _tare_proc.poll() is None:
-        return True  # already running
 
-    # Check if TARE is already running
+    # Always deploy config first — even if TARE is already running,
+    # so the next restart picks up latest margins.
+    _deploy_tare_config()
+
+    if _tare_proc is not None and _tare_proc.poll() is None:
+        return True  # we launched it, it's running with our config
+
+    # Check if TARE is already running (from launch_explore.sh or previous explore)
+    # Do NOT kill it — a working TARE in the launch process group has proper
+    # DDS connectivity. Killing and restarting in a new subprocess breaks comms.
     if shutil.which("pgrep"):
-        result = subprocess.run(["pgrep", "-f", "tare_planner"], capture_output=True)
+        result = subprocess.run(["pgrep", "-f", "tare_planner_node"], capture_output=True)
         if result.returncode == 0:
-            logger.info("[EXPLORE] TARE already running")
+            logger.info("[EXPLORE] TARE already running — reusing")
             return True
 
     try:
+        # Verify deployed config is correct
+        tare_install = os.path.expanduser(
+            "~/Desktop/vector_navigation_stack/install/tare_planner/share/tare_planner"
+        )
+        deployed = os.path.join(tare_install, "indoor_small.yaml")
+        if os.path.isfile(deployed):
+            with open(deployed) as f:
+                content = f.read()
+            extend = "true" if "kExtendWayPoint : true" in content else "false"
+            logger.info("[EXPLORE] TARE config check: kExtendWayPoint=%s file=%s", extend, deployed)
+
         # TARE needs ROS2 sourced — launch via bash
         cmd = "source /opt/ros/jazzy/setup.bash && "
         nav_stack = os.path.expanduser("~/Desktop/vector_navigation_stack")
         cmd += f"source {nav_stack}/install/setup.bash && "
-        # Copy Go2-tuned TARE config to nav stack install dir before launch
-        _repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)
-        ))))
-        go2_cfg = os.path.join(_repo, "config", "tare_go2_indoor.yaml")
-        tare_install = os.path.expanduser(
-            "~/Desktop/vector_navigation_stack/install/tare_planner/share/tare_planner"
-        )
-        if os.path.isfile(go2_cfg) and os.path.isdir(tare_install):
-            shutil.copy2(go2_cfg, os.path.join(tare_install, "indoor_small.yaml"))
-            logger.info("[EXPLORE] Installed Go2-tuned TARE config")
+        # Log which config TARE actually loads
+        cmd += f"echo 'TARE loading: {tare_install}/indoor_small.yaml' && "
         cmd += "ros2 launch tare_planner explore.launch scenario:=indoor_small"
 
         log_fh = open("/tmp/vector_tare.log", "w")
@@ -137,11 +164,25 @@ def is_exploring() -> bool:
 
 
 def cancel_exploration() -> None:
-    """Request cancellation of the background exploration thread and TARE."""
-    global _explore_running
+    """Request cancellation of the background exploration thread and nav stack."""
+    global _explore_running, _nav_explore_proc
     if _explore_running:
         _explore_cancel.set()
-        _stop_tare()
+        # Stop the entire nav stack process group
+        if _nav_explore_proc is not None and _nav_explore_proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(_nav_explore_proc.pid), signal.SIGTERM)
+                _nav_explore_proc.wait(timeout=5)
+            except Exception:
+                try:
+                    os.killpg(os.getpgid(_nav_explore_proc.pid), signal.SIGKILL)
+                except Exception:
+                    pass
+            _nav_explore_proc = None
+        try:
+            os.remove("/tmp/vector_nav_active")
+        except FileNotFoundError:
+            pass
         _emit("stopped", {"reason": "cancelled", "rooms": sorted(_explore_visited)})
 
 
@@ -276,6 +317,77 @@ def _launch_nav_stack() -> bool:
         return False
 
 
+_nav_explore_proc: subprocess.Popen | None = None
+
+
+def _launch_nav_explore() -> None:
+    """Start the full nav stack + TARE as one process group."""
+    global _nav_explore_proc
+
+    if _nav_explore_proc is not None and _nav_explore_proc.poll() is None:
+        logger.info("[EXPLORE] Nav stack already running")
+        return
+
+    _repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)
+    ))))
+    script = os.path.join(_repo, "scripts", "launch_nav_explore.sh")
+    if not os.path.isfile(script):
+        logger.error("[EXPLORE] launch_nav_explore.sh not found: %s", script)
+        return
+
+    log_fh = open("/tmp/vector_nav_explore.log", "w")
+    _nav_explore_proc = subprocess.Popen(
+        ["bash", script],
+        stdout=log_fh, stderr=subprocess.STDOUT,
+        preexec_fn=os.setsid,
+    )
+
+    import atexit
+
+    def _cleanup_nav():
+        try:
+            os.killpg(os.getpgid(_nav_explore_proc.pid), signal.SIGTERM)
+            _nav_explore_proc.wait(timeout=5)
+        except Exception:
+            try:
+                os.killpg(os.getpgid(_nav_explore_proc.pid), signal.SIGKILL)
+            except Exception:
+                pass
+        log_fh.close()
+
+    atexit.register(_cleanup_nav)
+    logger.info("[EXPLORE] Nav stack + TARE launched (PID=%d)", _nav_explore_proc.pid)
+
+
+def _verify_nav_stack() -> None:
+    """Check that critical nav stack topics are active before starting TARE.
+
+    Logs warnings for missing topics. Does NOT block — exploration proceeds
+    regardless, but the log helps diagnose issues.
+    """
+    try:
+        import rclpy
+        node = rclpy.create_node("_nav_verify_tmp")
+        topics = node.get_topic_names_and_types()
+        topic_names = {name for name, _ in topics}
+
+        required = [
+            "/state_estimation",
+            "/registered_scan",
+            "/terrain_map",
+            "/state_estimation_at_scan",
+            "/path",
+        ]
+        for topic in required:
+            status = "OK" if topic in topic_names else "MISSING"
+            logger.info("[EXPLORE] Topic check: %-30s %s", topic, status)
+
+        node.destroy_node()
+    except Exception as exc:
+        logger.warning("[EXPLORE] Topic verification failed: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # Background exploration loop
 # ---------------------------------------------------------------------------
@@ -294,28 +406,33 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
 
     _emit("started", {"total_rooms": len(_ROOM_CENTERS)})
 
-    # Start TARE planner (in this background thread, not blocking CLI)
+    # Seed walk: give TARE initial scan data by moving the robot forward briefly.
+    # TARE requires 5 scans per keypose at 10 Hz (0.5 s minimum) before it can
+    # generate candidate viewpoints. A stationary robot accumulates no new scans,
+    # so TARE prints "Cannot get candidate viewpoints" for 10-20 rounds until it
+    # happens to drift into a new position. A short forward walk guarantees the
+    # first keypose is created before we hand off to autonomous nav.
     if has_bridge:
-        tare_ok = _start_tare()
-        if not tare_ok:
-            logger.warning("[EXPLORE] TARE failed, exploration may be limited")
-
-        # Seed: match launch_explore.sh — short pushes, then STOP.
-        # Each set_velocity → /cmd_vel_nav → bridge treats as teleop for 0.5s.
-        # We must stop quickly so TARE's paths aren't cleared by teleop mode.
-        logger.info("[EXPLORE] Seeding planners...")
-        for _ in range(4):
-            if _explore_cancel.is_set():
-                _explore_running = False
-                return
-            base.set_velocity(0.3, 0.0, 0.0)
+        try:
+            logger.info("[EXPLORE] Seed walk: 0.3 m/s forward for 2s")
+            base.walk(0.3, 0.0, 0.0, 2.0)
+            # Extra 1s for scan buffer: 10 Hz lidar x 1s = 10 scans, well above
+            # the 5-scan threshold TARE needs per keypose.
             time.sleep(1.0)
-        # STOP — critical: let nav stack take over
-        base.set_velocity(0.0, 0.0, 0.0)
-        time.sleep(0.6)  # wait for teleop_until to expire
-        # Wait for TARE to process initial scans and produce first waypoint
-        logger.info("[EXPLORE] Waiting for TARE to plan...")
-        time.sleep(5.0)
+            logger.info("[EXPLORE] Seed walk complete")
+        except Exception as exc:
+            logger.warning("[EXPLORE] Seed walk failed (non-fatal): %s", exc)
+
+    # Nav stack + TARE are already running (started by launch_explore.sh
+    # via sim_tool). Enable the bridge path follower via nav flag now that
+    # TARE has enough data to generate its first viewpoint.
+    if has_bridge:
+        try:
+            with open("/tmp/vector_nav_active", "w") as f:
+                f.write("1")
+            logger.info("[EXPLORE] Navigation enabled (flag file created)")
+        except Exception as exc:
+            logger.warning("[EXPLORE] Failed to create nav flag: %s", exc)
 
     # NO WANDER. TARE + FAR + localPlanner handle all movement autonomously.
     # The initial seed above gives TARE enough scan data to start planning.
@@ -438,88 +555,31 @@ class ExploreSkill:
         base = context.base
 
         # Wire auto-look if VLM + camera are available
+        # Room identification only — no object detection/labeling
         vlm = context.services.get("vlm")
         spatial_memory = context.services.get("spatial_memory")
-        detector = context.services.get("detector")
         if vlm is not None:
             def _do_auto_look(room: str) -> dict | None:
-                """Capture RGB, run VLM + optional detector, record to scene graph."""
+                """Capture frame, identify room, record to spatial memory."""
                 try:
                     frame = base.get_camera_frame()
-                    scene = vlm.describe_scene(frame)
-                    room_id = vlm.identify_room(frame)
-                    detected_room = room_id.room if room_id.room != "unknown" else room
-
-                    obj_names = [o.name for o in scene.objects]
                     pos = base.get_position()
                     heading = base.get_heading()
 
-                    # Attempt GroundingDINO detection for per-object world coords.
-                    # Falls back to VLM object names if detector is absent or fails.
-                    detected_objects: list[tuple[str, float, float]] | None = None
-                    result_objects: list[dict] = [
-                        {"name": o.name, "confidence": o.confidence}
-                        for o in scene.objects
-                    ]
-
-                    if detector is not None and hasattr(base, "get_depth_frame"):
-                        try:
-                            from vector_os_nano.perception.object_detector import RobotPose
-                            depth = base.get_depth_frame()
-                            cam_xpos, cam_xmat = None, None
-                            if hasattr(base, "get_camera_pose"):
-                                try:
-                                    cam_xpos, cam_xmat = base.get_camera_pose()
-                                except Exception:
-                                    pass
-                            dets = detector(
-                                frame, depth,
-                                RobotPose(
-                                    x=float(pos[0]),
-                                    y=float(pos[1]),
-                                    z=float(pos[2]),
-                                    heading=float(heading),
-                                    cam_xpos=cam_xpos,
-                                    cam_xmat=cam_xmat,
-                                ),
-                            )
-                            if dets:
-                                detected_objects = [
-                                    (d.label, d.world_x, d.world_y)
-                                    for d in dets
-                                    if d.world_x != 0.0 or d.world_y != 0.0
-                                ]
-                                result_objects = [
-                                    {
-                                        "name": d.label,
-                                        "confidence": d.confidence,
-                                        "world_x": d.world_x,
-                                        "world_y": d.world_y,
-                                        "depth_m": d.depth_m,
-                                    }
-                                    for d in dets
-                                ]
-                        except Exception as det_exc:
-                            logger.warning(
-                                "[EXPLORE] auto-look detector error: %s", det_exc,
-                            )
-                            detected_objects = None
+                    room_id = vlm.identify_room(frame)
+                    detected_room = room_id.room if room_id.room != "unknown" else room
 
                     if spatial_memory is not None:
                         if hasattr(spatial_memory, "observe_with_viewpoint"):
                             spatial_memory.observe_with_viewpoint(
                                 detected_room, float(pos[0]), float(pos[1]),
-                                float(heading), obj_names, scene.summary,
-                                detected_objects=detected_objects or None,
+                                float(heading), [], "",
                             )
                         else:
                             spatial_memory.visit(detected_room, float(pos[0]), float(pos[1]))
-                            spatial_memory.observe(detected_room, obj_names, scene.summary)
 
                     return {
                         "room": detected_room,
-                        "summary": scene.summary,
-                        "objects": result_objects,
                         "room_confidence": room_id.confidence,
                     }
                 except Exception as exc:
@@ -528,18 +588,12 @@ class ExploreSkill:
 
             set_auto_look(_do_auto_look)
 
-        # Ensure bridge + nav stack are running
-        bridge_ok = _start_bridge_on_go2(base)
-        if bridge_ok:
-            nav_ok = _launch_nav_stack()
-            if not nav_ok:
-                return SkillResult(
-                    success=False, error_message="Nav stack failed to start",
-                    diagnosis_code="exploration_failed",
-                )
+        # Bridge + nav stack are already running (started by launch_explore.sh
+        # via sim_tool). Do NOT call _start_bridge_on_go2 — it creates a
+        # conflicting rclpy context that crashes the bridge process.
+        bridge_ok = True
 
-        # Start background thread that handles TARE launch + seeding + monitoring
-        # Everything runs in background — execute() returns IMMEDIATELY
+        # Start background thread that handles seeding + monitoring
         _explore_thread = threading.Thread(
             target=_exploration_loop, args=(base, bridge_ok), daemon=True,
         )

@@ -983,8 +983,6 @@ class Agent:
             services["spatial_memory"] = self._spatial_memory
         if hasattr(self, "_skill_registry"):
             services["skill_registry"] = self._skill_registry
-        if hasattr(self, "_detector") and self._detector is not None:
-            services["detector"] = self._detector
 
         return SkillContext(
             arms={"default": self._arm} if self._arm else {},

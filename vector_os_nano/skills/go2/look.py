@@ -1,17 +1,15 @@
 """VLM-powered look skills for the Go2 quadruped robot.
 
 Two skills:
-- LookSkill: capture frame, call describe_scene + identify_room, optionally
-  record to SpatialMemory.
-- DescribeSceneSkill: detailed VLM scene description with optional query
-  (delegates to find_objects when a query is provided).
+- LookSkill: capture frame, call describe_scene + identify_room, record to SpatialMemory.
+- DescribeSceneSkill: detailed VLM scene description with optional query.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-import numpy as np
+import numpy as np  # noqa: F401 — used by callers for frame type
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
@@ -54,23 +52,7 @@ class LookSkill:
     ]
 
     def execute(self, params: dict, context: SkillContext) -> SkillResult:
-        """Capture a camera frame, run VLM scene description and room ID.
-
-        VLM provides: room identification (identify_room) and scene summary
-        (describe_scene).  GroundingDINO detector (if available in services)
-        provides per-object world coordinates via depth projection.
-
-        Args:
-            params: Unused (LookSkill has no parameters).
-            context: SkillContext with base and vlm service attached.
-                     Optional: context.services["detector"] callable with
-                     signature (rgb, depth, RobotPose) -> list[Detection].
-
-        Returns:
-            SkillResult with result_data containing room, summary, objects,
-            details, and room_confidence.  When detector is active, each
-            object entry also has world_x, world_y, depth_m.
-        """
+        """Capture a camera frame, run VLM scene description and room ID."""
         if context.base is None:
             logger.error("[LOOK] No base connected")
             return SkillResult(
@@ -88,7 +70,7 @@ class LookSkill:
                 diagnosis_code="no_vlm",
             )
 
-        # Capture RGB frame from robot camera (sim: MuJoCo, real: D435).
+        # Capture frame and pose
         try:
             frame: np.ndarray = context.base.get_camera_frame()
         except Exception as exc:
@@ -99,7 +81,10 @@ class LookSkill:
                 diagnosis_code="camera_failed",
             )
 
-        # Run VLM calls — scene description (summary + object names) and room ID.
+        pos = context.base.get_position()
+        heading = context.base.get_heading()
+
+        # Run VLM
         try:
             scene = vlm.describe_scene(frame)
             room_id = vlm.identify_room(frame)
@@ -111,128 +96,25 @@ class LookSkill:
                 diagnosis_code="vlm_failed",
             )
 
-        # Prefer VLM room over positional heuristic; fall back if "unknown".
         room: str = room_id.room if room_id.room != "unknown" else _fallback_room(context)
 
-        # Get robot pose for viewpoint recording and depth projection.
-        pos = context.base.get_position()
-        heading = context.base.get_heading()
-
-        # ------------------------------------------------------------------
-        # Object detection with world positioning (GroundingDINO + depth).
-        # Detector provides per-object (x, y, z) in world frame.
-        # VLM still owns room_id and scene summary.
-        # ------------------------------------------------------------------
-        detected_objects: list[Any] = []
-        detector = context.services.get("detector")
-        if detector is not None and hasattr(context.base, "get_depth_frame"):
-            try:
-                from vector_os_nano.perception.object_detector import RobotPose
-                depth_frame: np.ndarray = context.base.get_depth_frame()
-                # Get camera world pose for exact projection (sim only)
-                cam_xpos, cam_xmat = None, None
-                if hasattr(context.base, "get_camera_pose"):
-                    try:
-                        cam_xpos, cam_xmat = context.base.get_camera_pose()
-                    except Exception:
-                        pass
-                pose = RobotPose(
-                    x=float(pos[0]),
-                    y=float(pos[1]),
-                    z=float(pos[2]),
-                    heading=float(heading),
-                    cam_xpos=cam_xpos,
-                    cam_xmat=cam_xmat,
-                )
-                detected_objects = detector(frame, depth_frame, pose)
-            except Exception as exc:
-                logger.warning("[LOOK] Detector failed: %s", exc)
-                detected_objects = []
-
-        # ------------------------------------------------------------------
-        # Build objects_data: prefer detector results (have world coords),
-        # fall back to VLM-only names when detector unavailable or empty.
-        # ------------------------------------------------------------------
-        if detected_objects:
-            objects_data: list[dict[str, Any]] = [
-                {
-                    "name": det.label,
-                    "description": "",
-                    "confidence": det.confidence,
-                    "world_x": det.world_x,
-                    "world_y": det.world_y,
-                    "world_z": det.world_z,
-                    "depth_m": det.depth_m,
-                }
-                for det in detected_objects
-            ]
-        else:
-            objects_data = [
-                {
-                    "name": obj.name,
-                    "description": obj.description,
-                    "confidence": obj.confidence,
-                }
-                for obj in scene.objects
-            ]
-
-        # ------------------------------------------------------------------
-        # Record to spatial memory / scene graph.
-        # When detector found objects: record each with its world coords.
-        # When VLM-only: use standard observe_with_viewpoint.
-        # ------------------------------------------------------------------
+        # Record room visit to spatial memory (no objects)
         spatial_memory = context.services.get("spatial_memory")
         if spatial_memory is not None:
             try:
-                if detected_objects and hasattr(spatial_memory, "merge_object"):
-                    # SceneGraph path: viewpoint first, then per-object world coords.
-                    vp_id: str = ""
-                    if hasattr(spatial_memory, "observe_with_viewpoint"):
-                        vp = spatial_memory.observe_with_viewpoint(
-                            room, float(pos[0]), float(pos[1]),
-                            float(heading),
-                            [det.label for det in detected_objects],
-                            scene.summary,
-                        )
-                        vp_id = vp.viewpoint_id if vp is not None else ""
-                        if not vp_id and hasattr(spatial_memory, "_viewpoints"):
-                            # Nearest viewpoint was reused — find it
-                            for existing_vp in spatial_memory._viewpoints.values():
-                                if existing_vp.room_id == room:
-                                    vp_id = existing_vp.viewpoint_id
-                                    break
-
-                    # Merge each detected object with its world coordinates.
-                    for det in detected_objects:
-                        spatial_memory.merge_object(
-                            category=det.label,
-                            room_id=room,
-                            viewpoint_id=vp_id,
-                            confidence=det.confidence,
-                            x=det.world_x,
-                            y=det.world_y,
-                        )
-                elif hasattr(spatial_memory, "observe_with_viewpoint"):
-                    object_names: list[str] = [obj.name for obj in scene.objects]
+                if hasattr(spatial_memory, "observe_with_viewpoint"):
                     spatial_memory.observe_with_viewpoint(
                         room, float(pos[0]), float(pos[1]),
-                        float(heading), object_names, scene.summary,
+                        float(heading), [], scene.summary,
                     )
                 else:
-                    object_names = [obj.name for obj in scene.objects]
                     spatial_memory.visit(room, float(pos[0]), float(pos[1]))
-                    spatial_memory.observe(room, object_names, scene.summary)
             except Exception as exc:
                 logger.warning("[LOOK] spatial_memory update failed: %s", exc)
 
         logger.info(
-            "[LOOK] room=%s confidence=%.2f summary=%s objects=%d "
-            "(detector=%s)",
-            room,
-            room_id.confidence,
-            scene.summary,
-            len(objects_data),
-            "yes" if detected_objects else "no",
+            "[LOOK] room=%s confidence=%.2f summary=%s",
+            room, room_id.confidence, scene.summary,
         )
 
         return SkillResult(
@@ -240,7 +122,6 @@ class LookSkill:
             result_data={
                 "room": room,
                 "summary": scene.summary,
-                "objects": objects_data,
                 "details": scene.details,
                 "room_confidence": room_id.confidence,
             },

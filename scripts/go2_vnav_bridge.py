@@ -3,7 +3,7 @@
 
 Publishes the topics the CMU/Ji Zhang nav stack expects:
   - /state_estimation (Odometry, 200 Hz, frame: map→sensor)
-  - /registered_scan (PointCloud2, 10 Hz, frame: map)
+  - /registered_scan (PointCloud2, 5 Hz, frame: map)
   - /joy (Joy, 2 Hz, fake LT trigger for autonomyMode)
   - /speed (Float32, 2 Hz, desired speed)
   - TF: map→sensor, map→vehicle
@@ -70,10 +70,11 @@ import numpy as np
 
 from vector_os_nano.hardware.sim.mujoco_go2 import MuJoCoGo2
 
-# Sensor mounting offset (from unitree_go2.yaml)
-_SENSOR_X: float = 0.2
+# Sensor mounting offset — on top of Go2 head, above all leg geoms.
+# Must match mujoco_go2.py _LIDAR_OFFSET and nav stack sensorOffset.
+_SENSOR_X: float = 0.3
 _SENSOR_Y: float = 0.0
-_SENSOR_Z: float = 0.1
+_SENSOR_Z: float = 0.2
 
 
 class Go2VNavBridge(Node):
@@ -137,7 +138,9 @@ class Go2VNavBridge(Node):
         # Manual CLI control
         self.create_subscription(Twist, "/cmd_vel_nav", self._cmd_vel_cb, 10)
 
-        # Path follower timer (20 Hz)
+        # Python path follower — primary. C++ pathFollower sends zeros between
+        # TARE waypoints (pathSize<=1), so Python follower is needed to keep
+        # the dog moving on stale paths until TARE replans.
         self.create_timer(1.0 / 20.0, self._follow_path)
         # Camera rendering (5 Hz)
         self.create_timer(1.0 / 5.0, self._publish_camera)
@@ -146,10 +149,18 @@ class Go2VNavBridge(Node):
 
         # Timers
         self.create_timer(1.0 / 200.0, self._publish_odom)       # 200 Hz
-        self.create_timer(1.0 / 10.0, self._publish_pointcloud)  # 10 Hz
-        self.create_timer(1.0 / 10.0, self._publish_scan)        # 10 Hz
+        self.create_timer(1.0 / 5.0, self._publish_pointcloud)   # 5 Hz — matches MuJoCo lidar
+        self.create_timer(1.0 / 5.0, self._publish_scan)          # 5 Hz — matches MuJoCo lidar
         self.create_timer(0.5, self._publish_joy_speed)           # 2 Hz
         self.create_timer(1.0, self._safety_check)                # 1 Hz
+        self.create_timer(2.0, self._stuck_detector)             # 0.5 Hz
+
+        # Stuck detector state — triggers /reset_waypoint when no progress
+        self._stuck_pos = None  # (x, y) at last check
+        self._stuck_count = 0   # consecutive checks with < 0.3m progress
+        self._reset_waypoint_pub = self.create_publisher(
+            PointStamped, "/reset_waypoint", 5
+        )
 
         # Scene graph visualization (1 Hz MarkerArray)
         self._scene_graph = None  # set externally by agent
@@ -160,9 +171,40 @@ class Go2VNavBridge(Node):
         except ImportError:
             self._marker_pub = None
 
+        # Diagnostic counters — track message flow for TARE data-starvation debugging.
+        # Logged every 10s at INFO level via _log_diagnostics timer.
+        self._diag_odom_count: int = 0
+        self._diag_scan_count: int = 0
+        self._diag_path_count: int = 0
+        self.create_timer(10.0, self._log_diagnostics)  # 0.1 Hz
+
+        # Front obstacle detection from cached pointcloud
+        self._cached_points: list = []
+
+        # Navigation gate: path follower is DISABLED until explicitly enabled.
+        # Uses a file flag (/tmp/vector_nav_active) — 100% reliable, no ROS2
+        # message race conditions. explore.py creates this file when starting.
+        self._nav_enabled = False
+        self._goal_pub = self.create_publisher(
+            PointStamped, "/goal_point", 5
+        )
+        self.create_timer(1.0, self._check_nav_flag)
+
         self.get_logger().info(
             "Go2VNavBridge started — /state_estimation, /registered_scan, /joy, /speed"
         )
+
+    def _check_nav_flag(self) -> None:
+        """Check file flag to enable/disable path following (1 Hz)."""
+        flag = os.path.exists("/tmp/vector_nav_active")
+        if flag and not self._nav_enabled:
+            self._nav_enabled = True
+            self.get_logger().info("Navigation ENABLED (flag file detected)")
+        elif not flag and self._nav_enabled:
+            self._nav_enabled = False
+            self._current_path = []
+            self._go2.set_velocity(0.0, 0.0, 0.0)
+            self.get_logger().info("Navigation DISABLED (flag file removed)")
 
     def _joy_cb(self, msg: Joy) -> None:
         """Direct teleop: /joy axes → velocity (bypasses pathFollower).
@@ -186,9 +228,9 @@ class Go2VNavBridge(Node):
                 self.get_logger().info(f"teleop: vx={vx:.2f} vyaw={vyaw:.2f}")
 
     def _cmd_vel_stamped_cb(self, msg: TwistStamped) -> None:
-        """DISABLED — C++ pathFollower sends backward velocity and aggressive
-        yaw for wheeled vehicles. Quadruped needs forward-only, gentle arcs.
-        Using Python _follow_path instead."""
+        """DISABLED — C++ pathFollower frame convention (sensor/base_link)
+        doesn't match MuJoCo Go2 body frame. Needs proper frame transform
+        analysis before enabling. Using Python _follow_path instead."""
         pass
 
     def _cmd_vel_cb(self, msg: Twist) -> None:
@@ -228,6 +270,7 @@ class Go2VNavBridge(Node):
         msg.twist.twist.linear.z = odom.vz
         msg.twist.twist.angular.z = odom.vyaw
         self._odom_pub.publish(msg)
+        self._diag_odom_count += 1
 
         # TF: map → sensor
         t = TransformStamped()
@@ -263,9 +306,8 @@ class Go2VNavBridge(Node):
         if not points:
             return
 
-        # Compute ground Z from robot height (~0.28m standing, ground at z≈0)
         odom = self._go2.get_odometry()
-        ground_z = odom.z - 0.28  # robot CoM is ~0.28m above ground
+        ground_z = odom.z - 0.28
 
         now = self.get_clock().now().to_msg()
         fields = [
@@ -278,8 +320,6 @@ class Go2VNavBridge(Node):
         point_step = 16
         data = bytearray()
         for x, y, z, _ in points:
-            # intensity = height above ground (terrain_analysis uses this
-            # for ground/obstacle classification: <0.1m = ground)
             intensity = z - ground_z
             data.extend(struct.pack("ffff", x, y, z, intensity))
 
@@ -295,6 +335,8 @@ class Go2VNavBridge(Node):
         msg.data = bytes(data)
         msg.is_dense = True
         self._pc_pub.publish(msg)
+        self._diag_scan_count += 1
+        self._cached_points = points  # cache for obstacle check
 
     def _publish_scan(self) -> None:
         """Publish /scan (LaserScan) for compatibility."""
@@ -327,7 +369,16 @@ class Go2VNavBridge(Node):
         self._speed_pub.publish(speed)
 
     def _publish_camera(self) -> None:
-        """Render first-person camera from Go2 head (camera_link)."""
+        """Render first-person camera from Go2 head (free camera).
+
+        Uses a free camera positioned at the sensor mount looking forward.
+        The named d435_rgb camera produces a rotated image in this context,
+        so we keep the manually positioned free camera for ROS /camera/image.
+
+        NOTE: The VLM pipeline (get_camera_frame) uses the named d435
+        camera directly in mujoco_go2.py — that is separate from this bridge
+        camera and produces correct images for VLM scene description.
+        """
         try:
             import mujoco
             if not hasattr(self, '_renderer'):
@@ -340,18 +391,15 @@ class Go2VNavBridge(Node):
             model = self._go2._mj.model
             data = self._go2._mj.data
 
-            # First-person: camera at sensor + forward offset, looking ahead
             odom = self._go2.get_odometry()
             heading = self._go2.get_heading()
             cos_h = math.cos(heading)
             sin_h = math.sin(heading)
 
-            # Camera mounted on Go2 head (sensor + 0.1m forward, slight down)
             cam_x = odom.x + cos_h * (_SENSOR_X + 0.1)
             cam_y = odom.y + sin_h * (_SENSOR_X + 0.1)
             cam_z = odom.z + _SENSOR_Z - 0.04
 
-            # Look at a point 1m ahead of camera
             self._cam.lookat[:] = [
                 cam_x + cos_h * 1.0,
                 cam_y + sin_h * 1.0,
@@ -361,7 +409,6 @@ class Go2VNavBridge(Node):
             self._cam.azimuth = math.degrees(heading) + 180
             self._cam.elevation = -10
 
-            # Render with the first-person camera
             self._renderer.update_scene(data, camera=self._cam)
             rgb = self._renderer.render().copy()
             now = self.get_clock().now().to_msg()
@@ -376,7 +423,7 @@ class Go2VNavBridge(Node):
             img_msg.data = bytes(rgb)
             self._img_pub.publish(img_msg)
 
-            # Depth via separate renderer instance
+            # Depth via separate renderer
             if not hasattr(self, '_depth_renderer'):
                 try:
                     self._depth_renderer = mujoco.Renderer(
@@ -408,127 +455,287 @@ class Go2VNavBridge(Node):
                 self._cam_err_logged = True
 
     def _path_cb(self, msg: Path) -> None:
-        """Receive planned path from localPlanner and transform to map frame.
+        """Store path for Python follower + log."""
+        if not self._nav_enabled:
+            return
 
-        localPlanner publishes paths in the sensor/body frame (relative to robot).
-        We transform to map frame using current pose for the path follower.
-        """
         odom = self._go2.get_odometry()
         heading = self._go2.get_heading()
         cos_h = math.cos(heading)
         sin_h = math.sin(heading)
-        # Sensor position in map frame
         sx = odom.x + cos_h * _SENSOR_X - sin_h * _SENSOR_Y
         sy = odom.y + sin_h * _SENSOR_X + cos_h * _SENSOR_Y
 
-        self._current_path = []
+        new_path = []
         for p in msg.poses:
-            # Rotate from sensor frame to map frame
             lx, ly = p.pose.position.x, p.pose.position.y
             mx = sx + lx * cos_h - ly * sin_h
             my = sy + lx * sin_h + ly * cos_h
-            self._current_path.append((mx, my))
+            new_path.append((mx, my))
 
+        self._current_path = new_path
         self._path_time = time.time()
-        # Throttle path log to once per second (localPlanner publishes at ~10Hz)
+        self._pf_point_id = 0  # reset progress on new path (like C++)
+
+        self._diag_path_count += 1
         now_mono = time.monotonic()
-        if self._current_path and now_mono - getattr(self, '_last_path_log', 0) > 1.0:
+        if new_path and now_mono - getattr(self, '_last_path_log', 0) > 3.0:
             self._last_path_log = now_mono
+            pe = new_path[-1]
             self.get_logger().info(
-                f"Path: {len(self._current_path)} pts, "
-                f"target=({self._current_path[-1][0]:.1f},{self._current_path[-1][1]:.1f}) "
+                f"Path: {len(new_path)} pts, "
+                f"end=({pe[0]:.1f},{pe[1]:.1f}) "
                 f"robot=({odom.x:.1f},{odom.y:.1f})"
             )
 
-    def _follow_path(self) -> None:
-        """Quadruped path follower (20 Hz).
+    def _check_front_obstacle(self) -> float:
+        """Check for obstacles in front cone. Returns min distance (meters).
 
-        Key principles for stable MPC gait:
-        1. ALWAYS walk forward (min 0.08 m/s) — quadrupeds are stable walking
-        2. Never reverse — turn in arcs instead
-        3. Very gentle yaw (max 0.4 rad/s) — prevents gait disruption
-        4. Smooth rate limiting — no sudden velocity changes
-        5. If no path, gentle decelerate — don't hard stop
+        Uses cached pointcloud (10 Hz). Checks 60-degree cone in front,
+        within 1.0m range, above ground level.
+        """
+        if not self._cached_points:
+            return float('inf')
+
+        odom = self._go2.get_odometry()
+        heading = self._go2.get_heading()
+        cos_h = math.cos(heading)
+        sin_h = math.sin(heading)
+        ground_z = odom.z - 0.28  # approximate ground level
+
+        min_dist = float('inf')
+        for x, y, z, _ in self._cached_points:
+            # Skip ground points
+            if z - ground_z < 0.10:
+                continue
+            # Skip high points (above robot)
+            if z - ground_z > 0.5:
+                continue
+            # Transform to robot frame
+            dx = x - odom.x
+            dy = y - odom.y
+            # Project onto heading direction
+            forward = dx * cos_h + dy * sin_h
+            lateral = -dx * sin_h + dy * cos_h
+
+            # Front cone: forward > 0, |lateral| < forward * tan(30deg)
+            if forward > 0.1 and forward < 1.0 and abs(lateral) < forward * 0.577:
+                dist = math.sqrt(forward * forward + lateral * lateral)
+                if dist < min_dist:
+                    min_dist = dist
+
+        return min_dist
+
+    def _scan_surroundings(self) -> tuple[float, float, float]:
+        """Scan cached pointcloud for nearby obstacles in 3 zones.
+
+        Returns (front_dist, left_dist, right_dist) in meters.
+        Each is the min distance to an obstacle in that zone, or inf.
+        Uses body-frame projection: front = ±30deg, left/right = 30-120deg.
+        """
+        if not self._cached_points:
+            return (float('inf'), float('inf'), float('inf'))
+
+        odom = self._go2.get_odometry()
+        heading = self._go2.get_heading()
+        cos_h = math.cos(heading)
+        sin_h = math.sin(heading)
+        ground_z = odom.z - 0.28
+
+        front_min = float('inf')
+        left_min = float('inf')
+        right_min = float('inf')
+
+        for x, y, z, _ in self._cached_points:
+            dz = z - ground_z
+            if dz < 0.10 or dz > 0.5:
+                continue
+            dx = x - odom.x
+            dy = y - odom.y
+            fwd = dx * cos_h + dy * sin_h
+            lat = -dx * sin_h + dy * cos_h
+            d = math.sqrt(fwd * fwd + lat * lat)
+            if d > 1.0 or d < 0.05:
+                continue
+
+            angle = math.atan2(abs(lat), fwd)
+            if fwd > 0 and angle < 0.52:  # front ±30deg
+                front_min = min(front_min, d)
+            elif lat > 0 and angle < 2.1:  # left 30-120deg
+                left_min = min(left_min, d)
+            elif lat < 0 and angle < 2.1:  # right 30-120deg
+                right_min = min(right_min, d)
+
+        return (front_min, left_min, right_min)
+
+    def _follow_path(self) -> None:
+        """Omnidirectional quadruped path follower (20 Hz).
+
+        Go2 can walk forward, backward, and sideways. This follower:
+        1. ALWAYS prefers forward motion (vx > 0)
+        2. Uses lateral velocity (vy) to track path when direction error is large
+        3. Reverses ONLY when target is directly behind AND very close (dead end)
+        4. Applies reactive wall avoidance overlay from cached pointcloud
         """
         if time.time() < self._teleop_until:
             return
 
-        if not hasattr(self, '_prev_vx'):
-            self._prev_vx = 0.0
-            self._prev_vyaw = 0.0
+        if not hasattr(self, '_pf_speed'):
+            self._pf_speed = 0.0       # current forward speed
+            self._pf_lat = 0.0         # current lateral speed
+            self._pf_yawrate = 0.0     # current yaw rate
+            self._pf_point_id = 0      # path progress index
+
+        _MAX_SPEED = 0.8               # m/s forward cruise
+        _MAX_LAT = 0.35                # m/s max lateral speed
+        _MAX_YAW_RATE = 1.2            # rad/s
+        _YAW_GAIN = 1.5                # P-gain for yaw
+        _STOP_YAW_GAIN = 2.0           # P-gain when nearly stopped
+        _LOOK_AHEAD = 0.6              # m lookahead
+        _STOP_DIS = 0.3                # m — stop within this
+        _SLOW_DWN_DIS = 1.5            # m — start decelerating
+        _ACCEL = 0.04                  # m/s per step @ 20Hz
+        _PATH_TIMEOUT = 8.0            # seconds before path considered stale
 
         has_path = (self._current_path
-                    and time.time() - self._path_time < 15.0)
+                    and time.time() - self._path_time < _PATH_TIMEOUT)
 
         if not has_path:
-            # Gentle decel
-            self._prev_vx *= 0.95
-            self._prev_vyaw *= 0.95
-            if abs(self._prev_vx) < 0.02:
-                self._prev_vx = 0.0
-                self._prev_vyaw = 0.0
-            self._go2.set_velocity(self._prev_vx, 0.0, self._prev_vyaw)
+            if not self._nav_enabled:
+                self._go2.set_velocity(0.0, 0.0, 0.0)
+                self._last_cmd_time = time.time()
+                return
+            # Gentle idle wander with obstacle check
+            front_dist = self._check_front_obstacle()
+            if front_dist < 0.5:
+                self._go2.set_velocity(0.0, 0.0, 0.3)
+            else:
+                self._go2.set_velocity(0.15, 0.0, 0.10)
             self._last_cmd_time = time.time()
+            self._pf_point_id = 0
             return
 
         odom = self._go2.get_odometry()
         rx, ry = odom.x, odom.y
         heading = self._go2.get_heading()
+        path = self._current_path
+        path_size = len(path)
 
-        # Lookahead: use a point 1.5m ahead on path
-        target = None
-        for px, py in self._current_path:
-            if math.sqrt((px - rx)**2 + (py - ry)**2) >= 2.0:  # lookahead 2m (was 1.5)
-                target = (px, py)
+        # --- Endpoint distance ---
+        ex, ey = path[-1]
+        end_dis = math.sqrt((ex - rx)**2 + (ey - ry)**2)
+
+        # --- Progressive lookahead ---
+        while self._pf_point_id < path_size - 1:
+            px, py = path[self._pf_point_id]
+            d = math.sqrt((px - rx)**2 + (py - ry)**2)
+            if d < _LOOK_AHEAD:
+                self._pf_point_id += 1
+            else:
                 break
-        if target is None:
-            target = self._current_path[-1]
+        self._pf_point_id = min(self._pf_point_id, path_size - 1)
 
-        dx, dy = target[0] - rx, target[1] - ry
-        dist = math.sqrt(dx*dx + dy*dy)
+        # --- Direction to lookahead point ---
+        tx, ty = path[self._pf_point_id]
+        dx, dy = tx - rx, ty - ry
+        path_dir = math.atan2(dy, dx)
 
-        # Heading error
-        desired = math.atan2(dy, dx)
-        err = desired - heading
-        while err > math.pi: err -= 2 * math.pi
-        while err < -math.pi: err += 2 * math.pi
+        dir_diff = path_dir - heading
+        while dir_diff > math.pi: dir_diff -= 2 * math.pi
+        while dir_diff < -math.pi: dir_diff += 2 * math.pi
 
-        # Yaw: gentle, capped
-        vyaw_target = float(np.clip(err * 0.5, -0.4, 0.4))
+        abs_err = abs(dir_diff)
 
-        # Forward: ALWAYS positive. cos(err) gives natural speed curve.
-        # At 0 error: full speed. At 90 deg: minimum speed. At 180: minimum.
-        alignment = max(0.2, math.cos(min(abs(err), 1.4)))
-        # Reduce alignment penalty so robot doesn't crawl when turning.
-        # Original: 0.8 * alignment → 0.16 m/s at 90° error.
-        # Now: minimum 0.4 m/s even when heading is off.
-        vx_target = float(np.clip(0.8 * max(0.5, alignment), 0.4, 0.8))
+        # --- Target speed (forward) based on endpoint distance ---
+        target_speed = _MAX_SPEED
+        if end_dis < _SLOW_DWN_DIS:
+            target_speed = _MAX_SPEED * (end_dis / _SLOW_DWN_DIS)
+        if end_dis < _STOP_DIS or path_size <= 1:
+            target_speed = 0.0
 
-        # If very close to target, slow down but don't stop
-        if dist < 0.5:
-            vx_target = min(vx_target, 0.1)
+        # --- Omnidirectional velocity decomposition ---
+        # ALWAYS prefer forward. Use lateral to assist. Reverse only last resort.
+        if abs_err < 0.52:
+            # < 30°: pure forward tracking, small yaw correction
+            vx = target_speed
+            vy = 0.0
+            vyaw = _YAW_GAIN * dir_diff
+        elif abs_err < 1.57:
+            # 30-90°: forward + lateral strafe toward path
+            # Forward tapers down as error grows
+            fwd_factor = max(0.2, 1.0 - (abs_err - 0.52) / 1.05)
+            vx = target_speed * fwd_factor
+            vy = math.copysign(min(_MAX_LAT, target_speed * 0.5), dir_diff)
+            vyaw = _YAW_GAIN * dir_diff
+        elif abs_err < 2.62:
+            # 90-150°: pure strafe + strong yaw to turn toward path
+            vx = 0.0
+            vy = math.copysign(_MAX_LAT, dir_diff)
+            vyaw = _STOP_YAW_GAIN * dir_diff
+        else:
+            # > 150°: target is behind
+            if end_dis < 0.8:
+                # Very close behind — back up slowly
+                vx = -0.25
+                vy = 0.0
+                vyaw = 0.0
+            else:
+                # Far behind — turn in place to face it (don't reverse far)
+                vx = 0.0
+                vy = 0.0
+                vyaw = _STOP_YAW_GAIN * dir_diff
 
-        # Rate limiter (20Hz → 0.08 m/s per tick = 1.6 m/s² accel)
-        max_dvx = 0.08
-        max_dvyaw = 0.10
+        # --- Reactive wall avoidance overlay ---
+        # IMPORTANT: localPlanner already plans collision-free paths. This layer
+        # only adds gentle repulsion — it must NOT block the planned path.
+        # If the planned path goes through a narrow gap, let the dog through.
+        front_d, left_d, right_d = self._scan_surroundings()
+        # Front: only slow below 0.3m, keep minimum 0.15 m/s to avoid stuck
+        if front_d < 0.3 and vx > 0:
+            vx = min(vx, 0.15)
+        # Lateral push away from walls (gentle, doesn't override path tracking)
+        if left_d < 0.4:
+            vy_push = -0.2 * (0.4 - left_d) / 0.4
+            vy = max(vy + vy_push, -_MAX_LAT)
+        if right_d < 0.4:
+            vy_push = 0.2 * (0.4 - right_d) / 0.4
+            vy = min(vy + vy_push, _MAX_LAT)
 
-        vx = self._prev_vx + float(np.clip(vx_target - self._prev_vx, -max_dvx, max_dvx))
-        vyaw = self._prev_vyaw + float(np.clip(vyaw_target - self._prev_vyaw, -max_dvyaw, max_dvyaw))
+        # --- Smooth acceleration ---
+        if self._pf_speed < vx:
+            self._pf_speed = min(vx, self._pf_speed + _ACCEL)
+        elif self._pf_speed > vx:
+            self._pf_speed = max(vx, self._pf_speed - _ACCEL)
+        self._pf_lat = vy  # lateral can change instantly (no inertia issue)
+        self._pf_yawrate = float(np.clip(vyaw, -_MAX_YAW_RATE, _MAX_YAW_RATE))
 
-        self._prev_vx = max(0.0, float(vx))  # NEVER negative
-        self._prev_vyaw = float(vyaw)
+        # Clamp final speeds
+        self._pf_speed = float(np.clip(self._pf_speed, -0.3, _MAX_SPEED))
+        self._pf_lat = float(np.clip(self._pf_lat, -_MAX_LAT, _MAX_LAT))
 
-        self._go2.set_velocity(self._prev_vx, 0.0, self._prev_vyaw)
+        self._go2.set_velocity(self._pf_speed, self._pf_lat, self._pf_yawrate)
         self._last_cmd_time = time.time()
-        # Log every 1 second (20Hz timer, so every 20th call)
+
         if not hasattr(self, '_follow_count'):
             self._follow_count = 0
         self._follow_count += 1
         if self._follow_count % 20 == 0:
             self.get_logger().info(
-                f"Following: vx={vx:.2f} vyaw={vyaw:.2f} dist={dist:.2f} "
-                f"err={math.degrees(err):.1f}deg target=({target[0]:.1f},{target[1]:.1f})"
+                f"PyPF: vx={self._pf_speed:.2f} vy={self._pf_lat:.2f} "
+                f"yr={self._pf_yawrate:.2f} endD={end_dis:.1f} "
+                f"err={math.degrees(dir_diff):.0f}° "
+                f"pt={self._pf_point_id}/{path_size} "
+                f"wall=F{front_d:.1f}/L{left_d:.1f}/R{right_d:.1f}"
             )
+
+    def _log_diagnostics(self) -> None:
+        """Log bridge data flow stats every 10s for TARE starvation debugging."""
+        self.get_logger().info(
+            f"Diag: odom={self._diag_odom_count} "
+            f"scan={self._diag_scan_count} "
+            f"path={self._diag_path_count} "
+            f"nav={'ON' if self._nav_enabled else 'OFF'}"
+        )
 
     def _safety_check(self) -> None:
         # 5s timeout — must be long enough for TARE to initialize and
@@ -542,6 +749,55 @@ class Go2VNavBridge(Node):
             except ImportError:
                 pass
             self._go2.set_velocity(0.0, 0.0, 0.0)
+
+    def _stuck_detector(self) -> None:
+        """Detect when robot is stuck and take recovery action.
+
+        Runs at 0.5 Hz. Two-stage recovery:
+        1. After 4s no progress: send /reset_waypoint to TARE
+        2. After 8s still stuck: back up 0.3m to escape tight spot
+        """
+        if not self._nav_enabled:
+            self._stuck_count = 0
+            self._stuck_pos = None
+            return
+
+        odom = self._go2.get_odometry()
+        cur = (odom.x, odom.y)
+
+        if self._stuck_pos is not None:
+            dx = cur[0] - self._stuck_pos[0]
+            dy = cur[1] - self._stuck_pos[1]
+            moved = math.sqrt(dx * dx + dy * dy)
+
+            if moved < 0.1:
+                self._stuck_count += 1
+            else:
+                self._stuck_count = 0
+
+            if self._stuck_count == 2:  # 4s — request TARE replan
+                msg = PointStamped()
+                msg.header.stamp = self.get_clock().now().to_msg()
+                msg.header.frame_id = "map"
+                msg.point.x = odom.x
+                msg.point.y = odom.y
+                msg.point.z = odom.z
+                self._reset_waypoint_pub.publish(msg)
+                self.get_logger().warn(
+                    f"Stuck 4s at ({odom.x:.1f},{odom.y:.1f}) — "
+                    f"sent /reset_waypoint to TARE"
+                )
+            elif self._stuck_count == 4:  # 8s — escape: back up
+                self.get_logger().warn(
+                    f"Stuck 8s — backing up to escape"
+                )
+                # Back up for 1 second (will be overridden by next _follow_path)
+                self._go2.set_velocity(-0.25, 0.0, 0.0)
+                self._last_cmd_time = time.time()
+                self._current_path = []  # clear stale path
+                self._stuck_count = 0  # reset for fresh detection
+
+        self._stuck_pos = cur
 
     def _publish_scene_graph_markers(self) -> None:
         """Publish scene graph visualization as MarkerArray (1 Hz)."""

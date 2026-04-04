@@ -142,7 +142,7 @@ class _Go2Model:
     Caches actuator IDs so set_joint_torque() is fast.
     """
 
-    __slots__ = ("model", "data", "base_bid", "_act_ids", "viewer")
+    __slots__ = ("model", "data", "base_bid", "_act_ids", "_robot_geom_ids", "viewer")
 
     def __init__(self, model: Any, data: Any) -> None:
         mj = _get_mujoco()
@@ -161,6 +161,20 @@ class _Go2Model:
                         model, mj.mjtObj.mjOBJ_ACTUATOR, f"{leg}_{joint}"
                     )
                 )
+        # Collect ALL geom IDs belonging to the robot body tree.
+        # mj_ray bodyexclude only filters ONE body. We need to filter all
+        # robot geoms (trunk + 4 legs × 3 segments = 13+ bodies) to avoid
+        # the lidar detecting Go2's own legs as obstacles.
+        self._robot_geom_ids: set[int] = set()
+        for gid in range(model.ngeom):
+            bid = model.geom_bodyid[gid]
+            # Walk up the body tree to check if this geom belongs to robot
+            check_bid = bid
+            while check_bid > 0:
+                if check_bid == self.base_bid:
+                    self._robot_geom_ids.add(gid)
+                    break
+                check_bid = model.body_parentid[check_bid]
 
     def set_joint_torque(self, torque: np.ndarray) -> None:
         """Apply 12 joint torques in canonical order."""
@@ -861,10 +875,13 @@ class MuJoCoGo2:
         from vector_os_nano.core.types import LaserScan  # noqa: PLC0415
         mj = _get_mujoco()
 
-        # Sensor mounting: 0.2m forward, 0.1m up from base center
-        # (matches unitree_go2.yaml sensorOffset and bridge TF)
-        _LIDAR_OFFSET_X = 0.2
-        _LIDAR_OFFSET_Z = 0.1
+        # Sensor mounting: on top of Go2 head — above all leg geoms.
+        # 0.3m forward (head position) + 0.2m up (above trunk top).
+        # At -30° tilt, nearest ground hit ≈ 0.35m ahead of lidar →
+        # well past front legs (~0.1m ahead of lidar). No self-hits.
+        # Must match bridge _SENSOR_X/_SENSOR_Z and nav stack sensorOffset.
+        _LIDAR_OFFSET_X = 0.3
+        _LIDAR_OFFSET_Z = 0.2
 
         pos = self._mj.data.qpos[0:3].copy().astype(np.float64)
         heading = self.get_heading()
@@ -934,16 +951,22 @@ class MuJoCoGo2:
                     robot_body_id,
                     geom_id,
                 )
-                if dist > 0 and dist < 12.0:
+                # Skip self-hits: mj_ray bodyexclude only filters the trunk
+                # body. Leg geoms (hip/thigh/calf) are separate bodies and
+                # can be hit by rays pointing downward/forward. Filter them
+                # using the pre-built robot geom set.
+                if dist > 0 and dist < 12.0 and int(geom_id[0]) not in self._mj._robot_geom_ids:
                     px = pos_lidar[0] + dist * direction[0]
                     py = pos_lidar[1] + dist * direction[1]
                     pz = pos_lidar[2] + dist * direction[2]
                     points_3d.append((float(px), float(py), float(pz), 0.0))
 
                 if elev_deg == 0:
-                    mid_ring_ranges.append(
-                        float(dist) if dist > 0 else float("inf")
-                    )
+                    # Self-hit → treat as no hit (inf range) for LaserScan too
+                    if dist > 0 and int(geom_id[0]) not in self._mj._robot_geom_ids:
+                        mid_ring_ranges.append(float(dist))
+                    else:
+                        mid_ring_ranges.append(float("inf"))
 
         self._last_scan = LaserScan(
             timestamp=float(self._mj.data.time),

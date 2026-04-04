@@ -119,27 +119,13 @@ def _reset_explore_globals() -> None:
 
 
 class TestWanderInterval:
-    """The wander command must be re-sent at ≤0.8 s intervals during the loop."""
+    """Seed walk provides initial scan data for TARE before handing off to autonomous nav."""
 
-    def test_wander_interval_is_point_eight_seconds(self):
-        """The wander trigger threshold in _exploration_loop is exactly 0.8 s."""
-        import ast, inspect
-
+    def test_seed_walk_uses_base_walk(self):
+        """_exploration_loop should use base.walk() for the seed walk."""
+        import inspect
         src = inspect.getsource(_explore._exploration_loop)
-        # Parse and look for the numeric threshold in the if-comparison
-        tree = ast.parse(src)
-        thresholds = []
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Compare)
-                and any(isinstance(op, ast.Gt) for op in node.ops)
-            ):
-                for comp in node.comparators:
-                    if isinstance(comp, ast.Constant) and isinstance(comp.value, (int, float)):
-                        thresholds.append(comp.value)
-        assert 0.8 in thresholds, (
-            f"Expected wander threshold of 0.8 s in _exploration_loop, found: {thresholds}"
-        )
+        assert "base.walk(" in src, "Seed walk should use base.walk()"
 
     def test_wander_threshold_less_than_teleop_window_plus_margin(self):
         """0.8 s wander interval < 1.0 s (teleop 0.5 s + 0.5 s safety margin).
@@ -179,7 +165,7 @@ class TestWanderInterval:
 
 
 class TestWanderBehavior:
-    """_exploration_loop sends wander velocity and loops until cancelled."""
+    """_exploration_loop uses seed walk then hands off to TARE autonomous nav."""
 
     def setup_method(self):
         _reset_explore_globals()
@@ -188,54 +174,43 @@ class TestWanderBehavior:
         _explore._explore_cancel.set()
         _reset_explore_globals()
 
-    def test_wander_calls_set_velocity(self):
-        """_exploration_loop calls base.set_velocity at least once per wander cycle."""
+    def test_seed_walk_called_with_bridge(self):
+        """_exploration_loop calls base.walk() for seed when has_bridge=True."""
         base = _make_base()
 
-        # Let the loop run for ~1 second, then cancel
         def _cancel_after_delay():
-            time.sleep(1.2)
+            time.sleep(0.1)
             _explore._explore_cancel.set()
 
         stopper = threading.Thread(target=_cancel_after_delay, daemon=True)
         stopper.start()
 
         with patch.object(_explore, "_start_tare", return_value=False):
-            _explore._exploration_loop(base, has_bridge=True)
+            with patch("time.sleep", return_value=None):
+                _explore._exploration_loop(base, has_bridge=True)
 
-        # set_velocity must have been called (at minimum from seed phase + at least one wander)
-        assert base.set_velocity.call_count >= 1
+        # Seed walk should have called base.walk()
+        assert base.walk.call_count >= 1, "Seed walk should call base.walk()"
 
-    def test_wander_called_multiple_times_in_two_seconds(self):
-        """In 2 s of running, set_velocity is called multiple times (wander every 0.8 s).
-
-        At 0.8 s interval: 2 s / 0.8 s ≈ 2+ wander calls (plus 5 seed calls).
-        """
+    def test_no_set_velocity_in_main_loop(self):
+        """Main loop does NOT call set_velocity — TARE handles movement autonomously."""
         base = _make_base()
-        call_times: list[float] = []
-
-        original_set_vel = base.set_velocity
-
-        def _record_set_vel(vx, vy, vyaw):
-            call_times.append(time.time())
-
-        base.set_velocity.side_effect = _record_set_vel
 
         def _cancel_after():
-            time.sleep(2.2)
+            time.sleep(0.1)
             _explore._explore_cancel.set()
 
         stopper = threading.Thread(target=_cancel_after, daemon=True)
         stopper.start()
 
         with patch.object(_explore, "_start_tare", return_value=False):
-            _explore._exploration_loop(base, has_bridge=True)
+            with patch("time.sleep", return_value=None):
+                _explore._exploration_loop(base, has_bridge=True)
 
-        # Seed phase: 5 calls at ~1 Hz (5 s) + 1 call at the end of seed
-        # then wander: 2 s / 0.8 s ≈ 2+ wander calls in the main loop
-        # Total seed duration is 5+3=8 s which is more than our 2.2 s window,
-        # so we may only see the seed calls. Let's just assert ≥1 call total.
-        assert len(call_times) >= 1, "Expected at least one set_velocity call"
+        # No set_velocity calls — TARE + bridge path follower handle movement
+        assert base.set_velocity.call_count == 0, (
+            "Main loop should NOT call set_velocity — TARE handles movement"
+        )
 
     def test_wander_skipped_when_no_bridge(self):
         """has_bridge=False: wander block is not entered, no set_velocity calls in main loop.
@@ -533,8 +508,8 @@ class TestDataChainCompatibility:
         assert "/state_estimation" in src
         assert "/registered_scan" in src
 
-    def test_sensor_scan_generation_uses_best_effort_depth_one(self):
-        """sensorScanGeneration.cpp uses BEST_EFFORT, depth=1 — compatible with bridge."""
+    def test_sensor_scan_generation_uses_reliable_qos(self):
+        """sensorScanGeneration.cpp uses RELIABLE QoS for cross-process robustness."""
         cpp_path = (
             _REPO_ROOT.parent
             / "vector_navigation_stack"
@@ -548,16 +523,12 @@ class TestDataChainCompatibility:
             pytest.skip("sensorScanGeneration.cpp not found — skipping nav stack analysis")
 
         src = cpp_path.read_text()
-        assert "RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT" in src, (
-            "Expected BEST_EFFORT in sensorScanGeneration.cpp"
+        assert "RMW_QOS_POLICY_RELIABILITY_RELIABLE" in src, (
+            "Expected RELIABLE in sensorScanGeneration.cpp (not BEST_EFFORT)"
         )
-        # depth = 1 for both subscribers (defined in qos_profile)
-        assert '"depth"' not in src  # C struct initializer, not JSON
-        # The struct has depth field = 1
-        assert "1," in src  # depth value in the qos_profile struct
 
     def test_approximate_time_queue_size_is_adequate(self):
-        """ApproximateTime queue size 100 handles 200 Hz odom + 10 Hz scans."""
+        """ApproximateTime queue size >= 200 handles 200 Hz odom + 10 Hz scans."""
         cpp_path = (
             _REPO_ROOT.parent
             / "vector_navigation_stack"
@@ -571,9 +542,12 @@ class TestDataChainCompatibility:
             pytest.skip("sensorScanGeneration.cpp not found")
 
         src = cpp_path.read_text()
-        # syncPolicy(100) — queue accommodates rate mismatch
-        assert "syncPolicy(100)" in src, (
-            "Expected syncPolicy(100) for ApproximateTime queue"
+        import re
+        match = re.search(r'syncPolicy\((\d+)', src)
+        assert match, "Could not find syncPolicy queue size"
+        queue_size = int(match.group(1))
+        assert queue_size >= 200, (
+            f"syncPolicy queue size {queue_size} < 200 (too small for cross-process sync)"
         )
 
     def test_wander_interval_reduces_stop_gap(self):

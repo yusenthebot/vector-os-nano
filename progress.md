@@ -1,8 +1,8 @@
 # Vector OS Nano SDK — Progress
 
-**Last updated:** 2026-04-02
-**Version:** v1.0.0-dev
-**Branch:** master
+**Last updated:** 2026-04-03 (evening)
+**Version:** v1.0.2-dev
+**Branch:** feat/alpha-fix-rgb-depth-timing
 
 ---
 
@@ -96,11 +96,26 @@ Measured accuracy (MuJoCo sim):
 | Persistence (L9) | **28/28** | SceneGraph save/load lifecycle |
 | Auto-Look (L10) | **8/8** | ExploreSkill + VLM auto-observe |
 | Mobile Loop (L11) | **14/14** | LLM planning, fallback, execution |
-| TARE Chain (L12) | **20/20** | wander interval, duty cycle, QoS |
+| TARE Chain (L12) | **20/20** | seed walk, QoS validation, continuity |
 | Depth Projection (L13) | **24/24** | D435 intrinsics, pixel→world |
 | Detection (L14) | **12/12** | GroundingDINO inference, GPU, bbox |
 | Detection Integration (L15) | **43/43** | detector wiring, LookSkill, SceneGraph, auto-look |
-| **Total** | **310+** | 0 regressions |
+| Explore Nav (L16) | **4/4** | seed behavior, auto-look on explore |
+| TARE Warmup (L17) | **12/12** | initial waypoint, QoS, seed walk, diagnostics |
+| Wall Clearance (L18) | **18/18** | vehicle dims, searchRadius, obstacle check, margins |
+| Detector Cleanup (L19) | **12/12** | disabled pattern, no active refs, infra intact |
+| Depth Ground Truth | **9/9** | MuJoCo cam_xpos/xmat vs projection |
+| Path Follower | **20/20** | adaptive lookahead, TARE replan sim, speed floor |
+| TARE Config | **6/6** | collision margin validation for Go2 body |
+| **Total** | **400+** | 0 regressions from v1.0.2 changes |
+
+### What's New (v1.0.2-dev)
+- **TARE Warmup Fix**: Initial waypoint 12m→3m, sensor_scan_generation QoS BEST_EFFORT→RELIABLE (depth=5, sync=200), seed walk before nav flag.
+- **Wall Clearance Fix**: searchRadius 0.45→0.6m, vehicleWidth 0.5→0.35m, obstacleHeightThre 0.08→0.15m, pathScale 1.0→0.75. Net clearance 0.21m→0.425m.
+- **Bridge Obstacle Check**: Front 60-degree cone check — stop at <0.3m, proportional slowdown at <0.6m.
+- **Bridge Diagnostics**: odom/scan/path counters logged every 10s for TARE data flow debugging.
+- **TARE Collision Margins**: kViewPointCollisionMargin 0.35→0.5, aligned with searchRadius.
+- **Detector Cleanup**: GroundingDINO refs cleaned, infrastructure preserved for future GPU use.
 
 ### What's New (v1.0.0-dev)
 - **GroundingDINO Object Detection**: Open-vocabulary detector (grounding-dino-tiny) on RTX 5080. Per-object bounding boxes for accurate positioning.
@@ -116,7 +131,7 @@ Measured accuracy (MuJoCo sim):
 - Go2 walks with unitree convex MPC (auto-detected, sinusoidal fallback)
 - Livox MID360 + RealSense D435 simulation (LiDAR + RGBD, mounted cameras)
 - Vector Nav Stack: localPlanner, pathFollower, terrainAnalysis, FAR planner
-- TARE autonomous exploration with continuous wander velocity
+- TARE autonomous exploration with seed walk + nav flag handoff
 - GroundingDINO object detection → D435 depth → world coordinate mapping
 - VLM room identification + scene description (GPT-4o-mini)
 - Multi-room patrol with spatial memory recording
@@ -128,6 +143,14 @@ Measured accuracy (MuJoCo sim):
 1. Some false detections in MuJoCo (low texture quality → floor detected as desk)
 2. Objects at image edges may have inaccurate depth (D435 depth noise at boundaries)
 3. FAR planner publishes /way_point but /global_path sometimes incomplete
+4. BUG-3 FIXED: TARE viewpoints were 0.18m from walls, Go2 half-width=0.25m — unreachable.
+   Collision margins updated. Exploration now places reachable viewpoints 0.30m+ from walls.
+5. BUG-1 FIXED: RGB/depth timing mismatch. explore.py and look.py now capture all sensor
+   data (frame, depth, cam_pose, pos, heading) atomically before slow VLM calls (2-20s).
+   go2_vnav_bridge.py now uses named d435_rgb/d435_depth cameras instead of free camera.
+6. BUG-4 FIXED: Path follower hard-dropped to 0.1 m/s when dist<0.5m. With TARE replanning
+   at ~1Hz with short paths, dog was permanently slow. Now: adaptive lookahead (0.8-2.0m
+   scaled to path length), gradual decel only at dist<0.3m, floor max(0.15, dist*0.5).
 
 ### TODO
 - [ ] Filter false detections: cross-reference GroundingDINO with VLM objects
@@ -135,6 +158,9 @@ Measured accuracy (MuJoCo sim):
 - [ ] Real D435 driver integration (rs2 → /camera/image + /camera/depth)
 - [ ] Confidence-weighted object position averaging across observations
 - [ ] Object tracking across frames (re-identification)
+- [ ] BUG-2 (wall clipping): Confirm via RViz that /terrain_map marks walls as obstacles post BUG-3 fix.
+      obstacleHeightThre=0.08 in local_planner_go2.yaml should catch wall points (h>0.08m).
+      Likely resolves after BUG-3 since TARE no longer requests near-wall paths.
 
 ### CLI Commands
 | Command | Purpose |

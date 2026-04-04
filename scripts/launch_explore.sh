@@ -45,7 +45,7 @@ cleanup() {
                 tare_planner_node go2_vnav_bridge; do
         pkill -9 -f "$proc" 2>/dev/null || true
     done
-    rm -f /dev/shm/fastrtps_* 2>/dev/null
+    rm -f /dev/shm/fastrtps_* /tmp/vector_nav_active 2>/dev/null
     wait 2>/dev/null
     echo "Done."
 }
@@ -87,9 +87,20 @@ sleep 1
 
 # 4. Terrain analysis
 echo "[4/8] Starting terrain analysis..."
-ros2 run terrain_analysis terrainAnalysis &
+ros2 run terrain_analysis terrainAnalysis --ros-args \
+  -p clearDyObs:=true \
+  -p minDyObsDis:=0.14 \
+  -p minOutOfFovPointNum:=20 \
+  -p obstacleHeightThre:=0.15 \
+  -p maxRelZ:=0.3 \
+  -p limitGroundLift:=true \
+  -p maxGroundLift:=0.05 \
+  -p minDyObsVFOV:=-55.0 \
+  -p maxDyObsVFOV:=10.0 &
 PIDS+=($!)
-ros2 run terrain_analysis_ext terrainAnalysisExt &
+ros2 run terrain_analysis_ext terrainAnalysisExt --ros-args \
+  -p obstacleHeightThre:=0.15 \
+  -p maxRelZ:=0.3 &
 PIDS+=($!)
 sleep 3
 
@@ -111,6 +122,9 @@ ros2 run visualization_tools visualizationTools 2>/dev/null &
 PIDS+=($!)
 rviz2 -d "$RVIZ_CFG" 2>/dev/null &
 PIDS+=($!)
+
+# Nav flag NOT created here — dog stays still after seed.
+# explore.py creates /tmp/vector_nav_active when user types "explore".
 
 # Seed with initial movement so FAR + TARE can build initial graphs
 echo ""
