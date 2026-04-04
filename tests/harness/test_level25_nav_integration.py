@@ -65,15 +65,14 @@ def test_proxy_has_navigate_to() -> None:
     assert "timeout" in params, "navigate_to must accept 'timeout' parameter"
 
 
-def test_proxy_has_goal_point_publisher() -> None:
-    """Proxy __init__ / connect() creates a /goal_point publisher."""
+def test_proxy_has_waypoint_publisher() -> None:
+    """Proxy creates a /way_point publisher (direct to localPlanner)."""
     src = _proxy_source()
-    # The publisher should be created for the /goal_point topic
-    assert "/goal_point" in src, (
-        "go2_ros2_proxy.py must reference '/goal_point' topic"
+    assert "/way_point" in src, (
+        "go2_ros2_proxy.py must reference '/way_point' topic"
     )
-    assert "goal_pub" in src, (
-        "go2_ros2_proxy.py must have a _goal_pub attribute for the /goal_point publisher"
+    assert "waypoint_pub" in src, (
+        "go2_ros2_proxy.py must have a _waypoint_pub attribute"
     )
     assert "PointStamped" in src, (
         "go2_ros2_proxy.py must import/use PointStamped for /goal_point"

@@ -59,8 +59,11 @@ class Go2ROS2Proxy:
             from sensor_msgs.msg import Image
 
             self._cmd_pub = self._node.create_publisher(Twist, "/cmd_vel_nav", 10)
-            self._goal_pub = self._node.create_publisher(
-                PointStamped, "/goal_point", 10
+            # Publish to /way_point directly (same topic as TARE output).
+            # localPlanner subscribes to /way_point for its goal.
+            # During navigate, we publish at 2Hz to override TARE's 1Hz.
+            self._waypoint_pub = self._node.create_publisher(
+                PointStamped, "/way_point", 10
             )
             self._node.create_subscription(
                 Odometry, "/state_estimation", self._odom_cb, reliable_qos
@@ -302,21 +305,14 @@ class Go2ROS2Proxy:
     def navigate_to(
         self, x: float, y: float, timeout: float = 60.0
     ) -> bool:
-        """Navigate to (x, y) using the Vector Nav Stack (FAR planner).
+        """Navigate to (x, y) via the nav stack.
 
-        Steps:
-        1. Creates /tmp/vector_nav_active flag so the bridge path follower
-           takes control of /cmd_vel.
-        2. Publishes a geometry_msgs/PointStamped to /goal_point — FAR
-           planner subscribes to this topic and generates a path.
-        3. Polls get_position() every 0.5 s; returns True when the robot
-           is within 0.8 m of the goal.
-        4. Returns False if timeout elapses first.
+        Publishes goal to /way_point at 2Hz (same topic as TARE output,
+        same topic localPlanner subscribes to). The higher publish rate
+        overrides TARE's 1Hz waypoints so navigation works even while
+        TARE is running. No need to kill TARE.
 
-        Does NOT remove the nav flag on completion — exploration may
-        resume after navigation finishes.
-
-        Stores the goal in self._nav_goal for RViz visualization.
+        Returns True when within 0.8m of goal, False on timeout.
         """
         if self._node is None:
             logger.warning("[NAV] navigate_to called but node not connected")
@@ -329,47 +325,47 @@ class Go2ROS2Proxy:
         except OSError as exc:
             logger.warning("[NAV] Could not create nav flag: %s", exc)
 
-        # Record goal for RViz markers
         self._nav_goal = (float(x), float(y))
-
-        # Publish goal to FAR planner
-        self._publish_goal_point(x, y)
         logger.info("[NAV] navigate_to(%.2f, %.2f) timeout=%.0fs", x, y, timeout)
 
         deadline = time.time() + timeout
-        _ARRIVAL_DIST: float = 0.8  # metres
+        _ARRIVAL_DIST: float = 0.8
 
         while time.time() < deadline:
+            # Publish at 2Hz to override TARE's 1Hz /way_point
+            self._publish_waypoint(x, y)
+            time.sleep(0.5)
+
             pos = self.get_position()
             dist = math.sqrt((pos[0] - x) ** 2 + (pos[1] - y) ** 2)
             if dist < _ARRIVAL_DIST:
                 logger.info(
                     "[NAV] Arrived at (%.2f, %.2f) — distance=%.2fm", x, y, dist
                 )
+                self._nav_goal = None
                 return True
-            time.sleep(0.5)
 
         logger.warning(
             "[NAV] navigate_to(%.2f, %.2f) timed out after %.0fs", x, y, timeout
         )
         return False
 
-    def _publish_goal_point(self, x: float, y: float) -> None:
-        """Publish a PointStamped goal to /goal_point (FAR planner topic)."""
+    def _publish_waypoint(self, x: float, y: float) -> None:
+        """Publish PointStamped to /way_point (localPlanner goal topic)."""
         if self._node is None:
             return
         try:
             from geometry_msgs.msg import PointStamped
-            from std_msgs.msg import Header
 
             msg = PointStamped()
+            msg.header.stamp = self._node.get_clock().now().to_msg()
             msg.header.frame_id = "map"
             msg.point.x = float(x)
             msg.point.y = float(y)
             msg.point.z = 0.0
-            self._goal_pub.publish(msg)
+            self._waypoint_pub.publish(msg)
         except Exception as exc:
-            logger.warning("[NAV] Failed to publish goal point: %s", exc)
+            logger.warning("[NAV] Failed to publish waypoint: %s", exc)
 
     def cancel_navigation(self) -> None:
         """Cancel active navigation: publish zero velocity and clear goal.
