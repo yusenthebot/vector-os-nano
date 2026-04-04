@@ -154,24 +154,26 @@ def _detect_current_room(x: float, y: float) -> str:
     return best_room
 
 
+_MIN_VISIT_COUNT: int = 3  # trust SceneGraph position only after N visits
+
+
 def _get_room_center_from_memory(
     memory: Any, room_key: str,
 ) -> tuple[float, float] | None:
     """Look up explored room center from spatial memory (SceneGraph).
 
-    Checks both the get_room() SceneGraph API (RoomNode.center_x/center_y)
-    and the backward-compatible get_location() API (LocationRecord.x/y).
-    Returns (x, y) only when center coordinates are non-zero (i.e. a real
-    visited position was stored, not the default 0.0 placeholder).
+    Only trusts positions with visit_count >= _MIN_VISIT_COUNT.
+    A single visit (often at doorway) is unreliable. Multiple visits
+    with running average converge to the actual room center.
 
-    Returns None if the room is not in memory or has no valid coordinates.
+    Returns None if room not in memory or position not trustworthy.
     """
     # SceneGraph direct API
     if hasattr(memory, "get_room"):
         room_node = memory.get_room(room_key)
         if room_node is not None:
             x, y = room_node.center_x, room_node.center_y
-            if x != 0.0 or y != 0.0:
+            if (x != 0.0 or y != 0.0) and room_node.visit_count >= _MIN_VISIT_COUNT:
                 return (x, y)
 
     # Backward-compatible get_location() API (SceneGraph + SpatialMemory)

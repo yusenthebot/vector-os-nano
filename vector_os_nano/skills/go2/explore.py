@@ -471,9 +471,18 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
         except Exception as exc:
             logger.warning("[EXPLORE] Seed walk failed (non-fatal): %s", exc)
 
-    # Nav stack + TARE are already running (started by launch_explore.sh
-    # via sim_tool). Enable the bridge path follower via nav flag now that
-    # TARE has enough data to generate its first viewpoint.
+    # Start TARE exploration (kAutoStart=false, waits for this signal)
+    try:
+        import subprocess as _sp
+        _sp.run([
+            "ros2", "topic", "pub", "--once",
+            "/start_exploration", "std_msgs/msg/Bool", "{data: true}",
+        ], capture_output=True, timeout=5)
+        logger.info("[EXPLORE] Sent /start_exploration to TARE")
+    except Exception as exc:
+        logger.warning("[EXPLORE] Failed to send /start_exploration: %s", exc)
+
+    # Enable bridge path follower via nav flag
     if has_bridge:
         try:
             with open("/tmp/vector_nav_active", "w") as f:

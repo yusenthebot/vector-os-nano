@@ -16,7 +16,7 @@ tare_planner_node:
     pub_waypoint_topic_ : /way_point
     pub_momentum_activation_count_topic_ : momentum_activation_count
 
-    kAutoStart : true
+    kAutoStart : false
     kRushHome : true
     kUseTerrainHeight : false
     kCheckTerrainCollision : true

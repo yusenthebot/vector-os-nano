@@ -307,12 +307,18 @@ class Go2ROS2Proxy:
     def navigate_to(
         self, x: float, y: float, timeout: float = 60.0
     ) -> bool:
-        """Navigate to (x, y) via the nav stack.
+        """Navigate to (x, y) via FAR planner global route planning.
 
-        Publishes goal to /way_point at 2Hz (same topic as TARE output,
-        same topic localPlanner subscribes to). The higher publish rate
-        overrides TARE's 1Hz waypoints so navigation works even while
-        TARE is running. No need to kill TARE.
+        Publishes goal to /goal_point periodically (2Hz). FAR planner
+        computes a route through doorways and publishes intermediate
+        /way_point at 5Hz. localPlanner follows FAR's waypoints.
+
+        We do NOT publish to /way_point directly — that would override
+        FAR's routed intermediate points and cause the dog to go straight
+        into walls instead of through doorways.
+
+        FAR's 5Hz /way_point naturally overrides TARE's 1Hz exploration
+        waypoints during navigation.
 
         Returns True when within 0.8m of goal, False on timeout.
         """
@@ -333,13 +339,15 @@ class Go2ROS2Proxy:
         deadline = time.time() + timeout
         _ARRIVAL_DIST: float = 0.8
 
-        # Send goal to FAR planner once for global route planning
-        self._publish_goal_point(x, y)
-
         while time.time() < deadline:
-            # Publish at 2Hz to /way_point (overrides TARE's 1Hz)
-            # FAR also publishes to /way_point with routed intermediate
-            # waypoints — localPlanner follows whichever is latest.
+            # Dual publish strategy:
+            # 1. /goal_point → FAR planner (global routing through doorways)
+            #    FAR publishes routed /way_point at 5Hz when it has a graph
+            # 2. /way_point → localPlanner direct (fallback when FAR has no graph)
+            #    localPlanner does local obstacle avoidance toward this point
+            # After exploration, FAR's 5Hz /way_point overrides our 2Hz.
+            # Before exploration, our direct /way_point gets the dog moving.
+            self._publish_goal_point(x, y)
             self._publish_waypoint(x, y)
             time.sleep(0.5)
 
