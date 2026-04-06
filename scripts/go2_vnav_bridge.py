@@ -1042,17 +1042,22 @@ class Go2VNavBridge(Node):
                     f"Stuck 4s at ({odom.x:.1f},{odom.y:.1f}) — "
                     f"sent /reset_waypoint to TARE"
                 )
-            elif self._stuck_count == 4:  # 8s — escape: back up
+            elif self._stuck_count == 4:  # 8s — sustained escape maneuver
+                now = time.time()
+                front_d, left_d, right_d = self._scan_surroundings()
+                open_side = "right" if right_d > left_d else "left"
                 self.get_logger().warn(
-                    f"Stuck 8s — backing up to escape"
+                    f"Stuck 8s — escape: reverse 1s + strafe {open_side}"
                 )
-                # Back up for 1 second (will be overridden by next _follow_path)
-                self._go2.set_velocity(-0.4, 0.0, 0.0)
-                self._last_cmd_time = time.time()
-                self._current_path = []  # clear stale path
-                self._stuck_count = 0  # reset for fresh detection
+                # Use wall escape mechanism for sustained 2.5s maneuver
+                # (not a single velocity set that gets overridden in 50ms)
+                self._wall_escape_phase2 = now + 1.0   # 1s reverse
+                self._wall_escape_until = now + 2.5     # 1.5s strafe
+                self._current_path = []
+                self._stuck_count = 0
+                self._stuck_history.append((odom.x, odom.y))
 
-                # Stuck loop detection: if last 3 resets all within 0.5m → aggressive escape
+                # Stuck loop: 3+ escapes at same spot → longer escape
                 if len(self._stuck_history) >= 3:
                     recent = self._stuck_history[-3:]
                     cx = sum(p[0] for p in recent) / 3
@@ -1061,13 +1066,10 @@ class Go2VNavBridge(Node):
                         math.sqrt((p[0] - cx) ** 2 + (p[1] - cy) ** 2) < 0.5
                         for p in recent
                     ):
-                        self.get_logger().warn(
-                            "Stuck loop detected — aggressive escape: lateral strafe"
-                        )
-                        self._go2.set_velocity(-0.3, 0.3, 0.5)
-                        self._last_cmd_time = time.time()
+                        self.get_logger().warn("Stuck loop — extended escape 4s")
+                        self._wall_escape_phase2 = now + 2.0
+                        self._wall_escape_until = now + 4.0
                         self._stuck_history.clear()
-                        self._current_path = []
 
         self._stuck_pos = cur
 

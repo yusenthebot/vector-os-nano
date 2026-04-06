@@ -651,40 +651,10 @@ class ExploreSkill:
                     if n > 0:
                         logger.info("[EXPLORE] Re-loaded room layout: %d rooms", n)
 
-        # Wire auto-look if VLM + camera are available
-        # Room identification only — no object detection/labeling
-        vlm = context.services.get("vlm")
-        spatial_memory = _spatial_memory
-        if vlm is not None:
-            def _do_auto_look(room: str) -> dict | None:
-                """Capture frame, identify room, record to spatial memory."""
-                try:
-                    frame = base.get_camera_frame()
-                    pos = base.get_position()
-                    heading = base.get_heading()
-
-                    room_id = vlm.identify_room(frame)
-                    detected_room = room_id.room if room_id.room != "unknown" else room
-
-                    # Never record "unknown" to SceneGraph — it pollutes nearest_room()
-                    if spatial_memory is not None and detected_room != "unknown":
-                        if hasattr(spatial_memory, "observe_with_viewpoint"):
-                            spatial_memory.observe_with_viewpoint(
-                                detected_room, float(pos[0]), float(pos[1]),
-                                float(heading), [], "",
-                            )
-                        else:
-                            spatial_memory.visit(detected_room, float(pos[0]), float(pos[1]))
-
-                    return {
-                        "room": detected_room,
-                        "room_confidence": room_id.confidence,
-                    }
-                except Exception as exc:
-                    logger.warning("[EXPLORE] auto-look VLM error: %s", exc)
-                    return None
-
-            set_auto_look(_do_auto_look)
+        # VLM auto-look DISABLED for sim — room detection is config-based.
+        # Re-enable for real-world deployment where VLM scene descriptions
+        # provide spatial understanding.
+        # set_auto_look(None) — explicitly not wiring VLM
 
         # Bridge + nav stack are already running (started by launch_explore.sh
         # via sim_tool). Do NOT call _start_bridge_on_go2 — it creates a
