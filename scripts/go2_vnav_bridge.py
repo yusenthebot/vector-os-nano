@@ -829,10 +829,11 @@ class Go2VNavBridge(Node):
                 self._go2.set_velocity(0.0, 0.0, 0.0)
                 self._last_cmd_time = time.time()
                 return
-            # Gentle idle wander with obstacle check
+            # Idle wander: no path but nav enabled (waiting for TARE/FAR replan)
             front_dist = self._check_front_obstacle()
-            if front_dist < 0.5:
-                self._go2.set_velocity(0.0, 0.0, 0.3)
+            if front_dist < 0.4:
+                # Front blocked — back away + turn to find open space
+                self._go2.set_velocity(-0.2, 0.0, 0.4)
             else:
                 self._go2.set_velocity(0.15, 0.0, 0.10)
             self._last_cmd_time = time.time()
