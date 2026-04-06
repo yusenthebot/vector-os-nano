@@ -19,7 +19,6 @@ The exploration thread:
 from __future__ import annotations
 
 import logging
-import math
 import os
 import shutil
 import signal
@@ -497,9 +496,6 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
     # to TARE entirely. The nav stack drives at up to 0.8 m/s on its own.
 
     _prev_room: str | None = None
-    _last_vlm_check: float = 0.0
-    _VLM_ROOM_INTERVAL: float = 10.0  # seconds between VLM room ID attempts
-    _NEW_ROOM_DIST: float = 3.0       # meters — if farther than this, probably new room
 
     try:
         while not _explore_cancel.is_set():
@@ -512,37 +508,9 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                 x, y = float(pos[0]), float(pos[1])
                 room = _spatial_memory.nearest_room(x, y) if _spatial_memory else None
 
-                # --- VLM room discovery (non-blocking) ---
-                # When SceneGraph is empty or robot is far from known rooms,
-                # fire VLM in a background thread. The callback writes to
-                # SceneGraph; next loop iteration picks it up via nearest_room.
-                needs_vlm = False
-                if room is None:
-                    needs_vlm = True  # bootstrap: SceneGraph empty
-                elif _spatial_memory is not None:
-                    room_node = _spatial_memory.get_room(room)
-                    if room_node:
-                        dist = math.sqrt(
-                            (x - room_node.center_x) ** 2
-                            + (y - room_node.center_y) ** 2
-                        )
-                        if dist > _NEW_ROOM_DIST:
-                            needs_vlm = True  # far from known room
-
-                now_t = time.time()
-                if needs_vlm and _auto_look is not None and (now_t - _last_vlm_check) > _VLM_ROOM_INTERVAL:
-                    _last_vlm_check = now_t
-                    def _vlm_discover(fallback: str = room or "unknown") -> None:
-                        try:
-                            obs = _auto_look(fallback)
-                            if obs and obs.get("room") and obs["room"] != "unknown":
-                                logger.info(
-                                    "[EXPLORE] VLM discovered room: %s",
-                                    obs["room"],
-                                )
-                        except Exception as exc:
-                            logger.warning("[EXPLORE] VLM room check failed: %s", exc)
-                    threading.Thread(target=_vlm_discover, daemon=True).start()
+                # Room detection is position-based via SceneGraph.nearest_room().
+                # In sim: SceneGraph is pre-seeded from config/room_layout.yaml.
+                # In real: rooms discovered via SLAM + spatial understanding.
 
                 # Record EVERY position sample in SceneGraph.
                 # visit() uses running average → center converges as

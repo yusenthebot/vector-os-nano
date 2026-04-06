@@ -850,6 +850,59 @@ class SceneGraph:
             }
 
     # ------------------------------------------------------------------
+    # Layout seeding (simulation)
+    # ------------------------------------------------------------------
+
+    def load_layout(self, layout_path: str) -> int:
+        """Seed SceneGraph from a room layout config file.
+
+        Loads room centers and door positions from a YAML file. Each room
+        gets visit_count=10 so nearest_room() and navigate work immediately.
+
+        SIM ONLY — for real-world, rooms are discovered via exploration.
+
+        Args:
+            layout_path: Path to room_layout.yaml.
+
+        Returns:
+            Number of rooms loaded, or 0 on failure.
+        """
+        try:
+            with open(layout_path) as f:
+                data = yaml.safe_load(f)
+            if not isinstance(data, dict):
+                return 0
+
+            count = 0
+            for room_name, coords in data.get("rooms", {}).items():
+                if isinstance(coords, list) and len(coords) == 2:
+                    x, y = float(coords[0]), float(coords[1])
+                    # High visit_count so nearest_room trusts these positions
+                    with self._lock:
+                        self._rooms[room_name] = RoomNode(
+                            room_id=room_name,
+                            center_x=x,
+                            center_y=y,
+                            visit_count=10,
+                            last_visited=time.time(),
+                        )
+                    count += 1
+
+            for door_key, coords in data.get("doors", {}).items():
+                if isinstance(coords, list) and len(coords) == 2:
+                    parts = door_key.split("-")
+                    if len(parts) == 2:
+                        self.add_door(parts[0], parts[1], float(coords[0]), float(coords[1]))
+
+            logger.info("[SceneGraph] Loaded layout: %d rooms from %s", count, layout_path)
+            return count
+        except FileNotFoundError:
+            return 0
+        except Exception as exc:
+            logger.warning("[SceneGraph] load_layout failed: %s", exc)
+            return 0
+
+    # ------------------------------------------------------------------
     # Serialization
     # ------------------------------------------------------------------
 
