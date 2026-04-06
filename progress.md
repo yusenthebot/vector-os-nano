@@ -1,8 +1,8 @@
 # Vector OS Nano SDK — Progress
 
 **Last updated:** 2026-04-06
-**Version:** v1.3.0-dev
-**Branch:** feat/sim-to-real-nav
+**Version:** v1.3.0
+**Branch:** feat/sim-to-real-nav (24 commits, +2908/-694)
 
 ## Architecture
 
@@ -84,7 +84,13 @@ Cylinder body safety: 3 zones (comfort/push/danger) based on gap
 | VLM | Ollama gemma4:e4b (disabled for sim) | Active for scene description |
 | Interface | /state_estimation (same) | /state_estimation (same) |
 
+## CLI Commands
+- `/reset` — one-click recovery from tip-over (stand up at current position)
+- `/clear_memory` — clear SceneGraph (auto-reloads layout on next explore)
+- `stop` — immediately cancels navigation (0.5s response)
+
 ## Known Limitations
-- TARE sometimes stops at 7/8 rooms
-- Real-world room detection needs SLAM + spatial understanding (not yet implemented)
-- Open WebUI installed but Docker needs reboot for iptables fix
+- FAR V-Graph coverage depends on TARE exploration thoroughness
+- TARE sometimes misses rooms → door-chain fallback handles it (10s stall detection)
+- Real-world room detection needs SLAM + spatial understanding
+- Ollama + Open WebUI installed (Docker needs reboot for iptables)
