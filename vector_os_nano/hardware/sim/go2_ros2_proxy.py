@@ -367,8 +367,8 @@ class Go2ROS2Proxy:
 
         start_time = time.time()
         _ARRIVAL_DIST: float = 0.8
-        _FAR_PROBE_S: float = 5.0    # give FAR time to process goal
-        _MIN_PROBE_S: float = 2.0    # minimum wait even if /path seen early
+        _FAR_PROBE_S: float = 3.0    # shorter probe — door-chain is reliable backup
+        _MIN_PROBE_S: float = 1.5    # minimum wait
 
         # Reset waypoint timestamp to ignore stale /way_point from TARE.
         # /way_point is published by FAR (routing) or TARE (exploring).
@@ -431,7 +431,7 @@ class Go2ROS2Proxy:
                 _stall_time += 0.5
             _last_dist = dist
 
-            if _stall_time > 20.0:
+            if _stall_time > 10.0:
                 logger.warning(
                     "[NAV] Stalled %.0fs (dist=%.1fm not decreasing) — switching to door-chain",
                     _stall_time, dist,
