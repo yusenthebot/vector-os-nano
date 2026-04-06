@@ -448,7 +448,8 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
     _explore_running = True
     _explore_cancel.clear()
 
-    _emit("started", {"total_rooms": 0})  # unknown — TARE handles coverage
+    _total = len(_spatial_memory.get_all_rooms()) if _spatial_memory else 0
+    _emit("started", {"total_rooms": _total})
 
     # Seed walk: give TARE initial scan data by moving the robot forward briefly.
     # TARE requires 5 scans per keypose at 10 Hz (0.5 s minimum) before it can
@@ -536,7 +537,7 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                     _emit("room_entered", {
                         "room": room,
                         "visited": len(_explore_visited),
-                        "total": len(_explore_visited),
+                        "total": _total,
                         "all_rooms": sorted(_explore_visited),
                     })
 
@@ -570,9 +571,10 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
 
             _explore_cancel.wait(timeout=_POSITION_SAMPLE_INTERVAL)
 
-        if not _explore_cancel.is_set():
-            # Exploration runs until user stops or _explore_cancel is set.
-            # TARE autonomously decides coverage completeness.
+        if _total > 0 and len(_explore_visited) >= _total:
+            stop_tare_only()
+            _emit("completed", {"rooms": sorted(_explore_visited)})
+        elif not _explore_cancel.is_set():
             _emit("stopped", {"reason": "finished", "rooms": sorted(_explore_visited)})
 
     finally:
@@ -634,6 +636,20 @@ class ExploreSkill:
         # Wire spatial memory for position recording during exploration
         global _spatial_memory
         _spatial_memory = context.services.get("spatial_memory")
+
+        # Ensure room layout is loaded (handles /clear_memory wiping the data)
+        if _spatial_memory is not None and hasattr(_spatial_memory, 'load_layout'):
+            if not _spatial_memory.get_all_rooms():
+                _layout = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(
+                        os.path.dirname(os.path.abspath(__file__))
+                    ))),
+                    "config", "room_layout.yaml",
+                )
+                if os.path.isfile(_layout):
+                    n = _spatial_memory.load_layout(_layout)
+                    if n > 0:
+                        logger.info("[EXPLORE] Re-loaded room layout: %d rooms", n)
 
         # Wire auto-look if VLM + camera are available
         # Room identification only — no object detection/labeling
