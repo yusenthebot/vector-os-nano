@@ -376,16 +376,18 @@ class Go2ROS2Proxy:
         self._last_waypoint_time = 0.0
 
         # Phase 1: probe FAR — send /goal_point, wait for /way_point response
-        # FAR only publishes /way_point when it has a V-Graph AND can route.
-        # localPlanner's /path is unreliable (publishes even without FAR).
         probe_deadline = start_time + _FAR_PROBE_S
         while time.time() < probe_deadline:
+            if not os.path.exists("/tmp/vector_nav_active"):
+                logger.info("[NAV] Cancelled by stop command")
+                self._nav_goal = None
+                return False
             self._publish_goal_point(x, y)
             time.sleep(0.5)
             elapsed = time.time() - start_time
             if self._last_waypoint_time > start_time and elapsed >= _MIN_PROBE_S:
                 logger.info("[NAV] FAR responded with /way_point after %.1fs", elapsed)
-                break  # FAR is routing
+                break
 
         far_available = self._last_waypoint_time > start_time
         if not far_available:
@@ -403,14 +405,39 @@ class Go2ROS2Proxy:
         # ONLY publish /goal_point — let FAR handle /way_point routing.
         # FAR routes through doors via V-Graph and publishes intermediate
         # /way_point at 5Hz.
+        # Phase 2: full navigation loop (FAR is routing)
         deadline = start_time + timeout
         _last_diag = 0.0
+        _last_dist = float("inf")  # for stall detection
+        _stall_time = 0.0
         while time.time() < deadline:
+            # --- Cancel check: stop command removes nav flag ---
+            if not os.path.exists("/tmp/vector_nav_active"):
+                logger.info("[NAV] Cancelled by stop command")
+                self._nav_goal = None
+                self.set_velocity(0.0, 0.0, 0.0)
+                return False
+
             self._publish_goal_point(x, y)
             time.sleep(0.5)
 
             pos = self.get_position()
             dist = math.sqrt((pos[0] - x) ** 2 + (pos[1] - y) ** 2)
+
+            # --- Stall detection: if not getting closer, fall back to door-chain ---
+            if dist < _last_dist - 0.1:
+                _stall_time = 0.0  # making progress
+            else:
+                _stall_time += 0.5
+            _last_dist = dist
+
+            if _stall_time > 20.0:
+                logger.warning(
+                    "[NAV] Stalled %.0fs (dist=%.1fm not decreasing) — switching to door-chain",
+                    _stall_time, dist,
+                )
+                remaining = timeout - (time.time() - start_time)
+                return self._navigate_via_doors(x, y, remaining)
 
             elapsed = time.time() - start_time
             if elapsed - _last_diag >= 5.0:
@@ -497,6 +524,12 @@ class Go2ROS2Proxy:
             logger.info("[NAV] Door-chain -> %s (%.1f, %.1f)", label, wx, wy)
 
             while time.time() < deadline:
+                if not os.path.exists("/tmp/vector_nav_active"):
+                    logger.info("[NAV] Door-chain cancelled by stop")
+                    self._nav_goal = None
+                    self.set_velocity(0.0, 0.0, 0.0)
+                    return False
+
                 self._publish_waypoint(wx, wy)
                 time.sleep(0.5)
 

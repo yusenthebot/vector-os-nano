@@ -103,7 +103,7 @@ class TestPhase2NoDirectWaypoint:
         if phase2_comment < 0:
             phase2_comment = src.find("Phase 2")
         assert phase2_comment > 0, "Phase 2 section not found"
-        phase2 = src[phase2_comment:phase2_comment + 800]
+        phase2 = src[phase2_comment:phase2_comment + 1200]
         assert "_publish_goal_point" in phase2
 
     def test_phase2_no_direct_waypoint(self):
