@@ -810,9 +810,10 @@ class Go2VNavBridge(Node):
         # Key difference from wheeled: Go2 can strafe, so heading gate is wide.
         # cos/sin decomposition handles all heading errors up to the gate.
         _MAX_SPEED = 0.8               # m/s forward cruise
-        _MAX_LAT = 0.4                 # m/s max lateral speed
+        _MAX_LAT = 0.25                # m/s max lateral speed (conservative for gait stability)
+        _MAX_COMBINED = 0.6            # m/s max combined velocity (vx²+vy² cap)
         _MAX_YAW_RATE = 1.0            # rad/s max yaw rate
-        _YAW_GAIN = 7.5                # P-gain for yaw correction
+        _YAW_GAIN = 5.0                # P-gain for yaw correction (was 7.5 — too aggressive with omni)
         _LOOK_AHEAD = 0.8              # m lookahead (wider than C++ to smooth curves)
         _STOP_DIS = 0.2                # m — stop within this
         _SLOW_DWN_DIS = 1.0            # m — start decelerating
@@ -885,9 +886,15 @@ class Go2VNavBridge(Node):
         if end_dis > _STOP_DIS:
             vx = target_speed * math.cos(dir_diff)
             vy = -target_speed * math.sin(dir_diff)
-            # Cap reverse speed (can't see behind, be cautious)
-            vx = max(-0.3, vx)
+            # Cap reverse and lateral for gait stability
+            vx = max(-0.2, vx)
             vy = max(-_MAX_LAT, min(_MAX_LAT, vy))
+            # Cap total linear velocity — combined vx+vy must be safe for MPC gait
+            linear = math.sqrt(vx * vx + vy * vy)
+            if linear > _MAX_COMBINED:
+                scale = _MAX_COMBINED / linear
+                vx *= scale
+                vy *= scale
         else:
             vx = 0.0
             vy = 0.0

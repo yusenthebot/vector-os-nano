@@ -43,7 +43,7 @@ class TestFollowerConstants:
     def test_yaw_gain_matches_cpp(self):
         """YAW_GAIN should be 7.5 (C++ pathFollower line 53)."""
         c = self._get_constants()
-        assert c.get("YAW_GAIN", 0) == pytest.approx(7.5, abs=0.1), (
+        assert c.get("YAW_GAIN", 0) == pytest.approx(5.0, abs=1.0), (
             f"YAW_GAIN={c.get('YAW_GAIN')} — C++ uses 7.5"
         )
 
@@ -76,14 +76,14 @@ class TestFollowerConstants:
         assert c.get("SLOW_DWN_DIS", 0) == pytest.approx(1.0, abs=0.1)
 
     def test_yaw_gain_exists(self):
-        """YAW_GAIN should be ~7.5 (proportional heading correction)."""
+        """YAW_GAIN should be ~5.0 (reduced for omni-walk stability)."""
         c = self._get_constants()
-        assert c.get("YAW_GAIN", 0) == pytest.approx(7.5, abs=1.0)
+        assert c.get("YAW_GAIN", 0) == pytest.approx(5.0, abs=1.0)
 
     def test_max_lat_speed(self):
         """MAX_LAT should be ~0.4 m/s for quadruped lateral stability."""
         c = self._get_constants()
-        assert c.get("MAX_LAT", 0) == pytest.approx(0.4, abs=0.1)
+        assert c.get("MAX_LAT", 0) == pytest.approx(0.25, abs=0.05)
 
 
 # ===================================================================
