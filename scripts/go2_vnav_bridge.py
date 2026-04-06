@@ -269,6 +269,9 @@ class Go2VNavBridge(Node):
         self._terrain_map_path = os.path.expanduser("~/.vector_os_nano/terrain_map.npz")
         self.create_timer(30.0, self._auto_save_terrain)
 
+        # Reset pose check (1 Hz) — triggered by /tmp/vector_reset_pose file flag
+        self.create_timer(1.0, self._check_reset_flag)
+
         # Front obstacle detection from cached pointcloud
         self._cached_points: list = []
 
@@ -310,6 +313,20 @@ class Go2VNavBridge(Node):
         self.get_logger().info(
             "Go2VNavBridge started — /state_estimation, /registered_scan, /joy, /speed"
         )
+
+    def _check_reset_flag(self) -> None:
+        """Check for reset pose request (1 Hz). Triggered by /tmp/vector_reset_pose."""
+        if os.path.exists("/tmp/vector_reset_pose"):
+            try:
+                os.remove("/tmp/vector_reset_pose")
+            except OSError:
+                pass
+            self.get_logger().warn("RESET POSE — standing up at current position")
+            self._go2.reset_pose()
+            self._current_path = []
+            self._pf_speed = 0.0
+            self._pf_lat = 0.0
+            self._pf_yawrate = 0.0
 
     def _check_nav_flag(self) -> None:
         """Check file flag to enable/disable path following (1 Hz)."""

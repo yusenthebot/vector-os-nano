@@ -720,6 +720,27 @@ class MuJoCoGo2:
     # State queries
     # ------------------------------------------------------------------
 
+    def reset_pose(self) -> None:
+        """Reset robot to standing pose at current XY position.
+
+        Fixes tip-overs without restarting the simulation. Keeps the robot
+        at its current (x, y) but resets z, orientation, joint angles, and
+        all velocities to the default standing state.
+        """
+        self._require_connection()
+        import mujoco as mj
+        data = self._mj.data
+        # Keep current XY, reset everything else
+        cur_x, cur_y = float(data.qpos[0]), float(data.qpos[1])
+        data.qpos[0] = cur_x
+        data.qpos[1] = cur_y
+        data.qpos[2] = 0.35                    # standing height
+        data.qpos[3:7] = [1, 0, 0, 0]          # upright quaternion (w,x,y,z)
+        data.qpos[7:19] = _STAND_JOINTS         # standing joint angles
+        data.qvel[:] = 0                         # zero all velocities
+        data.ctrl[:] = 0                         # zero all actuators
+        mj.mj_forward(self._mj.model, data)
+
     def get_position(self) -> list[float]:
         """Return base position [x, y, z] in world frame."""
         self._require_connection()
