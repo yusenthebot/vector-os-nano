@@ -919,9 +919,13 @@ class Go2VNavBridge(Node):
 
         else:
             # MODE 1: TRACKING — heading error < 60°
-            # cos/sin decomposition for smooth omni-directional following.
-            vx = target_speed * math.cos(dir_diff)
-            vy = -target_speed * math.sin(dir_diff)
+            # Reduce speed at larger heading errors — turn first, then accelerate.
+            # cos(err) already reduces vx, but we also slow overall speed
+            # to prevent high-speed turns (centripetal force → tip over).
+            err_scale = max(0.4, math.cos(abs_err))  # 1.0 at 0°, 0.5 at 60°
+            track_speed = target_speed * err_scale
+            vx = track_speed * math.cos(dir_diff)
+            vy = -track_speed * math.sin(dir_diff)
             vy = max(-_MAX_LAT, min(_MAX_LAT, vy))
             vyaw = _YAW_GAIN_TRACK * dir_diff
 
@@ -976,9 +980,13 @@ class Go2VNavBridge(Node):
         elif self._pf_lat > target_lat:
             self._pf_lat = max(target_lat, self._pf_lat - _ACCEL_LAT)
 
-        # Yaw — faster in turn mode (need snappy rotation), gentle in tracking
+        # Yaw — scale max yaw rate inversely with forward speed (prevent centripetal tip)
+        # Fast forward (0.8) → max yaw 0.5 rad/s. Stopped → max yaw 1.2 rad/s.
+        _speed_frac = min(1.0, abs(self._pf_speed) / _MAX_SPEED)
+        _dynamic_yaw_max = _MAX_YAW_RATE * (1.0 - 0.6 * _speed_frac)
+
         accel_yaw = _ACCEL_YAW_TURN if self._pf_turning else _ACCEL_YAW_TRACK
-        target_yaw = float(np.clip(vyaw, -_MAX_YAW_RATE, _MAX_YAW_RATE))
+        target_yaw = float(np.clip(vyaw, -_dynamic_yaw_max, _dynamic_yaw_max))
         if self._pf_yawrate < target_yaw:
             self._pf_yawrate = min(target_yaw, self._pf_yawrate + accel_yaw)
         elif self._pf_yawrate > target_yaw:
