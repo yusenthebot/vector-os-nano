@@ -95,8 +95,13 @@ RULES:
 8. When the user says "继续", "keep going", "continue" after explore/patrol, call explore() or patrol() AGAIN immediately. Do NOT just reply with text.
 9. explore(duration=120) for longer exploration. Default is 60 seconds.
 
-SPATIAL MEMORY:
+SPATIAL MEMORY (SceneGraph — persists across sessions):
 {memory_info}
+
+IMPORTANT: The SceneGraph is loaded from config/room_layout.yaml on startup.
+Even without explore, you already know ALL 8 room positions and can navigate.
+After explore, SceneGraph also stores learned door positions and visit counts.
+When user asks about SceneGraph, report the room summary above.
 
 CURRENT STATE:
 {state_info}
