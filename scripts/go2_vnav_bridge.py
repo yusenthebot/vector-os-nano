@@ -208,6 +208,11 @@ class Go2VNavBridge(Node):
             QoSProfile(reliability=ReliabilityPolicy.RELIABLE, depth=1)
         )
         self._current_path: list = []
+
+        # Subscribe to /exploration_finish from TARE — stop path following when done
+        from std_msgs.msg import Bool as BoolMsg
+        self.create_subscription(BoolMsg, "/exploration_finish", self._exploration_finish_cb, 5)
+        self._exploration_finished = False
         self._path_time = 0.0
 
         # Manual control: teleop /joy → direct velocity
@@ -333,6 +338,7 @@ class Go2VNavBridge(Node):
         flag = os.path.exists("/tmp/vector_nav_active")
         if flag and not self._nav_enabled:
             self._nav_enabled = True
+            self._exploration_finished = False  # reset for new explore/navigate
             self.get_logger().info("Navigation ENABLED (flag file detected)")
         elif not flag and self._nav_enabled:
             self._nav_enabled = False
@@ -653,6 +659,19 @@ class Go2VNavBridge(Node):
                 self.get_logger().warn(f"Camera render failed: {e}")
                 self._cam_err_logged = True
 
+    def _exploration_finish_cb(self, msg) -> None:
+        """TARE says exploration is complete — stop following TARE paths."""
+        if msg.data and not self._exploration_finished:
+            self._exploration_finished = True
+            self._current_path = []
+            self._go2.set_velocity(0.0, 0.0, 0.0)
+            # Remove nav flag so path follower stops
+            try:
+                os.remove("/tmp/vector_nav_active")
+            except FileNotFoundError:
+                pass
+            self.get_logger().warn("TARE exploration FINISHED — path follower stopped")
+
     def _path_cb(self, msg: Path) -> None:
         """Store path for Python follower + log."""
         if not self._nav_enabled:
@@ -674,7 +693,9 @@ class Go2VNavBridge(Node):
 
         self._current_path = new_path
         self._path_time = time.time()
-        self._pf_point_id = 0  # reset progress on new path (like C++)
+        # Don't reset _pf_point_id to 0 — the progressive lookahead in
+        # _follow_path naturally finds the closest point. Resetting on every
+        # path update (5Hz) prevents forward progress at low speeds.
 
         self._diag_path_count += 1
         now_mono = time.monotonic()
@@ -836,7 +857,7 @@ class Go2VNavBridge(Node):
         # Mode 1 (TRACK): heading error < 60° → cos/sin omni-walk, full speed
         # Mode 2 (TURN):  heading error > 60° → stop, turn in place, then go
         # Hysteresis: TRACK→TURN at 60°, TURN→TRACK at 30° (prevents oscillation)
-        _MAX_SPEED = 0.5               # m/s forward cruise (safe indoor speed)
+        _MAX_SPEED = 0.6               # m/s forward cruise (balance: speed vs stability)
         _MAX_LAT = 0.10                # m/s max lateral speed
         _MAX_YAW_RATE = 1.0            # rad/s max yaw rate
         _YAW_GAIN_TRACK = 4.0          # P-gain for yaw in tracking mode (gentle)
@@ -863,8 +884,10 @@ class Go2VNavBridge(Node):
                 if abs(self._pf_yawrate) < 0.01: self._pf_yawrate = 0.0
             else:
                 front_dist = self._check_front_obstacle()
-                tgt_vx = -0.15 if front_dist < 0.4 else 0.15
-                tgt_yaw = 0.3 if front_dist < 0.4 else 0.1
+                if front_dist < 0.4:
+                    tgt_vx, tgt_yaw = -0.15, 0.3  # back away from wall + turn
+                else:
+                    tgt_vx, tgt_yaw = 0.15, 0.0   # creep forward, NO turn (wait for path)
                 _A = 0.03
                 if self._pf_speed < tgt_vx: self._pf_speed = min(tgt_vx, self._pf_speed + _A)
                 else: self._pf_speed = max(tgt_vx, self._pf_speed - _A)
