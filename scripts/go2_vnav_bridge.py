@@ -836,8 +836,8 @@ class Go2VNavBridge(Node):
         # Mode 1 (TRACK): heading error < 60° → cos/sin omni-walk, full speed
         # Mode 2 (TURN):  heading error > 60° → stop, turn in place, then go
         # Hysteresis: TRACK→TURN at 60°, TURN→TRACK at 30° (prevents oscillation)
-        _MAX_SPEED = 0.8               # m/s forward cruise (open space)
-        _MAX_LAT = 0.15                # m/s max lateral speed (conservative — falls at 0.25)
+        _MAX_SPEED = 0.5               # m/s forward cruise (safe indoor speed)
+        _MAX_LAT = 0.10                # m/s max lateral speed
         _MAX_YAW_RATE = 1.0            # rad/s max yaw rate
         _YAW_GAIN_TRACK = 4.0          # P-gain for yaw in tracking mode (gentle)
         _YAW_GAIN_TURN = 6.0           # P-gain for yaw in turn mode (snappy)
@@ -915,11 +915,11 @@ class Go2VNavBridge(Node):
         min_gap = min(front_gap, left_gap, right_gap)
 
         if min_gap > 0.5:
-            space_speed = _MAX_SPEED                    # open space
+            space_speed = _MAX_SPEED                    # open space (0.5)
         elif min_gap > 0.1:
-            space_speed = _MAX_SPEED * (min_gap / 0.5)  # proportional
+            space_speed = _MAX_SPEED * (min_gap / 0.5)  # proportional (0.1-0.5)
         else:
-            space_speed = 0.15                           # tight crawl
+            space_speed = 0.10                           # tight crawl
 
         # --- Path curvature: slow down BEFORE turns, not during ---
         # Look 3-5 points ahead on path. If direction changes significantly,
