@@ -19,6 +19,7 @@ The exploration thread:
 from __future__ import annotations
 
 import logging
+import math
 import os
 import shutil
 import signal
@@ -509,20 +510,30 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                 x, y = float(pos[0]), float(pos[1])
                 room = _spatial_memory.nearest_room(x, y) if _spatial_memory else None
 
-                # Room detection is position-based via SceneGraph.nearest_room().
-                # In sim: SceneGraph is pre-seeded from config/room_layout.yaml.
-                # In real: rooms discovered via SLAM + spatial understanding.
-
-                # Record EVERY position sample in SceneGraph.
-                # visit() uses running average → center converges as
-                # robot moves through the room.
+                # Only count a room as "visited" if robot is within _VISIT_RADIUS
+                # of the room center. Prevents marking rooms as visited when the
+                # robot is just passing by the doorway — TARE needs to actually
+                # enter the room to build a complete FAR V-Graph.
+                _VISIT_RADIUS = 3.0  # meters from room center to count as "inside"
+                _in_room = False
                 if room is not None and _spatial_memory is not None:
+                    room_node = _spatial_memory.get_room(room)
+                    if room_node:
+                        dist_to_center = math.sqrt(
+                            (x - room_node.center_x) ** 2
+                            + (y - room_node.center_y) ** 2
+                        )
+                        _in_room = dist_to_center < _VISIT_RADIUS
+
+                # Record position in SceneGraph (only when actually inside the room).
+                if _in_room and _spatial_memory is not None:
                     try:
                         _spatial_memory.visit(room, x, y)
                     except Exception:
                         pass
 
-                # Door learning: detect room transitions and record door position.
+                # Door learning: detect room transitions (uses nearest_room, not _in_room,
+                # because door detection should work at the boundary between rooms).
                 if _prev_room is not None and room is not None and room != _prev_room:
                     if _spatial_memory is not None:
                         _spatial_memory.add_door(_prev_room, room, x, y)
@@ -532,7 +543,10 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                         )
                 _prev_room = room
 
-                if room is not None and room not in _explore_visited:
+                # Only mark room as "visited" when robot is actually INSIDE it
+                # (within _VISIT_RADIUS of center). This ensures TARE has time to
+                # build a complete V-Graph before we declare the room explored.
+                if _in_room and room not in _explore_visited:
                     _explore_visited.add(room)
                     _emit("room_entered", {
                         "room": room,
