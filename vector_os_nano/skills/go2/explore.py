@@ -19,7 +19,6 @@ The exploration thread:
 from __future__ import annotations
 
 import logging
-import math
 import os
 import shutil
 import signal
@@ -510,23 +509,9 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                 x, y = float(pos[0]), float(pos[1])
                 room = _spatial_memory.nearest_room(x, y) if _spatial_memory else None
 
-                # Only count a room as "visited" if robot is within _VISIT_RADIUS
-                # of the room center. Prevents marking rooms as visited when the
-                # robot is just passing by the doorway — TARE needs to actually
-                # enter the room to build a complete FAR V-Graph.
-                _VISIT_RADIUS = 3.0  # meters from room center to count as "inside"
-                _in_room = False
+                # Record position in SceneGraph.
+                # Room counting is informational only — TARE decides when to stop.
                 if room is not None and _spatial_memory is not None:
-                    room_node = _spatial_memory.get_room(room)
-                    if room_node:
-                        dist_to_center = math.sqrt(
-                            (x - room_node.center_x) ** 2
-                            + (y - room_node.center_y) ** 2
-                        )
-                        _in_room = dist_to_center < _VISIT_RADIUS
-
-                # Record position in SceneGraph (only when actually inside the room).
-                if _in_room and _spatial_memory is not None:
                     try:
                         _spatial_memory.visit(room, x, y)
                     except Exception:
@@ -543,10 +528,7 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                         )
                 _prev_room = room
 
-                # Only mark room as "visited" when robot is actually INSIDE it
-                # (within _VISIT_RADIUS of center). This ensures TARE has time to
-                # build a complete V-Graph before we declare the room explored.
-                if _in_room and room not in _explore_visited:
+                if room is not None and room not in _explore_visited:
                     _explore_visited.add(room)
                     _emit("room_entered", {
                         "room": room,
@@ -585,10 +567,10 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
 
             _explore_cancel.wait(timeout=_POSITION_SAMPLE_INTERVAL)
 
-        if _total > 0 and len(_explore_visited) >= _total:
-            stop_tare_only()
-            _emit("completed", {"rooms": sorted(_explore_visited)})
-        elif not _explore_cancel.is_set():
+        # TARE decides when exploration is complete (frontier-based coverage).
+        # We do NOT auto-stop based on room count — that kills TARE before
+        # it builds a complete V-Graph. User stops with "stop" command.
+        if not _explore_cancel.is_set():
             _emit("stopped", {"reason": "finished", "rooms": sorted(_explore_visited)})
 
     finally:
