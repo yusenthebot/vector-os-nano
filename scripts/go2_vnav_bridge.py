@@ -660,17 +660,17 @@ class Go2VNavBridge(Node):
                 self._cam_err_logged = True
 
     def _exploration_finish_cb(self, msg) -> None:
-        """TARE says exploration is complete — stop following TARE paths."""
+        """TARE says exploration is complete — log it but don't stop nav.
+
+        Previously this removed the nav flag, which killed path following.
+        But TARE can declare "finished" prematurely (terrain replay makes it
+        think coverage is already high). Let the user decide when to stop.
+        """
         if msg.data and not self._exploration_finished:
             self._exploration_finished = True
-            self._current_path = []
-            self._go2.set_velocity(0.0, 0.0, 0.0)
-            # Remove nav flag so path follower stops
-            try:
-                os.remove("/tmp/vector_nav_active")
-            except FileNotFoundError:
-                pass
-            self.get_logger().warn("TARE exploration FINISHED — path follower stopped")
+            self.get_logger().warn(
+                "TARE reports exploration complete (user: type 'stop' to halt)"
+            )
 
     def _path_cb(self, msg: Path) -> None:
         """Store path for Python follower + log."""
