@@ -13,7 +13,6 @@ import numpy as np  # noqa: F401 — used by callers for frame type
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.skills.navigate import _detect_current_room
 
 logger = logging.getLogger(__name__)
 
@@ -340,11 +339,11 @@ class DescribeSceneSkill:
 def _fallback_room(context: SkillContext) -> str:
     """Best-effort room name from positional data when VLM returns 'unknown'.
 
-    Uses the robot's current XY position and the room-boundary heuristic from
-    the navigate module.  Returns "unknown" if position is unavailable.
+    Uses the robot's current XY position and the SceneGraph nearest_room
+    heuristic.  Returns "unknown" if position or SceneGraph is unavailable.
 
     Args:
-        context: SkillContext with optional base.
+        context: SkillContext with optional base and spatial_memory service.
 
     Returns:
         Room name string.
@@ -352,10 +351,12 @@ def _fallback_room(context: SkillContext) -> str:
     if context.base is None:
         return "unknown"
     try:
+        from vector_os_nano.skills.navigate import _detect_current_room
         pos = context.base.get_position()
         x = float(pos[0])
         y = float(pos[1])
-        return _detect_current_room(x, y)
+        sg = context.services.get("spatial_memory") if context.services else None
+        return _detect_current_room(x, y, sg=sg)
     except Exception as exc:
         logger.debug("[look] _fallback_room position unavailable: %s", exc)
         return "unknown"

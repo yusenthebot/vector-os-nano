@@ -881,14 +881,21 @@ def main() -> None:
         os.makedirs(os.path.dirname(_sg_path), exist_ok=True)
         _sg = SceneGraph(persist_path=_sg_path)
         _sg.load()
+        # Seed from room layout config (sim only — instant room detection)
+        _layout_path = os.path.join(os.path.dirname(__file__), "config", "room_layout.yaml")
+        _layout_count = _sg.load_layout(_layout_path) if os.path.isfile(_layout_path) else 0
         _sg_stats = _sg.stats()
-        if _sg_stats["rooms"] > 0:
+        if _layout_count > 0:
+            print(
+                f"Memory    : room layout loaded ({_layout_count} rooms from config)"
+            )
+        elif _sg_stats["rooms"] > 0:
             print(
                 f"Memory    : scene graph restored "
                 f"({_sg_stats['rooms']} rooms, {_sg_stats['objects']} objects)"
             )
         else:
-            print("Memory    : scene graph initialized (rooms -> viewpoints -> objects)")
+            print("Memory    : scene graph initialized (no rooms — explore to discover)")
         agent._spatial_memory = _sg
 
         # Visualization: RViz markers (published when ROS2 bridge is active)

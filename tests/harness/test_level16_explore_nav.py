@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from vector_os_nano.core.skill import SkillContext
+import vector_os_nano.skills.go2.explore as _explore_mod
 from vector_os_nano.skills.go2.explore import (
     ExploreSkill,
     _exploration_loop,
@@ -25,7 +26,17 @@ from vector_os_nano.skills.go2.explore import (
     set_auto_look,
     set_event_callback,
 )
-from vector_os_nano.skills.navigate import _ROOM_CENTERS
+# Local test fixture replacing removed hardcoded dict from navigate.py
+_ROOM_CENTERS: dict[str, tuple[float, float]] = {
+    "living_room":    (3.0,  2.5),
+    "dining_room":    (3.0,  7.5),
+    "kitchen":        (17.0, 2.5),
+    "study":          (17.0, 7.5),
+    "master_bedroom": (3.5,  12.0),
+    "guest_bedroom":  (16.0, 12.0),
+    "bathroom":       (8.5,  12.0),
+    "hallway":        (10.0, 5.0),
+}
 
 
 def _make_base(room_sequence):
@@ -100,22 +111,43 @@ class TestAutoLookOnExplore:
         rooms_seen = []
         set_auto_look(lambda r: rooms_seen.append(r) or {"summary": r, "objects": []})
 
-        # Many room changes to ensure at least 2 are detected in time
-        base = _make_base(["hallway", "kitchen", "study", "living_room"] * 5)
+        # Many room changes to ensure at least 2 are detected
+        sequence = ["hallway", "kitchen", "study", "living_room"] * 5
+        base = _make_base(sequence)
         _explore_cancel.clear()
         _explore_visited.clear()
 
-        def cancel_later():
-            time.sleep(3.0)  # enough for multiple 2s cycles
-            _explore_cancel.set()
+        # Provide a mock SceneGraph that returns room names from position.
+        # explore.py uses _spatial_memory.nearest_room() since Wave 2 refactor.
+        mock_sg = MagicMock()
+        def _nearest(x: float, y: float) -> str | None:
+            for name, (cx, cy) in _ROOM_CENTERS.items():
+                if abs(x - cx) < 1.5 and abs(y - cy) < 1.5:
+                    return name
+            return None
+        mock_sg.nearest_room = _nearest
+        mock_sg.visit = MagicMock()
+        mock_sg.add_door = MagicMock()
+        _explore_mod._spatial_memory = mock_sg
 
-        t = threading.Thread(target=cancel_later, daemon=True)
-        t.start()
+        # Cancel once we've seen >= 2 rooms or after enough iterations
+        pos_calls = [0]
+        orig_get_pos = base.get_position
+        def _get_pos_with_cancel():
+            pos_calls[0] += 1
+            result = orig_get_pos()
+            # Cancel after enough iterations for 2+ rooms to be detected
+            if pos_calls[0] >= len(sequence) - 2:
+                _explore_cancel.set()
+            return result
+        base.get_position = _get_pos_with_cancel
 
-        with patch("vector_os_nano.skills.go2.explore._start_tare", return_value=False):
-            _exploration_loop(base, has_bridge=False)
+        # Patch subprocess.run to avoid 5s TARE start timeout
+        with patch("subprocess.run", return_value=MagicMock(returncode=0)):
+            with patch("time.sleep", return_value=None):
+                _exploration_loop(base, has_bridge=False)
 
-        t.join(timeout=5)
+        _explore_mod._spatial_memory = None
 
         assert len(rooms_seen) >= 2, f"Expected >=2 rooms, got {rooms_seen}"
         set_auto_look(None)

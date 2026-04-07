@@ -166,8 +166,8 @@
     <geom name="iw_b3" type="box" pos="6.95 10 1.4" size="0.95 0.05 1.4" material="wall_mat"/>
     <!-- x=9.1 to x=11.4 (gap at 7.9..9.1 = door to Bathroom) -->
     <geom name="iw_b4" type="box" pos="10.25 10 1.4" size="1.15 0.05 1.4" material="wall_mat"/>
-    <!-- x=12.6 to x=14 (gap at 11.4..12.6 = door to Guest BR) -->
-    <geom name="iw_b5" type="box" pos="13.3 10 1.4" size="0.7 0.05 1.4" material="wall_mat"/>
+    <!-- x=12.0 to x=14 (sealed — old 0.6m gap at x=12..12.6 was too narrow for Go2) -->
+    <geom name="iw_b5" type="box" pos="13.0 10 1.4" size="1.0 0.05 1.4" material="wall_mat"/>
     <!-- x=14 to x=15.4 -->
     <geom name="iw_b6" type="box" pos="14.7 10 1.4" size="0.7 0.05 1.4" material="wall_mat"/>
     <!-- x=16.6 to x=20 (gap at 15.4..16.6 = another door to Guest) -->

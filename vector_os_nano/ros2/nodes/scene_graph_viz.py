@@ -73,17 +73,6 @@ _ROOM_BOUNDS: dict[str, tuple[float, float, float, float]] = {
     "hallway":        (6.0,  0.0,  14.0, 10.0),
 }
 
-_ROOM_CENTERS: dict[str, tuple[float, float]] = {
-    "living_room":    (3.0,  2.5),
-    "dining_room":    (3.0,  7.5),
-    "kitchen":        (17.0, 2.5),
-    "study":          (17.0, 7.5),
-    "master_bedroom": (3.5,  12.0),
-    "guest_bedroom":  (16.0, 12.0),
-    "bathroom":       (8.5,  12.0),
-    "hallway":        (10.0, 5.0),
-}
-
 # Apple-quality color palette — distinct, harmonious RGBA in [0, 1]
 # Alpha is the fill opacity for unvisited/visited states.
 _ROOM_COLORS: dict[str, tuple[float, float, float, float]] = {
@@ -178,7 +167,12 @@ def _build_room_markers(
 
     for room_name, (x0, y0, x1, y1) in _ROOM_BOUNDS.items():
         color = _ROOM_COLORS.get(room_name, (0.5, 0.5, 0.5, 0.25))
-        cx, cy = _ROOM_CENTERS[room_name]
+        # Use SceneGraph center when available; fall back to geometric bound center
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        if scene_graph is not None:
+            room_node = scene_graph.get_room(room_name)
+            if room_node is not None and (room_node.center_x != 0.0 or room_node.center_y != 0.0):
+                cx, cy = room_node.center_x, room_node.center_y
 
         # Determine visit/coverage state
         is_visited = False
@@ -405,8 +399,15 @@ def _compute_object_position(
             ox = scene_cx + cluster_radius * math.cos(angle)
             oy = scene_cy + cluster_radius * math.sin(angle)
     else:
-        # Fallback: room center
-        cx, cy = _ROOM_CENTERS.get(room_id, (0.0, 0.0))
+        # Fallback: room center from SceneGraph or geometric bound center
+        cx, cy = 0.0, 0.0
+        if scene_graph is not None:
+            room_node = scene_graph.get_room(room_id)
+            if room_node is not None and (room_node.center_x != 0.0 or room_node.center_y != 0.0):
+                cx, cy = room_node.center_x, room_node.center_y
+        if cx == 0.0 and cy == 0.0 and bounds:
+            x0b, y0b, x1b, y1b = bounds
+            cx, cy = (x0b + x1b) / 2, (y0b + y1b) / 2
         if total_objs == 1:
             ox, oy = cx, cy
         else:

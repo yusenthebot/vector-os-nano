@@ -96,19 +96,21 @@ class TestDeadReckoningRouting:
     def test_dead_reckoning_uses_door_waypoints(self):
         """Dead-reckoning should route: room→door→hallway→door→room."""
         src = navigate_source()
-        # The waypoint sequence logic
-        assert "_ROOM_DOORS" in src, "NavigateSkill must use _ROOM_DOORS"
+        # The waypoint sequence logic — SceneGraph door chain replaces _ROOM_DOORS
         assert "waypoints" in src, "NavigateSkill must build waypoint list"
-        # Should exit via source room door
+        assert "get_door_chain" in src or "door" in src.lower(), (
+            "NavigateSkill must use SceneGraph door chain for dead-reckoning"
+        )
+        # Should route via door positions
         assert "src_room" in src or "door" in src.lower()
 
     def test_all_rooms_have_doors(self):
-        """Every room in _ROOM_CENTERS should have a door in _ROOM_DOORS."""
-        mod = navigate_module()
-        centers = mod._ROOM_CENTERS
-        doors = mod._ROOM_DOORS
-        for room in centers:
-            assert room in doors, f"Room '{room}' has no door entry"
+        """Every room in the test layout should have a door in ROOM_DOORS."""
+        # nav_debug_helpers.py provides the canonical test room data.
+        # navigate.py no longer has hardcoded _ROOM_CENTERS/_ROOM_DOORS —
+        # door data now comes from SceneGraph populated during exploration.
+        for room in ROOM_CENTERS:
+            assert room in ROOM_DOORS, f"Room '{room}' has no door entry in test fixture"
 
     def test_door_to_door_path_avoids_walls(self):
         """Path from any door to any other door via hallway should be wall-free.

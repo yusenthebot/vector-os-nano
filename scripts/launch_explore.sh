@@ -22,6 +22,10 @@ for arg in "$@"; do
     case $arg in --no-gui) NO_GUI="--no-gui" ;; esac
 done
 
+# Local VLM (Ollama) — set if not already in environment
+export VECTOR_VLM_URL="${VECTOR_VLM_URL:-http://localhost:11434/v1}"
+export VECTOR_VLM_MODEL="${VECTOR_VLM_MODEL:-gemma4:e4b}"
+
 VENV_SP="$REPO_DIR/.venv-nano/lib/python3.12/site-packages"
 CMEEL_SP="$VENV_SP/cmeel.prefix/lib/python3.12/site-packages"
 CONVEX_SRC="/home/yusen/Desktop/go2-convex-mpc/src"

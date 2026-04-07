@@ -4,11 +4,11 @@ Supports two navigation modes:
 1. NavStackClient (real navigation): when context.services.get("nav") is available
    and nav.is_available is True, publishes a waypoint goal and waits for
    goal_reached feedback from the navigation stack.
-2. Dead-reckoning fallback: when no nav stack is present, uses a room map and
-   waypoint graph to navigate between named rooms via turn+walk sequences.
+2. Dead-reckoning fallback: when no nav stack is present, uses SceneGraph door
+   chain to navigate between named rooms via turn+walk sequences.
 
-The room map matches the go2_room.xml layout (20m x 14m house) but is not
-coupled to any specific hardware -- it works with any BaseProtocol.
+Room positions and door coordinates come entirely from the SceneGraph
+(populated during exploration).  No hardcoded coordinates are used.
 
 This module has no ROS2 imports at the top level.
 """
@@ -24,34 +24,9 @@ from vector_os_nano.core.types import SkillResult
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Room map -- matches go2_room.xml layout
+# Aliases -> canonical room name (Chinese + English + shortcuts)
 # ---------------------------------------------------------------------------
 
-# Room name -> (center_x, center_y)
-_ROOM_CENTERS: dict[str, tuple[float, float]] = {
-    "living_room":    (3.0,  2.5),
-    "dining_room":    (3.0,  7.5),
-    "kitchen":        (17.0, 2.5),
-    "study":          (17.0, 7.5),
-    "master_bedroom": (3.5,  12.0),
-    "guest_bedroom":  (16.0, 12.0),
-    "bathroom":       (8.5,  12.0),
-    "hallway":        (10.0, 5.0),
-}
-
-# Room name -> doorway coordinate (point in hallway just outside the door)
-_ROOM_DOORS: dict[str, tuple[float, float]] = {
-    "living_room":    (6.5,  3.0),
-    "dining_room":    (6.5,  8.0),
-    "kitchen":        (13.5, 3.0),
-    "study":          (13.5, 8.0),
-    "master_bedroom": (3.0,  10.5),
-    "guest_bedroom":  (12.0, 10.5),
-    "bathroom":       (8.5,  10.5),
-    "hallway":        (10.0, 5.0),   # hallway door = hallway center
-}
-
-# Aliases -> canonical room name (Chinese + English + shortcuts)
 _ROOM_ALIASES: dict[str, str] = {
     # English
     "living room":    "living_room",
@@ -105,22 +80,37 @@ _WALK_SPEED: float = 0.6     # m/s
 _TURN_SPEED: float = 0.8     # rad/s
 _ARRIVAL_RADIUS: float = 0.5  # meters -- close enough to target
 
+_MIN_VISIT_COUNT: int = 3  # trust SceneGraph position only after N visits
+
 
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
 
-def _resolve_room(name: str) -> str | None:
-    """Resolve a room name/alias to canonical room key. Returns None if unknown."""
+def _resolve_room(name: str, sg: Any = None) -> str | None:
+    """Resolve a room name/alias to canonical room key.
+
+    If sg is provided, verifies the resolved room exists in the SceneGraph.
+    If sg is None, returns canonical name based on alias match only.
+    Returns None if unknown or not found in SceneGraph.
+    """
     if not name:
         return None
     key = name.strip().lower().replace("_", " ")
-    # Direct canonical key match
     canonical = key.replace(" ", "_")
-    if canonical in _ROOM_CENTERS:
+    # Check alias first
+    alias_result = _ROOM_ALIASES.get(key)
+    if alias_result:
+        canonical = alias_result
+    # If we have a SceneGraph, verify room exists there
+    if sg is not None and hasattr(sg, "get_room"):
+        if sg.get_room(canonical) is not None:
+            return canonical
+        return None  # room not in SceneGraph
+    # No SceneGraph — return canonical if it looks valid (alias matched)
+    if alias_result or canonical in _ROOM_ALIASES.values():
         return canonical
-    # Alias match
-    return _ROOM_ALIASES.get(key)
+    return None
 
 
 def _angle_between(x1: float, y1: float, x2: float, y2: float) -> float:
@@ -142,20 +132,17 @@ def _normalize_angle(a: float) -> float:
     return a
 
 
-def _detect_current_room(x: float, y: float) -> str:
-    """Guess which room the robot is in based on proximity to room centers."""
-    best_room = "hallway"
-    best_dist = float("inf")
-    for room, (cx, cy) in _ROOM_CENTERS.items():
-        d = _distance(x, y, cx, cy)
-        if d < best_dist:
-            best_dist = d
-            best_room = room
-    return best_room
+def _detect_current_room(x: float, y: float, sg: Any = None) -> str:
+    """Guess which room the robot is in based on SceneGraph nearest_room.
 
-
-_MIN_VISIT_COUNT: int = 3  # trust SceneGraph position only after N visits
-_MAX_DRIFT: float = 2.0   # max allowed drift from hardcoded center (meters)
+    If sg is provided and has rooms, delegates to sg.nearest_room(x, y).
+    Returns "unknown" if SceneGraph is absent or empty.
+    """
+    if sg is not None and hasattr(sg, "nearest_room"):
+        room = sg.nearest_room(x, y)
+        if room is not None:
+            return room
+    return "unknown"
 
 
 def _get_room_center_from_memory(
@@ -163,45 +150,31 @@ def _get_room_center_from_memory(
 ) -> tuple[float, float] | None:
     """Look up explored room center from spatial memory (SceneGraph).
 
-    Only trusts positions that:
-    1. Have visit_count >= _MIN_VISIT_COUNT (not just a doorway drive-by)
-    2. Are within _MAX_DRIFT meters of the hardcoded room center
-       (rejects positions recorded in the wrong room, e.g., hallway
-       position tagged as "kitchen" because robot was near the door)
+    Only trusts positions that have visit_count >= _MIN_VISIT_COUNT
+    (not just a doorway drive-by).
+
+    Uses get_room() if available (SceneGraph API), otherwise falls back
+    to the older get_location() API (legacy SpatialMemory).
 
     Returns None if room not in memory or position not trustworthy.
     """
-    pos = None
-
-    # SceneGraph direct API
+    # SceneGraph direct API — preferred, enforces visit_count threshold
     if hasattr(memory, "get_room"):
         room_node = memory.get_room(room_key)
         if room_node is not None:
-            x, y = room_node.center_x, room_node.center_y
-            if (x != 0.0 or y != 0.0) and room_node.visit_count >= _MIN_VISIT_COUNT:
-                pos = (x, y)
+            if (room_node.center_x != 0.0 or room_node.center_y != 0.0) and room_node.visit_count >= _MIN_VISIT_COUNT:
+                return (room_node.center_x, room_node.center_y)
+        # get_room is present but room not found or insufficient visits — do not
+        # fall through to get_location(), which would bypass the visit threshold.
+        return None
 
-    # Backward-compatible get_location() API
-    if pos is None and hasattr(memory, "get_location"):
+    # Backward-compatible get_location() API (legacy SpatialMemory only)
+    if hasattr(memory, "get_location"):
         loc = memory.get_location(room_key)
         if loc is not None:
             x, y = getattr(loc, "x", 0.0), getattr(loc, "y", 0.0)
             if x != 0.0 or y != 0.0:
-                pos = (x, y)
-
-    # Sanity check: reject if too far from hardcoded center
-    if pos is not None and room_key in _ROOM_CENTERS:
-        hx, hy = _ROOM_CENTERS[room_key]
-        drift = _distance(pos[0], pos[1], hx, hy)
-        if drift > _MAX_DRIFT:
-            logger.warning(
-                "[NAV] SceneGraph position for %s (%.1f, %.1f) is %.1fm from "
-                "expected center (%.1f, %.1f) — using hardcoded position",
-                room_key, pos[0], pos[1], drift, hx, hy,
-            )
-            return None
-
-    return pos
+                return (x, y)
 
     return None
 
@@ -261,21 +234,24 @@ def _navigate_to_waypoint(
     direct=False,
 )
 class NavigateSkill:
-    """Navigate the robot to a named room in the house.
+    """Navigate the robot to a room discovered during exploration.
 
     Mode selection (in priority order):
     1. NavStackClient (context.services["nav"]) -- full navigation stack,
        publishes waypoint goal and waits for goal_reached confirmation.
-    2. Dead-reckoning -- turns toward waypoints and walks, uses room map.
+    2. Dead-reckoning -- turns toward waypoints and walks using SceneGraph
+       door chain data.
+
+    Room coordinates come exclusively from the SceneGraph populated
+    during explore.  No hardcoded room positions are used.
 
     Works with ANY BaseProtocol implementation (not Go2-specific).
     """
 
     name: str = "navigate"
     description: str = (
-        "Navigate the robot to a specific room by name. "
-        "Available rooms: living_room, dining_room, kitchen, study, "
-        "master_bedroom, guest_bedroom, bathroom, hallway."
+        "Navigate the robot to a room discovered during exploration. "
+        "Run explore first to learn room positions."
     )
     parameters: dict = {
         "room": {
@@ -302,55 +278,42 @@ class NavigateSkill:
             )
 
         room_input = str(params.get("room", ""))
-        room_key = _resolve_room(room_input)
+        sg = context.services.get("spatial_memory")
 
-        # Also check spatial memory for dynamically saved locations
-        if room_key is None:
-            memory = context.services.get("spatial_memory")
-            if memory is not None:
-                loc = memory.get_location(room_input)
-                if loc is None:
-                    # Try case-insensitive
-                    for name in [l.name for l in memory.get_all_locations()]:
-                        if name.lower() == room_input.lower():
-                            loc = memory.get_location(name)
-                            break
-                if loc is not None:
-                    room_key = loc.name
-                    _ROOM_CENTERS[room_key] = (loc.x, loc.y)
+        # Resolve room name — SceneGraph is authoritative
+        room_key = _resolve_room(room_input, sg=sg)
 
         if room_key is None:
-            available = ", ".join(sorted(_ROOM_CENTERS.keys()))
-            # Also include spatial memory locations
-            memory = context.services.get("spatial_memory")
-            if memory:
-                mem_locs = [l.name for l in memory.get_all_locations() if l.name not in _ROOM_CENTERS]
-                if mem_locs:
-                    available += ", " + ", ".join(mem_locs)
+            # Check if SceneGraph has any rooms at all
+            if sg is None or not hasattr(sg, "get_all_rooms") or not sg.get_all_rooms():
+                return SkillResult(
+                    success=False,
+                    error_message="No rooms learned. Run explore first.",
+                    diagnosis_code="unknown_room",
+                )
+            # SceneGraph exists but room not found
+            available_rooms = [r.room_id for r in sg.get_all_rooms()]
+            available = ", ".join(sorted(available_rooms)) if available_rooms else "none"
             return SkillResult(
                 success=False,
                 error_message=f"Unknown room: '{room_input}'. Available: {available}",
                 diagnosis_code="unknown_room",
             )
 
-        # Prefer learned room positions from SceneGraph (sim-to-real ready).
-        # SceneGraph.visit() computes running average of all positions recorded
-        # in a room — converges to room center as robot explores.
-        # Fall back to hardcoded _ROOM_CENTERS only for this sim environment.
-        target = _ROOM_CENTERS.get(room_key)
-        memory_for_target = context.services.get("spatial_memory")
-        if memory_for_target is not None:
-            explored_pos = _get_room_center_from_memory(memory_for_target, room_key)
-            if explored_pos is not None:
-                target = explored_pos
-                logger.info("[NAV] Using learned position for %s: (%.1f, %.1f)",
-                            room_key, target[0], target[1])
+        # Get target position from SceneGraph only
+        target: tuple[float, float] | None = None
+        if sg is not None:
+            target = _get_room_center_from_memory(sg, room_key)
+
         if target is None:
             return SkillResult(
                 success=False,
-                error_message=f"Room '{room_key}' has no known position. Explore first.",
+                error_message=f"Room '{room_key}' position unknown. Explore more.",
                 diagnosis_code="room_not_explored",
             )
+
+        logger.info("[NAV] Using learned position for %s: (%.1f, %.1f)",
+                    room_key, target[0], target[1])
 
         # Cancel background exploration if running (navigate takes priority)
         try:
@@ -445,8 +408,6 @@ class NavigateSkill:
         Sends /way_point and monitors position. Does not rely on /goal_reached
         since the nav stack doesn't always publish it reliably.
         """
-        import time
-
         logger.info("[NAV] Using nav stack -> room=%s target=(%.1f, %.1f)",
                     room_key, target[0], target[1])
 
@@ -492,41 +453,51 @@ class NavigateSkill:
         )
 
     def _dead_reckoning(self, room_key: str, context: SkillContext) -> SkillResult:
-        """Navigate via turn+walk dead-reckoning using room waypoint graph."""
+        """Navigate via turn+walk dead-reckoning using SceneGraph door chain."""
         base = context.base
+        sg = context.services.get("spatial_memory")
+
         pos = base.get_position()
         cx, cy = pos[0], pos[1]
-        src_room = _detect_current_room(cx, cy)
-        target_center = _ROOM_CENTERS[room_key]
+        src_room = _detect_current_room(cx, cy, sg=sg)
 
-        # Already at destination?
-        if _distance(cx, cy, target_center[0], target_center[1]) < _ARRIVAL_RADIUS:
+        # Get door chain from SceneGraph
+        if sg is None or not hasattr(sg, "get_door_chain"):
             return SkillResult(
-                success=True,
-                result_data={
-                    "room": room_key,
-                    "position": [round(cx, 1), round(cy, 1)],
-                    "note": "already here",
-                },
+                success=False,
+                error_message="No door data. Explore first.",
+                diagnosis_code="room_not_explored",
             )
+
+        # Check if already at destination
+        target_room_node = sg.get_room(room_key) if hasattr(sg, "get_room") else None
+        if target_room_node is not None:
+            target_cx = target_room_node.center_x
+            target_cy = target_room_node.center_y
+            if _distance(cx, cy, target_cx, target_cy) < _ARRIVAL_RADIUS:
+                return SkillResult(
+                    success=True,
+                    result_data={
+                        "room": room_key,
+                        "position": [round(cx, 1), round(cy, 1)],
+                        "note": "already here",
+                    },
+                )
 
         logger.info("[NAV] Dead-reckoning: %s -> %s", src_room, room_key)
 
-        # Waypoint sequence:
-        #   1) Exit current room via its door (unless already in hallway)
-        #   2) Go to target room's door
-        #   3) Enter target room center
-        waypoints: list[tuple[float, float, str]] = []
+        # Get waypoint sequence from SceneGraph door chain
+        waypoints = sg.get_door_chain(src_room, room_key)
 
-        if src_room != "hallway" and src_room != room_key:
-            door = _ROOM_DOORS[src_room]
-            waypoints.append((door[0], door[1], f"{src_room} door"))
-
-        if room_key != "hallway":
-            door = _ROOM_DOORS[room_key]
-            waypoints.append((door[0], door[1], f"{room_key} door"))
-
-        waypoints.append((target_center[0], target_center[1], room_key))
+        if not waypoints:
+            return SkillResult(
+                success=False,
+                error_message=(
+                    f"No door data between '{src_room}' and '{room_key}'. "
+                    "Explore first."
+                ),
+                diagnosis_code="room_not_explored",
+            )
 
         # Execute each waypoint
         for wx, wy, label in waypoints:

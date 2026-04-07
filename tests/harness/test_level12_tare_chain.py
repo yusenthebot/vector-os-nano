@@ -237,24 +237,6 @@ class TestWanderBehavior:
     def test_loop_runs_past_seed_phase(self):
         """Loop does NOT stop after seed — continues until _explore_cancel."""
         base = _make_base()
-        iterations = [0]
-
-        original_detect = _explore._detect_current_room if hasattr(_explore, "_detect_current_room") else None
-
-        # Patch _detect_current_room inside the module's namespace.
-        # explore.py imports it at load time as a local name — we need to
-        # patch where it's actually called from: the navigate stub already
-        # injected into sys.modules (do NOT import through package __init__).
-        _nav_stub = sys.modules["vector_os_nano.skills.navigate"]
-
-        call_count = [0]
-        original_fn = _nav_stub._detect_current_room
-
-        def _counting_detect(x, y):
-            call_count[0] += 1
-            return original_fn(x, y)
-
-        _nav_stub._detect_current_room = _counting_detect
 
         # Track get_position calls via a counter (we replace it with a plain fn)
         pos_calls = [0]
@@ -282,8 +264,9 @@ class TestWanderBehavior:
         stopper = threading.Thread(target=_cancel_after, daemon=True)
         stopper.start()
 
-        with patch.object(_explore, "_start_tare", return_value=False):
-            # Patch time.sleep to instant so seed phase (5+3 s) finishes fast
+        # Patch subprocess.run to avoid 5-second TARE start timeout, and
+        # patch time.sleep to instant so seed phase (2s walk + 1s buffer) finishes fast.
+        with patch("subprocess.run", return_value=MagicMock(returncode=0)):
             with patch("time.sleep", return_value=None):
                 _explore._exploration_loop(base, has_bridge=True)
 
@@ -291,9 +274,6 @@ class TestWanderBehavior:
         assert pos_calls[0] >= 1, (
             f"Expected ≥1 get_position calls in main loop, got {pos_calls[0]}"
         )
-
-        # Restore stub
-        _nav_stub._detect_current_room = original_fn
 
 
 # ---------------------------------------------------------------------------
@@ -442,6 +422,21 @@ class TestExploreLoopContinuity:
 
         _explore._on_event = _on_event
 
+        # Provide a mock SceneGraph so nearest_room() returns room names.
+        # explore.py uses _spatial_memory.nearest_room() since the hardcoded
+        # _detect_current_room was removed.
+        mock_sg = MagicMock()
+        call_count = [0]
+        def _nearest_room(x, y):
+            call_count[0] += 1
+            if x < 2.0:
+                return "living_room"
+            return "kitchen"
+        mock_sg.nearest_room = _nearest_room
+        mock_sg.visit = MagicMock()
+        mock_sg.add_door = MagicMock()
+        _explore._spatial_memory = mock_sg
+
         pos_calls = [0]
 
         def _pos():
@@ -453,9 +448,12 @@ class TestExploreLoopContinuity:
 
         base.get_position = _pos
 
-        with patch.object(_explore, "_start_tare", return_value=False):
+        with patch("subprocess.run", return_value=MagicMock(returncode=0)):
             with patch("time.sleep", return_value=None):
                 _explore._exploration_loop(base, has_bridge=True)
+
+        # Restore module state
+        _explore._spatial_memory = None
 
         room_events = [d for e, d in events if e == "room_entered"]
         assert len(room_events) >= 1

@@ -29,10 +29,6 @@ from typing import Any
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.skills.navigate import (
-    _ROOM_CENTERS,
-    _detect_current_room,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -452,7 +448,8 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
     _explore_running = True
     _explore_cancel.clear()
 
-    _emit("started", {"total_rooms": len(_ROOM_CENTERS)})
+    _total = len(_spatial_memory.get_all_rooms()) if _spatial_memory else 0
+    _emit("started", {"total_rooms": _total})
 
     # Seed walk: give TARE initial scan data by moving the robot forward briefly.
     # TARE requires 5 scans per keypose at 10 Hz (0.5 s minimum) before it can
@@ -499,6 +496,8 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
     # Reference: launch_explore.sh does the same: seed once, then hands off
     # to TARE entirely. The nav stack drives at up to 0.8 m/s on its own.
 
+    _prev_room: str | None = None
+
     try:
         while not _explore_cancel.is_set():
             try:
@@ -507,24 +506,38 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
                     _emit("stopped", {"reason": "robot_fell", "rooms": sorted(_explore_visited)})
                     break
 
-                room = _detect_current_room(float(pos[0]), float(pos[1]))
+                x, y = float(pos[0]), float(pos[1])
+                room = _spatial_memory.nearest_room(x, y) if _spatial_memory else None
+
+                # Room detection is position-based via SceneGraph.nearest_room().
+                # In sim: SceneGraph is pre-seeded from config/room_layout.yaml.
+                # In real: rooms discovered via SLAM + spatial understanding.
 
                 # Record EVERY position sample in SceneGraph.
                 # visit() uses running average → center converges as
-                # robot moves through the room. Critical for sim-to-real:
-                # navigation targets come from these learned positions.
-                if _spatial_memory is not None:
+                # robot moves through the room.
+                if room is not None and _spatial_memory is not None:
                     try:
-                        _spatial_memory.visit(room, float(pos[0]), float(pos[1]))
+                        _spatial_memory.visit(room, x, y)
                     except Exception:
                         pass
 
-                if room not in _explore_visited:
+                # Door learning: detect room transitions and record door position.
+                if _prev_room is not None and room is not None and room != _prev_room:
+                    if _spatial_memory is not None:
+                        _spatial_memory.add_door(_prev_room, room, x, y)
+                        logger.info(
+                            "[EXPLORE] Door learned: %s <-> %s at (%.1f, %.1f)",
+                            _prev_room, room, x, y,
+                        )
+                _prev_room = room
+
+                if room is not None and room not in _explore_visited:
                     _explore_visited.add(room)
                     _emit("room_entered", {
                         "room": room,
                         "visited": len(_explore_visited),
-                        "total": len(_ROOM_CENTERS),
+                        "total": _total,
                         "all_rooms": sorted(_explore_visited),
                     })
 
@@ -558,13 +571,10 @@ def _exploration_loop(base: Any, has_bridge: bool = True) -> None:
 
             _explore_cancel.wait(timeout=_POSITION_SAMPLE_INTERVAL)
 
-        if len(_explore_visited) >= len(_ROOM_CENTERS):
-            # All rooms visited — stop TARE but keep FAR + localPlanner alive
-            # for subsequent point-to-point navigation.
+        if _total > 0 and len(_explore_visited) >= _total:
             stop_tare_only()
             _emit("completed", {"rooms": sorted(_explore_visited)})
         elif not _explore_cancel.is_set():
-            stop_tare_only()
             _emit("stopped", {"reason": "finished", "rooms": sorted(_explore_visited)})
 
     finally:
@@ -627,39 +637,24 @@ class ExploreSkill:
         global _spatial_memory
         _spatial_memory = context.services.get("spatial_memory")
 
-        # Wire auto-look if VLM + camera are available
-        # Room identification only — no object detection/labeling
-        vlm = context.services.get("vlm")
-        spatial_memory = _spatial_memory
-        if vlm is not None:
-            def _do_auto_look(room: str) -> dict | None:
-                """Capture frame, identify room, record to spatial memory."""
-                try:
-                    frame = base.get_camera_frame()
-                    pos = base.get_position()
-                    heading = base.get_heading()
+        # Ensure room layout is loaded (handles /clear_memory wiping the data)
+        if _spatial_memory is not None and hasattr(_spatial_memory, 'load_layout'):
+            if not _spatial_memory.get_all_rooms():
+                _layout = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(
+                        os.path.dirname(os.path.abspath(__file__))
+                    ))),
+                    "config", "room_layout.yaml",
+                )
+                if os.path.isfile(_layout):
+                    n = _spatial_memory.load_layout(_layout)
+                    if n > 0:
+                        logger.info("[EXPLORE] Re-loaded room layout: %d rooms", n)
 
-                    room_id = vlm.identify_room(frame)
-                    detected_room = room_id.room if room_id.room != "unknown" else room
-
-                    if spatial_memory is not None:
-                        if hasattr(spatial_memory, "observe_with_viewpoint"):
-                            spatial_memory.observe_with_viewpoint(
-                                detected_room, float(pos[0]), float(pos[1]),
-                                float(heading), [], "",
-                            )
-                        else:
-                            spatial_memory.visit(detected_room, float(pos[0]), float(pos[1]))
-
-                    return {
-                        "room": detected_room,
-                        "room_confidence": room_id.confidence,
-                    }
-                except Exception as exc:
-                    logger.warning("[EXPLORE] auto-look VLM error: %s", exc)
-                    return None
-
-            set_auto_look(_do_auto_look)
+        # VLM auto-look DISABLED for sim — room detection is config-based.
+        # Re-enable for real-world deployment where VLM scene descriptions
+        # provide spatial understanding.
+        # set_auto_look(None) — explicitly not wiring VLM
 
         # Bridge + nav stack are already running (started by launch_explore.sh
         # via sim_tool). Do NOT call _start_bridge_on_go2 — it creates a

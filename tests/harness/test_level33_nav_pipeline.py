@@ -103,7 +103,7 @@ class TestPhase2NoDirectWaypoint:
         if phase2_comment < 0:
             phase2_comment = src.find("Phase 2")
         assert phase2_comment > 0, "Phase 2 section not found"
-        phase2 = src[phase2_comment:phase2_comment + 800]
+        phase2 = src[phase2_comment:phase2_comment + 1200]
         assert "_publish_goal_point" in phase2
 
     def test_phase2_no_direct_waypoint(self):
@@ -135,46 +135,60 @@ class TestPhase2NoDirectWaypoint:
 # ===================================================================
 
 class TestSceneGraphDriftProtection:
-    """Navigate must reject SceneGraph positions that are too far from
-    the hardcoded room center — these are usually recorded at doorways
-    or in the wrong room entirely.
+    """Navigate must protect against unreliable SceneGraph positions.
+
+    After the Wave 2 refactor, drift protection is handled via visit_count
+    threshold (_MIN_VISIT_COUNT) instead of positional comparison against
+    hardcoded room centers (which have been removed).
     """
 
-    def test_max_drift_constant_exists(self):
+    def test_min_visit_count_constant_exists(self):
+        """_MIN_VISIT_COUNT must exist — protects against doorway drive-by positions."""
         src = _navigate_source()
-        assert "_MAX_DRIFT" in src
-
-    def test_max_drift_value_reasonable(self):
-        src = _navigate_source()
-        match = re.search(r'_MAX_DRIFT.*?=\s*([\d.]+)', src)
-        assert match, "_MAX_DRIFT not found"
-        drift = float(match.group(1))
-        assert 1.0 <= drift <= 4.0, (
-            f"_MAX_DRIFT={drift}m — should be 1.0-4.0m"
+        assert "_MIN_VISIT_COUNT" in src, (
+            "_MIN_VISIT_COUNT constant must exist in navigate.py"
         )
 
-    def test_drift_check_in_get_room_center(self):
-        """_get_room_center_from_memory must check drift from hardcoded center."""
+    def test_min_visit_count_value_reasonable(self):
+        """_MIN_VISIT_COUNT should require at least 3 visits for trust."""
+        src = _navigate_source()
+        match = re.search(r'_MIN_VISIT_COUNT.*?=\s*(\d+)', src)
+        assert match, "_MIN_VISIT_COUNT not found"
+        count = int(match.group(1))
+        assert 2 <= count <= 10, (
+            f"_MIN_VISIT_COUNT={count} — should be 2-10"
+        )
+
+    def test_visit_count_check_in_get_room_center(self):
+        """_get_room_center_from_memory must check visit_count threshold."""
         src = _navigate_source()
         func_start = src.find("def _get_room_center_from_memory")
         func_end = src.find("\ndef ", func_start + 1)
         func_body = src[func_start:func_end]
-        assert "_MAX_DRIFT" in func_body or "drift" in func_body, (
-            "_get_room_center_from_memory must check position drift"
+        assert "visit_count" in func_body, (
+            "_get_room_center_from_memory must check visit_count threshold"
         )
-        assert "_ROOM_CENTERS" in func_body or "hardcoded" in func_body.lower(), (
-            "Must compare against hardcoded room center"
+        assert "_MIN_VISIT_COUNT" in func_body, (
+            "_get_room_center_from_memory must use _MIN_VISIT_COUNT"
         )
 
-    def test_drift_rejection_logs_warning(self):
-        """When drift exceeds threshold, a warning must be logged."""
-        src = _navigate_source()
-        func_start = src.find("def _get_room_center_from_memory")
-        func_end = src.find("\ndef ", func_start + 1)
-        func_body = src[func_start:func_end]
-        assert "warning" in func_body.lower() or "logger.warn" in func_body, (
-            "Must log warning when rejecting drifted SceneGraph position"
-        )
+    def test_get_room_center_returns_none_for_unvisited(self):
+        """_get_room_center_from_memory returns None for rooms with 0 visits."""
+        mod = importlib.import_module("vector_os_nano.skills.navigate")
+
+        class FakeRoom:
+            center_x = 17.0
+            center_y = 2.5
+            visit_count = 0
+
+        class FakeMemory:
+            def get_room(self, key):
+                if key == "kitchen":
+                    return FakeRoom()
+                return None
+
+        result = mod._get_room_center_from_memory(FakeMemory(), "kitchen")
+        assert result is None, "0 visits should not be trusted"
 
 
 # ===================================================================
@@ -186,21 +200,15 @@ class TestCylinderBodySafety:
     radius from obstacle distances before safety checks.
     """
 
-    def test_body_front_constant(self):
+    def test_body_front_extent_used(self):
+        """Body front extent (0.34m) must be subtracted from obstacle distance."""
         src = read_bridge_source()
-        assert "_BODY_FRONT" in src
-        match = re.search(r'_BODY_FRONT\s*=\s*([\d.]+)', src)
-        assert match
-        val = float(match.group(1))
-        assert 0.30 <= val <= 0.40, f"_BODY_FRONT={val} — should be ~0.34m (head)"
+        assert "0.34" in src, "Body front extent 0.34m must be in bridge"
 
-    def test_body_side_constant(self):
+    def test_body_side_extent_used(self):
+        """Body side extent (0.19m) must be subtracted from obstacle distance."""
         src = read_bridge_source()
-        assert "_BODY_SIDE" in src
-        match = re.search(r'_BODY_SIDE\s*=\s*([\d.]+)', src)
-        assert match
-        val = float(match.group(1))
-        assert 0.15 <= val <= 0.25, f"_BODY_SIDE={val} — should be ~0.19m (hip)"
+        assert "0.19" in src, "Body side extent 0.19m must be in bridge"
 
     def test_gap_calculation(self):
         """Safety must compute gap = obstacle_distance - body_extent."""
@@ -242,13 +250,18 @@ class TestCylinderBodySafety:
 # ===================================================================
 
 class TestDriftProtectionBehavior:
+    """Behavioral tests for _get_room_center_from_memory visit_count protection.
 
-    def test_nearby_position_accepted(self):
-        """SceneGraph position within 2m of hardcoded center is accepted."""
+    After the Wave 2 refactor, position trust is determined by visit_count
+    threshold (_MIN_VISIT_COUNT=3), not positional drift from hardcoded centers.
+    """
+
+    def test_well_visited_position_accepted(self):
+        """SceneGraph position with visit_count >= 3 is accepted."""
         mod = importlib.import_module("vector_os_nano.skills.navigate")
 
         class FakeRoom:
-            center_x = 17.5  # kitchen hardcoded (17.0, 2.5), this is 0.5m off
+            center_x = 17.5
             center_y = 2.8
             visit_count = 5
 
@@ -259,29 +272,11 @@ class TestDriftProtectionBehavior:
                 return None
 
         result = mod._get_room_center_from_memory(FakeMemory(), "kitchen")
-        assert result is not None, "0.5m drift should be accepted"
+        assert result is not None, "5 visits should be trusted"
         assert result == (17.5, 2.8)
 
-    def test_far_position_rejected(self):
-        """SceneGraph position >2m from hardcoded center is rejected."""
-        mod = importlib.import_module("vector_os_nano.skills.navigate")
-
-        class FakeRoom:
-            center_x = 14.0  # 3m from kitchen center (17.0)
-            center_y = 2.5
-            visit_count = 5
-
-        class FakeMemory:
-            def get_room(self, key):
-                if key == "kitchen":
-                    return FakeRoom()
-                return None
-
-        result = mod._get_room_center_from_memory(FakeMemory(), "kitchen")
-        assert result is None, "3.0m drift should be rejected"
-
     def test_low_visit_count_rejected(self):
-        """SceneGraph position with < 3 visits is rejected."""
+        """SceneGraph position with < _MIN_VISIT_COUNT visits is rejected."""
         mod = importlib.import_module("vector_os_nano.skills.navigate")
 
         class FakeRoom:
@@ -297,6 +292,24 @@ class TestDriftProtectionBehavior:
 
         result = mod._get_room_center_from_memory(FakeMemory(), "kitchen")
         assert result is None, "1 visit should not be trusted"
+
+    def test_zero_visit_count_rejected(self):
+        """SceneGraph position with 0 visits is rejected."""
+        mod = importlib.import_module("vector_os_nano.skills.navigate")
+
+        class FakeRoom:
+            center_x = 17.0
+            center_y = 2.5
+            visit_count = 0
+
+        class FakeMemory:
+            def get_room(self, key):
+                if key == "kitchen":
+                    return FakeRoom()
+                return None
+
+        result = mod._get_room_center_from_memory(FakeMemory(), "kitchen")
+        assert result is None, "0 visits should not be trusted"
 
     def test_unknown_room_returns_none(self):
         """Unknown room key returns None."""

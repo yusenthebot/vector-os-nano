@@ -159,6 +159,9 @@ class SceneGraph:
         self._rooms: dict[str, RoomNode] = {}
         self._viewpoints: dict[str, ViewpointNode] = {}
         self._objects: dict[str, ObjectNode] = {}
+        # key = tuple(sorted([room_a, room_b])) — bidirectional
+        # value = (x, y, count) — running average position + observation count
+        self._doors: dict[tuple[str, str], tuple[float, float, int]] = {}
         self._events: list[dict] = []
         self._lock = threading.RLock()
         self._persist_path = persist_path
@@ -178,6 +181,141 @@ class SceneGraph:
     def get_all_rooms(self) -> list[RoomNode]:
         with self._lock:
             return list(self._rooms.values())
+
+    # ------------------------------------------------------------------
+    # Door operations
+    # ------------------------------------------------------------------
+
+    def add_door(self, room_a: str, room_b: str, x: float, y: float) -> None:
+        """Record a door observation between room_a and room_b at (x, y).
+
+        Uses a running average to maintain door position across multiple
+        observations.  Also updates both rooms' connected_rooms tuples.
+        """
+        key: tuple[str, str] = tuple(sorted([room_a, room_b]))  # type: ignore[assignment]
+        with self._lock:
+            existing = self._doors.get(key)
+            if existing is not None:
+                old_x, old_y, n = existing
+                new_x = (old_x * n + x) / (n + 1)
+                new_y = (old_y * n + y) / (n + 1)
+                self._doors[key] = (new_x, new_y, n + 1)
+            else:
+                self._doors[key] = (x, y, 1)
+
+            # Update connected_rooms for both rooms (create rooms if missing)
+            for src, dst in ((room_a, room_b), (room_b, room_a)):
+                room = self._rooms.get(src)
+                if room is None:
+                    self._rooms[src] = RoomNode(
+                        room_id=src,
+                        connected_rooms=(dst,),
+                    )
+                elif dst not in room.connected_rooms:
+                    self._rooms[src] = RoomNode(
+                        room_id=room.room_id,
+                        center_x=room.center_x,
+                        center_y=room.center_y,
+                        area=room.area,
+                        visit_count=room.visit_count,
+                        last_visited=room.last_visited,
+                        representative_description=room.representative_description,
+                        connected_rooms=room.connected_rooms + (dst,),
+                    )
+
+    def get_door(self, room_a: str, room_b: str) -> tuple[float, float] | None:
+        """Return (x, y) of the door between room_a and room_b, or None."""
+        key: tuple[str, str] = tuple(sorted([room_a, room_b]))  # type: ignore[assignment]
+        with self._lock:
+            entry = self._doors.get(key)
+            if entry is None:
+                return None
+            return (entry[0], entry[1])
+
+    def get_all_doors(self) -> dict[tuple[str, str], tuple[float, float]]:
+        """Return a copy of all doors (without observation count) for viz/serialization."""
+        with self._lock:
+            return {k: (v[0], v[1]) for k, v in self._doors.items()}
+
+    def get_door_chain(
+        self,
+        src_room: str,
+        dst_room: str,
+    ) -> list[tuple[float, float, str]]:
+        """BFS over room adjacency to find a waypoint chain from src to dst.
+
+        Returns:
+            List of (x, y, label) tuples.
+            - If src == dst: [(dst_center_x, dst_center_y, dst_room)]
+            - Normal path: door positions between rooms + dst room center
+            - No path found: []
+        """
+        with self._lock:
+            # Same room — return destination center
+            if src_room == dst_room:
+                room = self._rooms.get(dst_room)
+                if room is None:
+                    return []
+                return [(room.center_x, room.center_y, dst_room)]
+
+            # BFS
+            from collections import deque
+            visited: set[str] = {src_room}
+            # Each queue element: (current_room, path_so_far)
+            # path_so_far is list of room ids from src (exclusive) to current (inclusive)
+            queue: deque[tuple[str, list[str]]] = deque()
+            queue.append((src_room, []))
+
+            parent: dict[str, str] = {}  # child -> parent for path reconstruction
+            found = False
+
+            while queue:
+                current, _ = queue.popleft()
+                room_node = self._rooms.get(current)
+                if room_node is None:
+                    continue
+                for neighbor in room_node.connected_rooms:
+                    if neighbor in visited:
+                        continue
+                    visited.add(neighbor)
+                    parent[neighbor] = current
+                    if neighbor == dst_room:
+                        found = True
+                        break
+                    queue.append((neighbor, []))
+                if found:
+                    break
+
+            if not found:
+                return []
+
+            # Reconstruct room sequence: src -> ... -> dst
+            path: list[str] = []
+            node = dst_room
+            while node in parent:
+                path.append(node)
+                node = parent[node]
+            path.append(src_room)
+            path.reverse()  # now: [src_room, ..., dst_room]
+
+            # Build waypoint list
+            waypoints: list[tuple[float, float, str]] = []
+            for i in range(len(path) - 1):
+                room_from = path[i]
+                room_to = path[i + 1]
+                door_pos = self.get_door(room_from, room_to)
+                if door_pos is None:
+                    # No recorded door position — skip to avoid misleading waypoints
+                    continue
+                label = f"{room_from}_{room_to}_door"
+                waypoints.append((door_pos[0], door_pos[1], label))
+
+            # Add destination room center
+            dst_node = self._rooms.get(dst_room)
+            if dst_node is not None:
+                waypoints.append((dst_node.center_x, dst_node.center_y, dst_room))
+
+            return waypoints
 
     # ------------------------------------------------------------------
     # Viewpoint operations
@@ -630,6 +768,26 @@ class SceneGraph:
                 if r.visit_count > 0
             ]
 
+    def nearest_room(self, x: float, y: float) -> str | None:
+        """Return room_id of the nearest room center, or None if no rooms exist.
+
+        Only considers rooms with visit_count > 0 (actually explored).
+        Used to replace the hardcoded _detect_current_room() throughout the codebase.
+        """
+        with self._lock:
+            best_id: str | None = None
+            best_dist = float("inf")
+            for room in self._rooms.values():
+                if room.visit_count <= 0:
+                    continue
+                dist = math.sqrt(
+                    (room.center_x - x) ** 2 + (room.center_y - y) ** 2
+                )
+                if dist < best_dist:
+                    best_dist = dist
+                    best_id = room.room_id
+            return best_id
+
     def get_unvisited_rooms(self, all_rooms: list[str]) -> list[str]:
         visited = set(self.get_visited_rooms())
         return [r for r in all_rooms if r not in visited]
@@ -692,6 +850,59 @@ class SceneGraph:
             }
 
     # ------------------------------------------------------------------
+    # Layout seeding (simulation)
+    # ------------------------------------------------------------------
+
+    def load_layout(self, layout_path: str) -> int:
+        """Seed SceneGraph from a room layout config file.
+
+        Loads room centers and door positions from a YAML file. Each room
+        gets visit_count=10 so nearest_room() and navigate work immediately.
+
+        SIM ONLY — for real-world, rooms are discovered via exploration.
+
+        Args:
+            layout_path: Path to room_layout.yaml.
+
+        Returns:
+            Number of rooms loaded, or 0 on failure.
+        """
+        try:
+            with open(layout_path) as f:
+                data = yaml.safe_load(f)
+            if not isinstance(data, dict):
+                return 0
+
+            count = 0
+            for room_name, coords in data.get("rooms", {}).items():
+                if isinstance(coords, list) and len(coords) == 2:
+                    x, y = float(coords[0]), float(coords[1])
+                    # High visit_count so nearest_room trusts these positions
+                    with self._lock:
+                        self._rooms[room_name] = RoomNode(
+                            room_id=room_name,
+                            center_x=x,
+                            center_y=y,
+                            visit_count=10,
+                            last_visited=time.time(),
+                        )
+                    count += 1
+
+            for door_key, coords in data.get("doors", {}).items():
+                if isinstance(coords, list) and len(coords) == 2:
+                    parts = door_key.split("-")
+                    if len(parts) == 2:
+                        self.add_door(parts[0], parts[1], float(coords[0]), float(coords[1]))
+
+            logger.info("[SceneGraph] Loaded layout: %d rooms from %s", count, layout_path)
+            return count
+        except FileNotFoundError:
+            return 0
+        except Exception as exc:
+            logger.warning("[SceneGraph] load_layout failed: %s", exc)
+            return 0
+
+    # ------------------------------------------------------------------
     # Serialization
     # ------------------------------------------------------------------
 
@@ -699,10 +910,16 @@ class SceneGraph:
         if not self._persist_path:
             return
         with self._lock:
+            # Serialize doors: convert tuple keys to "room_a|room_b" strings
+            doors_serialized = {
+                f"{k[0]}|{k[1]}": {"x": v[0], "y": v[1], "count": v[2]}
+                for k, v in self._doors.items()
+            }
             data = {
                 "rooms": {k: v.to_dict() for k, v in self._rooms.items()},
                 "viewpoints": {k: v.to_dict() for k, v in self._viewpoints.items()},
                 "objects": {k: v.to_dict() for k, v in self._objects.items()},
+                "doors": doors_serialized,
             }
         with open(self._persist_path, "w") as f:
             yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
@@ -753,6 +970,17 @@ class SceneGraph:
                     attributes=od.get("attributes", {}),
                     viewpoint_ids=tuple(od.get("viewpoint_ids", ())),
                     first_seen=float(od.get("first_seen", 0)),
+                )
+            # Doors — key stored as "room_a|room_b" string
+            for door_key, dv in data.get("doors", {}).items():
+                parts = door_key.split("|", 1)
+                if len(parts) != 2:
+                    continue
+                key: tuple[str, str] = (parts[0], parts[1])
+                self._doors[key] = (
+                    float(dv.get("x", 0)),
+                    float(dv.get("y", 0)),
+                    int(dv.get("count", 1)),
                 )
         except FileNotFoundError:
             pass

@@ -299,7 +299,12 @@ class TestMobileLoopExecution:
         ])
         llm = _make_mock_llm(response)
         vlm = _make_mock_vlm()
+        # Pre-populate SceneGraph so NavigateSkill can find kitchen.
+        # NavigateSkill requires _get_room_center_from_memory to return a position
+        # (visit_count >= _MIN_VISIT_COUNT = 3).
         sg = SceneGraph()
+        for _ in range(5):
+            sg.visit("kitchen", 17.0, 2.5)
         agent = _make_mock_agent(llm=llm, vlm=vlm, scene_graph=sg)
         loop = MobileAgentLoop(agent, {})
 

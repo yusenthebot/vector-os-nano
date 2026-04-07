@@ -1,0 +1,27 @@
+# Room layout for go2_room.xml simulation environment.
+# Loaded into SceneGraph on sim startup for instant position-based room detection.
+#
+# SIM ONLY — for real-world deployment, replace this with SLAM-based
+# spatial understanding (VLM room identification, semantic mapping, etc.)
+#
+# Format: room_name: [center_x, center_y]
+# Coordinates match go2_room.xml (20m x 14m house).
+
+rooms:
+  living_room:    [3.0,  2.5]
+  dining_room:    [3.0,  7.5]
+  kitchen:        [17.0, 2.5]
+  study:          [17.0, 7.5]
+  master_bedroom: [3.5,  12.0]
+  guest_bedroom:  [16.0, 12.0]
+  bathroom:       [8.5,  12.0]
+  hallway:        [10.0, 5.0]
+
+doors:
+  living_room-hallway:    [6.5,  3.0]
+  dining_room-hallway:    [6.5,  8.0]
+  kitchen-hallway:        [13.5, 3.0]
+  study-hallway:          [13.5, 8.0]
+  master_bedroom-hallway: [3.0,  10.5]
+  guest_bedroom-hallway:  [16.0, 10.0]
+  bathroom-hallway:       [8.5,  10.5]

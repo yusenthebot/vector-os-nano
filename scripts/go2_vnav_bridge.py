@@ -183,6 +183,12 @@ class Go2VNavBridge(Node):
         self._pc_pub = self.create_publisher(
             PointCloud2, "/registered_scan", reliable_qos
         )
+        self._terrain_map_pub = self.create_publisher(
+            PointCloud2, "/terrain_map", reliable_qos
+        )
+        self._terrain_map_ext_pub = self.create_publisher(
+            PointCloud2, "/terrain_map_ext", reliable_qos
+        )
         self._scan_pub = self.create_publisher(
             LaserScanMsg, "/scan", reliable_qos
         )
@@ -263,6 +269,9 @@ class Go2VNavBridge(Node):
         self._terrain_map_path = os.path.expanduser("~/.vector_os_nano/terrain_map.npz")
         self.create_timer(30.0, self._auto_save_terrain)
 
+        # Reset pose check (1 Hz) — triggered by /tmp/vector_reset_pose file flag
+        self.create_timer(1.0, self._check_reset_flag)
+
         # Front obstacle detection from cached pointcloud
         self._cached_points: list = []
 
@@ -304,6 +313,20 @@ class Go2VNavBridge(Node):
         self.get_logger().info(
             "Go2VNavBridge started — /state_estimation, /registered_scan, /joy, /speed"
         )
+
+    def _check_reset_flag(self) -> None:
+        """Check for reset pose request (1 Hz). Triggered by /tmp/vector_reset_pose."""
+        if os.path.exists("/tmp/vector_reset_pose"):
+            try:
+                os.remove("/tmp/vector_reset_pose")
+            except OSError:
+                pass
+            self.get_logger().warn("RESET POSE — standing up at current position")
+            self._go2.reset_pose()
+            self._current_path = []
+            self._pf_speed = 0.0
+            self._pf_lat = 0.0
+            self._pf_yawrate = 0.0
 
     def _check_nav_flag(self) -> None:
         """Check file flag to enable/disable path following (1 Hz)."""
@@ -368,6 +391,8 @@ class Go2VNavBridge(Node):
         msg.data = bytes(data)
         msg.is_dense = True
         self._pc_pub.publish(msg)
+        self._terrain_map_pub.publish(msg)
+        self._terrain_map_ext_pub.publish(msg)
 
         self._terrain_replay_count += 1
         if self._terrain_replay_count == 1:
@@ -760,15 +785,23 @@ class Go2VNavBridge(Node):
         # Head jammed against wall prevents lateral movement, so must back up first.
         now = time.time()
         if now < self._wall_escape_until:
+            # Wall escape — use GENTLE velocities (robot may be off-balance)
             if now < self._wall_escape_phase2:
-                # Phase 1: pure reverse — clear the wall
-                self._go2.set_velocity(-0.4, 0.0, 0.0)
+                tgt_vx, tgt_vy, tgt_yaw = -0.2, 0.0, 0.0
             else:
-                # Phase 2: strafe + turn toward open side
                 front_d, left_d, right_d = self._scan_surroundings()
-                escape_vy = 0.35 if right_d > left_d else -0.35
-                escape_vyaw = 0.5 if right_d > left_d else -0.5
-                self._go2.set_velocity(-0.15, escape_vy, escape_vyaw)
+                tgt_vy = 0.10 if right_d > left_d else -0.10
+                tgt_yaw = 0.3 if right_d > left_d else -0.3
+                tgt_vx, tgt_vy, tgt_yaw = -0.1, tgt_vy, tgt_yaw
+            # Smooth toward targets (reuse the same ramp logic)
+            _A = 0.03
+            if self._pf_speed < tgt_vx: self._pf_speed = min(tgt_vx, self._pf_speed + _A)
+            else: self._pf_speed = max(tgt_vx, self._pf_speed - _A)
+            if self._pf_lat < tgt_vy: self._pf_lat = min(tgt_vy, self._pf_lat + 0.01)
+            else: self._pf_lat = max(tgt_vy, self._pf_lat - 0.01)
+            if self._pf_yawrate < tgt_yaw: self._pf_yawrate = min(tgt_yaw, self._pf_yawrate + 0.04)
+            else: self._pf_yawrate = max(tgt_yaw, self._pf_yawrate - 0.04)
+            self._go2.set_velocity(self._pf_speed, self._pf_lat, self._pf_yawrate)
             self._last_cmd_time = now
             return
 
@@ -779,39 +812,41 @@ class Go2VNavBridge(Node):
         else:
             self._wall_contact_time = 0.0
 
-        if self._wall_contact_time > 0.5:  # 0.5s — trigger before dog jams
+        if self._wall_contact_time > 0.5:
             front_d, left_d, right_d = self._scan_surroundings()
             open_side = "right" if right_d > left_d else "left"
             self.get_logger().warn(
                 f"Wall escape: reverse 1s then strafe {open_side}, front_d={front_d_check:.2f}"
             )
-            self._wall_escape_phase2 = now + 1.0   # phase 1 = 1s pure reverse
-            self._wall_escape_until = now + 2.5     # total = 2.5s (1s reverse + 1.5s strafe)
+            self._wall_escape_phase2 = now + 1.0
+            self._wall_escape_until = now + 2.5
             self._wall_contact_time = 0.0
             self._current_path = []
             self._stuck_count = 0
-            return
+            # Don't return — fall through to smoother below
 
         if not hasattr(self, '_pf_speed'):
             self._pf_speed = 0.0       # current forward speed
             self._pf_lat = 0.0         # current lateral speed
             self._pf_yawrate = 0.0     # current yaw rate
             self._pf_point_id = 0      # path progress index
+            self._pf_turning = False   # True = turn-in-place mode
 
-        # Constants ported from C++ pathFollower (pathFollower.cpp)
-        # Adapted for Go2 quadruped: lower max speed, same tracking precision
-        _MAX_SPEED = 0.8               # m/s forward cruise (C++: 1.0)
-        _MAX_LAT = 0.4                 # m/s max lateral speed
-        _MAX_YAW_RATE = 1.0            # rad/s = 57 deg/s (C++: 0.785, raised for quadruped spot turn)
-        _YAW_GAIN = 7.5                # P-gain for yaw (matches C++)
-        _STOP_YAW_GAIN = 7.5           # P-gain when nearly stopped (matches C++)
-        _DIR_DIFF_THRE = 0.1           # rad (~5.7°) heading gate (matches C++)
-        _OMNI_DIR_GOAL_THRE = 1.0      # m — near goal, allow large heading (C++)
-        _OMNI_DIR_DIFF_THRE = 1.5      # rad — heading limit near goal (C++)
-        _LOOK_AHEAD = 0.5              # m lookahead (matches C++)
-        _STOP_DIS = 0.2                # m — stop within this (matches C++)
-        _SLOW_DWN_DIS = 1.0            # m — start decelerating (matches C++)
-        _ACCEL = 0.05                  # m/s per step @ 20Hz (C++: 0.01@100Hz = same)
+        # --- Two-mode quadruped path follower ---
+        # Mode 1 (TRACK): heading error < 60° → cos/sin omni-walk, full speed
+        # Mode 2 (TURN):  heading error > 60° → stop, turn in place, then go
+        # Hysteresis: TRACK→TURN at 60°, TURN→TRACK at 30° (prevents oscillation)
+        _MAX_SPEED = 0.8               # m/s forward cruise (open space)
+        _MAX_LAT = 0.15                # m/s max lateral speed (conservative — falls at 0.25)
+        _MAX_YAW_RATE = 1.0            # rad/s max yaw rate
+        _YAW_GAIN_TRACK = 4.0          # P-gain for yaw in tracking mode (gentle)
+        _YAW_GAIN_TURN = 6.0           # P-gain for yaw in turn mode (snappy)
+        _TRACK_THRE = 1.05             # rad (60°) — enter turn mode above this
+        _TRACK_RESUME = 0.52           # rad (30°) — resume tracking below this (hysteresis)
+        _LOOK_AHEAD = 0.8              # m lookahead
+        _STOP_DIS = 0.2                # m — stop within this
+        _SLOW_DWN_DIS = 1.0            # m — start decelerating
+        _ACCEL = 0.04                  # m/s per step @ 20Hz forward
         _PATH_TIMEOUT = 8.0            # seconds before path considered stale
 
         has_path = (self._current_path
@@ -819,15 +854,24 @@ class Go2VNavBridge(Node):
 
         if not has_path:
             if not self._nav_enabled:
-                self._go2.set_velocity(0.0, 0.0, 0.0)
-                self._last_cmd_time = time.time()
-                return
-            # Gentle idle wander with obstacle check
-            front_dist = self._check_front_obstacle()
-            if front_dist < 0.5:
-                self._go2.set_velocity(0.0, 0.0, 0.3)
+                # Decel to stop (smoothed)
+                self._pf_speed *= 0.9
+                self._pf_lat *= 0.9
+                self._pf_yawrate *= 0.9
+                if abs(self._pf_speed) < 0.01: self._pf_speed = 0.0
+                if abs(self._pf_lat) < 0.01: self._pf_lat = 0.0
+                if abs(self._pf_yawrate) < 0.01: self._pf_yawrate = 0.0
             else:
-                self._go2.set_velocity(0.15, 0.0, 0.10)
+                front_dist = self._check_front_obstacle()
+                tgt_vx = -0.15 if front_dist < 0.4 else 0.15
+                tgt_yaw = 0.3 if front_dist < 0.4 else 0.1
+                _A = 0.03
+                if self._pf_speed < tgt_vx: self._pf_speed = min(tgt_vx, self._pf_speed + _A)
+                else: self._pf_speed = max(tgt_vx, self._pf_speed - _A)
+                if self._pf_yawrate < tgt_yaw: self._pf_yawrate = min(tgt_yaw, self._pf_yawrate + 0.03)
+                else: self._pf_yawrate = max(tgt_yaw, self._pf_yawrate - 0.03)
+                self._pf_lat *= 0.9  # decay lateral
+            self._go2.set_velocity(self._pf_speed, self._pf_lat, self._pf_yawrate)
             self._last_cmd_time = time.time()
             self._pf_point_id = 0
             return
@@ -863,70 +907,64 @@ class Go2VNavBridge(Node):
 
         abs_err = abs(dir_diff)
 
-        # --- Target speed based on endpoint distance (matches C++) ---
-        target_speed = _MAX_SPEED
+        # --- Space-aware speed: slow in tight spaces, fast in open ---
+        front_d, left_d, right_d = self._scan_surroundings()
+        front_gap = front_d - 0.34   # body front extent
+        left_gap = left_d - 0.19     # body side extent
+        right_gap = right_d - 0.19
+        min_gap = min(front_gap, left_gap, right_gap)
+
+        if min_gap > 0.5:
+            space_speed = _MAX_SPEED                    # open space
+        elif min_gap > 0.1:
+            space_speed = _MAX_SPEED * (min_gap / 0.5)  # proportional
+        else:
+            space_speed = 0.15                           # tight crawl
+
+        target_speed = space_speed
         if end_dis < _SLOW_DWN_DIS:
-            target_speed = _MAX_SPEED * (end_dis / _SLOW_DWN_DIS)
+            target_speed = min(target_speed, _MAX_SPEED * (end_dis / _SLOW_DWN_DIS))
         if end_dis < _STOP_DIS or path_size <= 1:
             target_speed = 0.0
 
-        # --- Yaw rate: P-control (matches C++ pathFollower) ---
-        if abs(self._pf_speed) < 2.0 * _ACCEL:
-            vyaw = _STOP_YAW_GAIN * dir_diff  # stopped: faster turn
+        # --- Two-mode controller ---
+        # Mode transition with hysteresis (prevents oscillation at boundary)
+        if self._pf_turning:
+            if abs_err < _TRACK_RESUME:
+                self._pf_turning = False  # heading aligned → resume tracking
         else:
-            vyaw = _YAW_GAIN * dir_diff        # moving: proportional
+            if abs_err > _TRACK_THRE:
+                self._pf_turning = True   # heading way off → stop and turn
 
-        # --- Heading-gated acceleration (KEY from C++ pathFollower) ---
-        # Only accelerate when heading is aligned. Otherwise decelerate to
-        # stop and turn in place. This prevents forward drift into walls
-        # when the robot is facing the wrong direction.
-        heading_ok = (
-            abs_err < _DIR_DIFF_THRE  # < 5.7° — well aligned
-            or (end_dis < _OMNI_DIR_GOAL_THRE and abs_err < _OMNI_DIR_DIFF_THRE)
-            # near goal: allow larger heading error for omnidirectional approach
-        )
-
-        if heading_ok and end_dis > _STOP_DIS:
-            # Heading aligned — accelerate toward target speed
-            # Cross-track correction via cos/sin decomposition (C++ omniDir mode)
-            # vx follows path direction, vy corrects lateral error
-            vx = target_speed * math.cos(dir_diff)
-            vy = -target_speed * math.sin(dir_diff)
-            # Clamp lateral to prevent gait instability on Go2
-            vy = max(-_MAX_LAT, min(_MAX_LAT, vy))
-        else:
-            # Heading NOT aligned — spot turn toward target.
-            # Quadruped-specific: MPC gait needs a small forward velocity to
-            # produce effective rotation. Pure vx=0 + vyaw causes the dog to
-            # "march in place" without actually turning. A tiny creep forward
-            # (0.05 m/s) engages the gait and enables smooth in-place turns.
-            vx = 0.05  # minimal creep to keep gait turning
+        if end_dis <= _STOP_DIS:
+            # At goal — stop
+            vx = 0.0
             vy = 0.0
-            # Boost yaw rate for faster spot turn (unclamped here, clamped below)
-            vyaw = _STOP_YAW_GAIN * dir_diff
+            vyaw = _YAW_GAIN_TRACK * dir_diff
 
-        # --- Cylinder body safety boundary (Go2 MJCF collision) ---
-        # The dog is NOT a point — it's a cylinder with radius ~0.19m.
-        # The path follower tracks the centerline, but the body extends around it.
-        # Obstacle distances are from the SENSOR (center), so we must subtract
-        # the body radius to get the actual gap between body surface and wall.
-        #
-        # MJCF collision: front 0.34m (head), side 0.19m (hip+thigh swing)
-        # Strategy: 3 zones based on gap between body surface and obstacle
-        #   Zone 1 (gap > 0.15m): normal — path follower tracks freely
-        #   Zone 2 (gap 0.05-0.15m): strong push away + slow down
-        #   Zone 3 (gap < 0.05m): hard stop/reverse — body about to contact
-        _BODY_FRONT = 0.34
-        _BODY_SIDE = 0.19
+        elif self._pf_turning:
+            # MODE 2: TURN IN PLACE — heading error > 60°
+            # Stop linear motion, rotate toward path. No strafe (prevents orbiting).
+            # Minimal forward creep for MPC gait engagement.
+            vx = 0.05
+            vy = 0.0
+            vyaw = _YAW_GAIN_TURN * dir_diff
+
+        else:
+            # MODE 1: TRACKING — heading error < 60°
+            # Reduce speed at larger heading errors — turn first, then accelerate.
+            # cos(err) already reduces vx, but we also slow overall speed
+            # to prevent high-speed turns (centripetal force → tip over).
+            err_scale = max(0.4, math.cos(abs_err))  # 1.0 at 0°, 0.5 at 60°
+            track_speed = target_speed * err_scale
+            vx = track_speed * math.cos(dir_diff)
+            vy = -track_speed * math.sin(dir_diff)
+            vy = max(-_MAX_LAT, min(_MAX_LAT, vy))
+            vyaw = _YAW_GAIN_TRACK * dir_diff
+
+        # --- Cylinder body safety (gaps already computed above) ---
         _COMFORT = 0.15      # desired gap between body surface and wall
         _DANGER = 0.05       # gap below this = imminent contact
-
-        front_d, left_d, right_d = self._scan_surroundings()
-
-        # Compute gaps (obstacle distance minus body extent)
-        front_gap = front_d - _BODY_FRONT
-        left_gap = left_d - _BODY_SIDE
-        right_gap = right_d - _BODY_SIDE
 
         # Front: brake based on gap, not raw distance
         if front_gap < _COMFORT and vx > 0:
@@ -935,38 +973,57 @@ class Go2VNavBridge(Node):
             else:
                 # Scale: full speed at _COMFORT gap, zero at _DANGER gap
                 vx *= (front_gap - _DANGER) / (_COMFORT - _DANGER)
-            # Also slow down forward speed when any side is tight
-            if left_gap < _DANGER or right_gap < _DANGER:
-                vx *= 0.3  # crawl when sides are tight
+            # Slow down when BOTH sides are tight (corridor/gap), but not
+            # for single-side obstacles (table legs, door frames)
+            if left_gap < _DANGER and right_gap < _DANGER:
+                vx *= 0.3  # crawl when squeezed on BOTH sides
 
-        # Sides: push HARD away from wall when gap < comfort zone
+        # Sides: proportional push away from wall (never slam to max)
+        # Scale push by (1 - forward_speed_ratio) so fast-moving robot
+        # gets gentler lateral push (prevents tipping at speed).
+        _speed_ratio = min(1.0, abs(self._pf_speed) / _MAX_SPEED)
+        _push_scale = 0.3 * (1.0 - 0.5 * _speed_ratio)  # 0.3 at stop, 0.15 at max speed
+
         if left_gap < _COMFORT:
-            if left_gap <= _DANGER:
-                # Imminent contact — maximum push right
-                vy = -_MAX_LAT
-            else:
-                # Proportional push right
-                push_strength = (_COMFORT - left_gap) / (_COMFORT - _DANGER)
-                vy = max(-_MAX_LAT, vy - push_strength * 0.4)
-            # Block any leftward motion
+            push_strength = (_COMFORT - max(0, left_gap)) / _COMFORT
+            vy = max(-_MAX_LAT, vy - push_strength * _push_scale)
             if vy > 0:
                 vy = 0.0
         if right_gap < _COMFORT:
-            if right_gap <= _DANGER:
-                vy = _MAX_LAT
-            else:
-                push_strength = (_COMFORT - right_gap) / (_COMFORT - _DANGER)
-                vy = min(_MAX_LAT, vy + push_strength * 0.4)
+            push_strength = (_COMFORT - max(0, right_gap)) / _COMFORT
+            vy = min(_MAX_LAT, vy + push_strength * _push_scale)
             if vy < 0:
                 vy = 0.0
 
-        # --- Smooth acceleration ---
+        # --- Smooth acceleration (prevents MPC gait destabilization) ---
+        _ACCEL_LAT = 0.01    # m/s per tick lateral (0→0.15 takes 0.75s)
+        _ACCEL_YAW_TRACK = 0.04   # rad/s per tick in tracking (gentle)
+        _ACCEL_YAW_TURN = 0.08    # rad/s per tick in turn mode (faster)
+
+        # Forward/reverse
         if self._pf_speed < vx:
             self._pf_speed = min(vx, self._pf_speed + _ACCEL)
         elif self._pf_speed > vx:
-            self._pf_speed = max(vx, self._pf_speed - _ACCEL)
-        self._pf_lat = vy  # lateral can change instantly (no inertia issue)
-        self._pf_yawrate = float(np.clip(vyaw, -_MAX_YAW_RATE, _MAX_YAW_RATE))
+            self._pf_speed = max(vx, self._pf_speed - _ACCEL * 2)  # decel 2x faster
+
+        # Lateral
+        target_lat = float(np.clip(vy, -_MAX_LAT, _MAX_LAT))
+        if self._pf_lat < target_lat:
+            self._pf_lat = min(target_lat, self._pf_lat + _ACCEL_LAT)
+        elif self._pf_lat > target_lat:
+            self._pf_lat = max(target_lat, self._pf_lat - _ACCEL_LAT)
+
+        # Yaw — scale max yaw rate inversely with forward speed (prevent centripetal tip)
+        # Fast forward (0.8) → max yaw 0.5 rad/s. Stopped → max yaw 1.2 rad/s.
+        _speed_frac = min(1.0, abs(self._pf_speed) / _MAX_SPEED)
+        _dynamic_yaw_max = _MAX_YAW_RATE * (1.0 - 0.6 * _speed_frac)
+
+        accel_yaw = _ACCEL_YAW_TURN if self._pf_turning else _ACCEL_YAW_TRACK
+        target_yaw = float(np.clip(vyaw, -_dynamic_yaw_max, _dynamic_yaw_max))
+        if self._pf_yawrate < target_yaw:
+            self._pf_yawrate = min(target_yaw, self._pf_yawrate + accel_yaw)
+        elif self._pf_yawrate > target_yaw:
+            self._pf_yawrate = max(target_yaw, self._pf_yawrate - accel_yaw)
 
         # Clamp final speeds
         self._pf_speed = float(np.clip(self._pf_speed, -0.3, _MAX_SPEED))
@@ -979,12 +1036,12 @@ class Go2VNavBridge(Node):
             self._follow_count = 0
         self._follow_count += 1
         if self._follow_count % 20 == 0:
+            mode = "TURN" if self._pf_turning else "TRACK"
             self.get_logger().info(
-                f"PyPF: vx={self._pf_speed:.2f} vy={self._pf_lat:.2f} "
+                f"PyPF[{mode}]: vx={self._pf_speed:.2f} vy={self._pf_lat:.2f} "
                 f"yr={self._pf_yawrate:.2f} endD={end_dis:.1f} "
                 f"err={math.degrees(dir_diff):.0f}° "
-                f"pt={self._pf_point_id}/{path_size} "
-                f"wall=F{front_d:.1f}/L{left_d:.1f}/R{right_d:.1f}"
+                f"spd={space_speed:.1f} gap={min_gap:.2f}"
             )
 
     def _log_diagnostics(self) -> None:
@@ -1047,17 +1104,22 @@ class Go2VNavBridge(Node):
                     f"Stuck 4s at ({odom.x:.1f},{odom.y:.1f}) — "
                     f"sent /reset_waypoint to TARE"
                 )
-            elif self._stuck_count == 4:  # 8s — escape: back up
+            elif self._stuck_count == 4:  # 8s — sustained escape maneuver
+                now = time.time()
+                front_d, left_d, right_d = self._scan_surroundings()
+                open_side = "right" if right_d > left_d else "left"
                 self.get_logger().warn(
-                    f"Stuck 8s — backing up to escape"
+                    f"Stuck 8s — escape: reverse 1s + strafe {open_side}"
                 )
-                # Back up for 1 second (will be overridden by next _follow_path)
-                self._go2.set_velocity(-0.4, 0.0, 0.0)
-                self._last_cmd_time = time.time()
-                self._current_path = []  # clear stale path
-                self._stuck_count = 0  # reset for fresh detection
+                # Use wall escape mechanism for sustained 2.5s maneuver
+                # (not a single velocity set that gets overridden in 50ms)
+                self._wall_escape_phase2 = now + 1.0   # 1s reverse
+                self._wall_escape_until = now + 2.5     # 1.5s strafe
+                self._current_path = []
+                self._stuck_count = 0
+                self._stuck_history.append((odom.x, odom.y))
 
-                # Stuck loop detection: if last 3 resets all within 0.5m → aggressive escape
+                # Stuck loop: 3+ escapes at same spot → longer escape
                 if len(self._stuck_history) >= 3:
                     recent = self._stuck_history[-3:]
                     cx = sum(p[0] for p in recent) / 3
@@ -1066,13 +1128,10 @@ class Go2VNavBridge(Node):
                         math.sqrt((p[0] - cx) ** 2 + (p[1] - cy) ** 2) < 0.5
                         for p in recent
                     ):
-                        self.get_logger().warn(
-                            "Stuck loop detected — aggressive escape: lateral strafe"
-                        )
-                        self._go2.set_velocity(-0.3, 0.3, 0.5)
-                        self._last_cmd_time = time.time()
+                        self.get_logger().warn("Stuck loop — extended escape 4s")
+                        self._wall_escape_phase2 = now + 2.0
+                        self._wall_escape_until = now + 4.0
                         self._stuck_history.clear()
-                        self._current_path = []
 
         self._stuck_pos = cur
 

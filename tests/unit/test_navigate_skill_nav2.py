@@ -15,8 +15,6 @@ from vector_os_nano.core.world_model import WorldModel
 from vector_os_nano.core.types import SkillResult
 from vector_os_nano.skills.navigate import (
     NavigateSkill,
-    _ROOM_CENTERS,
-    _ROOM_DOORS,
     _ROOM_ALIASES,
     _resolve_room,
     _distance,
@@ -25,14 +23,57 @@ from vector_os_nano.skills.navigate import (
     _detect_current_room,
 )
 
+# ---------------------------------------------------------------------------
+# Local test fixtures replacing removed hardcoded dicts from navigate.py
+# ---------------------------------------------------------------------------
+
+_ROOM_CENTERS: dict[str, tuple[float, float]] = {
+    "living_room":    (3.0,  2.5),
+    "dining_room":    (3.0,  7.5),
+    "kitchen":        (17.0, 2.5),
+    "study":          (17.0, 7.5),
+    "master_bedroom": (3.5,  12.0),
+    "guest_bedroom":  (16.0, 12.0),
+    "bathroom":       (8.5,  12.0),
+    "hallway":        (10.0, 5.0),
+}
+
+_ROOM_DOORS: dict[str, tuple[float, float]] = {
+    "living_room":    (6.5,  3.0),
+    "dining_room":    (6.5,  8.0),
+    "kitchen":        (13.5, 3.0),
+    "study":          (13.5, 8.0),
+    "master_bedroom": (3.0,  10.5),
+    "guest_bedroom":  (12.0, 10.5),
+    "bathroom":       (8.5,  10.5),
+    "hallway":        (10.0, 5.0),
+}
+
+
+def make_test_scenegraph():
+    """Create SceneGraph pre-populated with go2_room.xml layout."""
+    from vector_os_nano.core.scene_graph import SceneGraph
+    sg = SceneGraph()
+    for name, (x, y) in _ROOM_CENTERS.items():
+        for _ in range(5):
+            sg.visit(name, x, y)
+    for room, (dx, dy) in _ROOM_DOORS.items():
+        if room != "hallway":
+            sg.add_door(room, "hallway", dx, dy)
+    return sg
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 def _make_nav2_context(nav_result: bool = True) -> SkillContext:
-    """Create a SkillContext with a Nav2-mode NavStackClient mock."""
-    base = MagicMock()
+    """Create a SkillContext with a Nav2-mode NavStackClient mock.
+
+    The base mock explicitly does NOT have navigate_to so NavigateSkill
+    uses Mode 1 (NavStackClient) rather than Mode 0 (proxy).
+    """
+    base = MagicMock(spec=["walk", "get_position", "get_heading", "set_velocity"])
     base.walk.return_value = True
     base.get_position.return_value = [10.0, 6.5, 0.27]  # hallway center
     base.get_heading.return_value = 0.0
@@ -46,19 +87,24 @@ def _make_nav2_context(nav_result: bool = True) -> SkillContext:
     return SkillContext(
         bases={"go2": base},
         world_model=WorldModel(),
-        services={"nav": nav},
+        services={"nav": nav, "spatial_memory": make_test_scenegraph()},
     )
 
 
 def _make_fallback_context() -> SkillContext:
-    """Create a SkillContext without nav service (dead-reckoning mode)."""
-    base = MagicMock()
+    """Create a SkillContext without nav service (dead-reckoning mode).
+
+    The base mock explicitly does NOT have navigate_to so NavigateSkill
+    uses Mode 2 (dead-reckoning) rather than Mode 0 (proxy).
+    """
+    base = MagicMock(spec=["walk", "get_position", "get_heading", "set_velocity"])
     base.walk.return_value = True
     base.get_position.return_value = [10.0, 6.5, 0.27]
     base.get_heading.return_value = 0.0
     return SkillContext(
         bases={"go2": base},
         world_model=WorldModel(),
+        services={"spatial_memory": make_test_scenegraph()},
     )
 
 
@@ -372,16 +418,18 @@ class TestHelperFunctions:
 
     def test_detect_current_room_at_center(self):
         """Robot at a room center should be detected in that room."""
+        sg = make_test_scenegraph()
         for room, (cx, cy) in _ROOM_CENTERS.items():
-            detected = _detect_current_room(cx, cy)
+            detected = _detect_current_room(cx, cy, sg=sg)
             assert detected == room, f"At ({cx},{cy}) expected {room}, got {detected}"
 
     def test_detect_current_room_near_center(self):
         """Robot near a room center (within 1m) should be in that room."""
+        sg = make_test_scenegraph()
         for room, (cx, cy) in _ROOM_CENTERS.items():
             # Offset by 0.5m in each direction
             for dx, dy in [(0.5, 0), (-0.5, 0), (0, 0.5), (0, -0.5)]:
-                detected = _detect_current_room(cx + dx, cy + dy)
+                detected = _detect_current_room(cx + dx, cy + dy, sg=sg)
                 assert detected == room, (
                     f"At ({cx+dx:.1f},{cy+dy:.1f}) expected {room}, got {detected}"
                 )

@@ -90,6 +90,7 @@ SLASH_COMMANDS: list[tuple[str, str, bool]] = [
     ("compact", "Compress context window", False),
     ("clear", "Reset conversation", False),
     ("clear_memory", "Clear scene graph (forget all explored rooms/objects)", False),
+    ("reset", "Reset robot pose (stand up after tip-over, sim only)", False),
     ("sessions", "List saved sessions", False),
     ("quit", "Exit", False),
 ]
@@ -774,6 +775,16 @@ def _handle_slash_command(
             console.print(f"[dim]  Scene graph cleared. All rooms/objects forgotten.[/dim]")
         else:
             console.print(f"[dim]  No scene graph file found.[/dim]")
+
+    elif cmd == "reset":
+        import os as _os
+        # Signal bridge to reset robot pose via file flag
+        try:
+            with open("/tmp/vector_reset_pose", "w") as _f:
+                _f.write("1")
+            console.print(f"[dim]  Reset signal sent. Robot will stand up at current position.[/dim]")
+        except OSError as _exc:
+            console.print(f"[yellow]  Failed to send reset: {_exc}[/]")
 
     elif cmd == "model":
         if not args_rest:

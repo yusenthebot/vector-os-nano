@@ -367,8 +367,8 @@ class Go2ROS2Proxy:
 
         start_time = time.time()
         _ARRIVAL_DIST: float = 0.8
-        _FAR_PROBE_S: float = 5.0    # give FAR time to process goal
-        _MIN_PROBE_S: float = 2.0    # minimum wait even if /path seen early
+        _FAR_PROBE_S: float = 3.0    # shorter probe — door-chain is reliable backup
+        _MIN_PROBE_S: float = 1.5    # minimum wait
 
         # Reset waypoint timestamp to ignore stale /way_point from TARE.
         # /way_point is published by FAR (routing) or TARE (exploring).
@@ -376,16 +376,18 @@ class Go2ROS2Proxy:
         self._last_waypoint_time = 0.0
 
         # Phase 1: probe FAR — send /goal_point, wait for /way_point response
-        # FAR only publishes /way_point when it has a V-Graph AND can route.
-        # localPlanner's /path is unreliable (publishes even without FAR).
         probe_deadline = start_time + _FAR_PROBE_S
         while time.time() < probe_deadline:
+            if not os.path.exists("/tmp/vector_nav_active"):
+                logger.info("[NAV] Cancelled by stop command")
+                self._nav_goal = None
+                return False
             self._publish_goal_point(x, y)
             time.sleep(0.5)
             elapsed = time.time() - start_time
             if self._last_waypoint_time > start_time and elapsed >= _MIN_PROBE_S:
                 logger.info("[NAV] FAR responded with /way_point after %.1fs", elapsed)
-                break  # FAR is routing
+                break
 
         far_available = self._last_waypoint_time > start_time
         if not far_available:
@@ -403,14 +405,39 @@ class Go2ROS2Proxy:
         # ONLY publish /goal_point — let FAR handle /way_point routing.
         # FAR routes through doors via V-Graph and publishes intermediate
         # /way_point at 5Hz.
+        # Phase 2: full navigation loop (FAR is routing)
         deadline = start_time + timeout
         _last_diag = 0.0
+        _last_dist = float("inf")  # for stall detection
+        _stall_time = 0.0
         while time.time() < deadline:
+            # --- Cancel check: stop command removes nav flag ---
+            if not os.path.exists("/tmp/vector_nav_active"):
+                logger.info("[NAV] Cancelled by stop command")
+                self._nav_goal = None
+                self.set_velocity(0.0, 0.0, 0.0)
+                return False
+
             self._publish_goal_point(x, y)
             time.sleep(0.5)
 
             pos = self.get_position()
             dist = math.sqrt((pos[0] - x) ** 2 + (pos[1] - y) ** 2)
+
+            # --- Stall detection: if not getting closer, fall back to door-chain ---
+            if dist < _last_dist - 0.1:
+                _stall_time = 0.0  # making progress
+            else:
+                _stall_time += 0.5
+            _last_dist = dist
+
+            if _stall_time > 10.0:
+                logger.warning(
+                    "[NAV] Stalled %.0fs (dist=%.1fm not decreasing) — switching to door-chain",
+                    _stall_time, dist,
+                )
+                remaining = timeout - (time.time() - start_time)
+                return self._navigate_via_doors(x, y, remaining)
 
             elapsed = time.time() - start_time
             if elapsed - _last_diag >= 5.0:
@@ -456,45 +483,53 @@ class Go2ROS2Proxy:
     ) -> bool:
         """Navigate to (x,y) by publishing door waypoints to /way_point.
 
-        When FAR has no V-Graph, this fallback routes through doorways
-        using the hardcoded room map. Each waypoint is sent to /way_point
-        so localPlanner provides obstacle avoidance for each segment.
-
-        Unlike dead-reckoning (turn+walk with no avoidance), this uses
-        the full localPlanner pipeline — the dog avoids walls on each leg.
+        Uses SceneGraph door chain instead of hardcoded room map.
+        localPlanner provides obstacle avoidance for each segment.
         """
-        from vector_os_nano.skills.navigate import (
-            _ROOM_CENTERS, _ROOM_DOORS, _detect_current_room,
-        )
+        sg = self._scene_graph
+        if sg is None or not hasattr(sg, "get_door_chain"):
+            logger.warning("[NAV] No SceneGraph available for door-chain navigation")
+            return False
 
         pos = self.get_position()
-        src_room = _detect_current_room(float(pos[0]), float(pos[1]))
-        dst_room = _detect_current_room(float(x), float(y))
+        src_room = sg.nearest_room(float(pos[0]), float(pos[1]))
+        dst_room = sg.nearest_room(float(x), float(y))
 
-        # Build waypoint chain: exit door → hallway → enter door → target
-        waypoints: list[tuple[float, float, str]] = []
-        if src_room != "hallway" and src_room != dst_room:
-            door = _ROOM_DOORS.get(src_room)
-            if door:
-                waypoints.append((door[0], door[1], f"{src_room}_door"))
-        if dst_room != "hallway":
-            door = _ROOM_DOORS.get(dst_room)
-            if door:
-                waypoints.append((door[0], door[1], f"{dst_room}_door"))
-        waypoints.append((x, y, "goal"))
+        if src_room is None or dst_room is None:
+            logger.warning(
+                "[NAV] Cannot determine rooms for door-chain: src=%s dst=%s",
+                src_room, dst_room,
+            )
+            return False
+
+        # Get waypoint chain from SceneGraph BFS
+        chain = sg.get_door_chain(src_room, dst_room)
+        if not chain:
+            logger.warning("[NAV] No door chain found: %s -> %s", src_room, dst_room)
+            return False
+
+        # Replace final waypoint with exact goal coordinates
+        # (door chain ends at dst room center, but actual goal may differ)
+        chain[-1] = (x, y, chain[-1][2])
 
         logger.info(
-            "[NAV] Door-chain: %s → %s (%d waypoints)",
-            src_room, dst_room, len(waypoints),
+            "[NAV] Door-chain: %s -> %s (%d waypoints)",
+            src_room, dst_room, len(chain),
         )
 
         deadline = time.time() + timeout
-        _SEGMENT_ARRIVAL = 1.5  # meters — close enough to advance to next wp
+        _SEGMENT_ARRIVAL = 1.5  # meters
 
-        for wx, wy, label in waypoints:
-            logger.info("[NAV] Door-chain → %s (%.1f, %.1f)", label, wx, wy)
+        for wx, wy, label in chain:
+            logger.info("[NAV] Door-chain -> %s (%.1f, %.1f)", label, wx, wy)
 
             while time.time() < deadline:
+                if not os.path.exists("/tmp/vector_nav_active"):
+                    logger.info("[NAV] Door-chain cancelled by stop")
+                    self._nav_goal = None
+                    self.set_velocity(0.0, 0.0, 0.0)
+                    return False
+
                 self._publish_waypoint(wx, wy)
                 time.sleep(0.5)
 
@@ -502,15 +537,10 @@ class Go2ROS2Proxy:
                 dist = math.sqrt((pos[0] - wx) ** 2 + (pos[1] - wy) ** 2)
 
                 if dist < _SEGMENT_ARRIVAL:
-                    logger.info(
-                        "[NAV] Reached %s (dist=%.1fm)", label, dist,
-                    )
+                    logger.info("[NAV] Reached %s (dist=%.1fm)", label, dist)
                     break
             else:
-                # Timeout on this segment
-                logger.warning(
-                    "[NAV] Door-chain timeout at %s", label,
-                )
+                logger.warning("[NAV] Door-chain timeout at %s", label)
                 return False
 
         # Final arrival check
@@ -518,7 +548,7 @@ class Go2ROS2Proxy:
         final_dist = math.sqrt((pos[0] - x) ** 2 + (pos[1] - y) ** 2)
         arrived = final_dist < 2.0
         logger.info(
-            "[NAV] Door-chain %s — final dist=%.1fm",
+            "[NAV] Door-chain %s -- final dist=%.1fm",
             "arrived" if arrived else "failed", final_dist,
         )
         return arrived

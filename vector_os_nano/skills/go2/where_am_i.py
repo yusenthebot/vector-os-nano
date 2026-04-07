@@ -10,7 +10,7 @@ import math
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.skills.navigate import _detect_current_room, _ROOM_CENTERS
+from vector_os_nano.skills.navigate import _detect_current_room
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +94,10 @@ class WhereAmISkill:
         y = float(pos[1])
         z = float(pos[2]) if len(pos) > 2 else 0.0
 
-        room = _detect_current_room(x, y)
-        room_center = _ROOM_CENTERS.get(room)
+        sg = context.services.get("spatial_memory") if context.services else None
+        room = _detect_current_room(x, y, sg=sg)
+        room_node = sg.get_room(room) if (sg is not None and room != "unknown") else None
+        room_center = (room_node.center_x, room_node.center_y) if room_node is not None else None
         compass = _heading_label(heading_rad)
 
         logger.info(

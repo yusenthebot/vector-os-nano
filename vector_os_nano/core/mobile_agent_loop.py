@@ -298,11 +298,14 @@ class MobileAgentLoop:
         Heuristic: if goal contains a room name, navigate + look.
         Otherwise, just look.
         """
-        from vector_os_nano.skills.navigate import _resolve_room, _ROOM_CENTERS
+        from vector_os_nano.skills.navigate import _resolve_room
+
+        # Get SceneGraph for room list (patrol mode)
+        sg = getattr(self._agent, "_spatial_memory", None)
 
         # Check if goal mentions a room
         for word in goal.lower().replace(",", " ").split():
-            room = _resolve_room(word)
+            room = _resolve_room(word, sg=sg)
             if room:
                 return [
                     SubTask("navigate", {"room": room}, f"go to {room}"),
@@ -312,7 +315,7 @@ class MobileAgentLoop:
         # Check Chinese room names
         for alias in ["厨房", "卧室", "客厅", "书房", "餐厅", "卫生间", "走廊", "客房"]:
             if alias in goal:
-                room = _resolve_room(alias)
+                room = _resolve_room(alias, sg=sg)
                 if room:
                     return [
                         SubTask("navigate", {"room": room}, f"go to {room}"),
@@ -323,9 +326,13 @@ class MobileAgentLoop:
         patrol_keywords = ["patrol", "巡逻", "巡视", "all rooms", "every room", "所有房间"]
         if any(kw in goal.lower() for kw in patrol_keywords):
             tasks: list[SubTask] = []
-            for room in _ROOM_CENTERS:
+            rooms = sg.get_visited_rooms() if sg is not None and hasattr(sg, "get_visited_rooms") else []
+            for room in rooms:
                 tasks.append(SubTask("navigate", {"room": room}, f"go to {room}"))
                 tasks.append(SubTask("look", {}, f"observe {room}"))
+            if not tasks:
+                # SceneGraph empty — patrol cannot be executed yet
+                logger.warning("[FALLBACK_PLAN] No rooms in SceneGraph for patrol")
             return tasks
 
         # Default: just look

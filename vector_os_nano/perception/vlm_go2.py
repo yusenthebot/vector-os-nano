@@ -44,7 +44,17 @@ _MODEL: str = "google/gemma-4-31b-it"
 _TIMEOUT_S: float = 30.0
 _MAX_RETRIES: int = 2
 _JPEG_QUALITY: int = 50
-_VLM_IMAGE_MAX_DIM: int = 160  # resize before encoding to keep base64 < 10KB
+_VLM_IMAGE_MAX_DIM: int = 160  # resize before encoding to keep base64 < 10KB (remote)
+_VLM_IMAGE_MAX_DIM_LOCAL: int = 512  # local models can handle larger images
+
+# ---------------------------------------------------------------------------
+# Local VLM backend (Ollama) — env var overrides
+# Set VECTOR_VLM_URL=http://localhost:11434/v1 to use local Ollama
+# Set VECTOR_VLM_MODEL=gemma4:e4b to select the local model
+# ---------------------------------------------------------------------------
+_LOCAL_VLM_URL: str | None = os.environ.get("VECTOR_VLM_URL")
+_LOCAL_VLM_MODEL: str | None = os.environ.get("VECTOR_VLM_MODEL")
+_USE_LOCAL_VLM: bool = _LOCAL_VLM_URL is not None
 
 
 # ---------------------------------------------------------------------------
@@ -136,15 +146,30 @@ class Go2VLMPerception:
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         cfg = config or {}
-        api_key: str | None = cfg.get("api_key") or os.environ.get(
-            "OPENROUTER_API_KEY"
-        )
-        if not api_key:
-            raise ValueError(
-                "OpenRouter API key not found. "
-                "Pass config={'api_key': '...'} or set OPENROUTER_API_KEY."
+
+        # Local VLM (Ollama) — no API key needed
+        if _USE_LOCAL_VLM:
+            self._api_key: str = "ollama"  # dummy, not sent
+            self._base_url: str = _LOCAL_VLM_URL  # type: ignore[assignment]
+            self._model: str = _LOCAL_VLM_MODEL or "gemma4:e4b"
+            self._local: bool = True
+            self._timeout: float = 45.0  # local: first call loads model (~30s), retry handles it
+            logger.info("VLM: local Ollama at %s model=%s", self._base_url, self._model)
+        else:
+            api_key: str | None = cfg.get("api_key") or os.environ.get(
+                "OPENROUTER_API_KEY"
             )
-        self._api_key: str = api_key
+            if not api_key:
+                raise ValueError(
+                    "OpenRouter API key not found. "
+                    "Pass config={'api_key': '...'} or set OPENROUTER_API_KEY."
+                )
+            self._api_key = api_key
+            self._base_url = _OPENROUTER_BASE_URL
+            self._model = _MODEL
+            self._local = False
+            self._timeout: float = _TIMEOUT_S
+
         self._cost_usd: float = 0.0
         self._cost_lock: threading.Lock = threading.Lock()
 
@@ -249,9 +274,10 @@ class Go2VLMPerception:
         """
         pil_image = Image.fromarray(frame)
         # Resize if larger than max dimension
+        max_dim = _VLM_IMAGE_MAX_DIM_LOCAL if self._local else _VLM_IMAGE_MAX_DIM
         w, h = pil_image.size
-        if max(w, h) > _VLM_IMAGE_MAX_DIM:
-            scale = _VLM_IMAGE_MAX_DIM / max(w, h)
+        if max(w, h) > max_dim:
+            scale = max_dim / max(w, h)
             pil_image = pil_image.resize(
                 (int(w * scale), int(h * scale)), Image.LANCZOS,
             )
@@ -278,7 +304,7 @@ class Go2VLMPerception:
         image_b64 = self._encode_frame(frame)
 
         payload: dict[str, Any] = {
-            "model": _MODEL,
+            "model": self._model,
             "messages": [
                 {
                     "role": "user",
@@ -295,18 +321,17 @@ class Go2VLMPerception:
             ],
         }
 
-        headers = {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
-        }
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if not self._local:
+            headers["Authorization"] = f"Bearer {self._api_key}"
 
         last_exc: Exception | None = None
         for attempt in range(1, _MAX_RETRIES + 1):
             t_start = time.monotonic()
             try:
-                with httpx.Client(timeout=_TIMEOUT_S) as client:
+                with httpx.Client(timeout=self._timeout) as client:
                     response = client.post(
-                        f"{_OPENROUTER_BASE_URL}/chat/completions",
+                        f"{self._base_url}/chat/completions",
                         json=payload,
                         headers=headers,
                     )

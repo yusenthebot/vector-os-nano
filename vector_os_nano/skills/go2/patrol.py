@@ -22,10 +22,7 @@ from typing import Any
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
-from vector_os_nano.skills.navigate import (
-    _ROOM_CENTERS,
-    _detect_current_room,
-)
+from vector_os_nano.skills.navigate import _detect_current_room
 
 logger = logging.getLogger(__name__)
 
@@ -208,18 +205,26 @@ class PatrolSkill:
         context: SkillContext,
         max_rooms: int,
     ) -> list[str]:
-        """Determine the ordered list of rooms to patrol."""
-        all_known_rooms: list[str] = list(_ROOM_CENTERS.keys())
+        """Determine the ordered list of rooms to patrol.
+
+        Falls back to SceneGraph visited rooms when no explicit list is given.
+        """
+        memory: Any = context.services.get("spatial_memory")
+        all_known_rooms: list[str] = (
+            memory.get_visited_rooms() if memory is not None else []
+        )
 
         explicit: list[str] | None = params.get("rooms")
         if explicit:
-            # Validate against known room names; keep order
-            valid = [r for r in explicit if r in _ROOM_CENTERS]
+            # Accept any explicitly-named room; validate against SceneGraph if available
+            if all_known_rooms:
+                valid = [r for r in explicit if r in all_known_rooms]
+            else:
+                valid = list(explicit)
             return valid[:max_rooms]
 
         # Use spatial_memory to prefer unvisited rooms
-        memory: Any = context.services.get("spatial_memory")
-        if memory is not None:
+        if memory is not None and all_known_rooms:
             unvisited = memory.get_unvisited_rooms(all_known_rooms)
             if unvisited:
                 return unvisited[:max_rooms]

@@ -258,12 +258,28 @@ class TestNavigationRobustness:
     def test_navigate_to_same_room(self, go2) -> None:
         """Navigate to the room we are already in — succeeds immediately."""
         from vector_os_nano.core.skill import SkillContext
+        from vector_os_nano.core.scene_graph import SceneGraph
         from vector_os_nano.skills.navigate import NavigateSkill, _detect_current_room
 
         pos = go2.get_position()
-        current = _detect_current_room(float(pos[0]), float(pos[1]))
+        # Build a SceneGraph with known rooms so _detect_current_room can work
+        sg = SceneGraph()
+        _test_rooms = {
+            "living_room":    (3.0,  2.5),
+            "dining_room":    (3.0,  7.5),
+            "kitchen":        (17.0, 2.5),
+            "study":          (17.0, 7.5),
+            "master_bedroom": (3.5,  12.0),
+            "guest_bedroom":  (16.0, 12.0),
+            "bathroom":       (8.5,  12.0),
+            "hallway":        (10.0, 5.0),
+        }
+        for name, (x, y) in _test_rooms.items():
+            for _ in range(5):
+                sg.visit(name, x, y)
+        current = _detect_current_room(float(pos[0]), float(pos[1]), sg=sg)
 
-        ctx = SkillContext(bases={"default": go2}, services={})
+        ctx = SkillContext(bases={"default": go2}, services={"spatial_memory": sg})
         result = NavigateSkill().execute({"room": current}, ctx)
 
         assert result.success, f"Navigate to same room failed: {result.error_message}"
@@ -272,9 +288,16 @@ class TestNavigationRobustness:
     def test_navigate_unknown_room(self, go2) -> None:
         """Navigate to a nonexistent room — fails with unknown_room code."""
         from vector_os_nano.core.skill import SkillContext
+        from vector_os_nano.core.scene_graph import SceneGraph
         from vector_os_nano.skills.navigate import NavigateSkill
 
-        ctx = SkillContext(bases={"default": go2}, services={})
+        # Provide a SceneGraph with known rooms so the error message includes
+        # the unknown room name (not a generic "no rooms learned" message).
+        sg = SceneGraph()
+        for _ in range(5):
+            sg.visit("kitchen", 17.0, 2.5)
+
+        ctx = SkillContext(bases={"default": go2}, services={"spatial_memory": sg})
         result = NavigateSkill().execute({"room": "nonexistent_xyzzy"}, ctx)
 
         assert not result.success
