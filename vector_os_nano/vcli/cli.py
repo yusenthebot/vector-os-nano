@@ -1180,32 +1180,131 @@ def main(argv: list[str] | None = None) -> None:
                             )
                         )
 
-                def _format_params_brief(p: dict[str, Any]) -> str:
-                    if not p:
+                def _format_tool_display(name: str, p: dict[str, Any]) -> str:
+                    """Context-aware tool call display."""
+                    if name == "file_read":
+                        path = p.get("file_path", "")
+                        short = path.split("/")[-1] if "/" in path else path
+                        offset = p.get("offset", 0)
+                        limit = p.get("limit", "")
+                        loc = f":{offset}-{offset + limit}" if offset and limit else ""
+                        return f"[dim]read[/] {short}{loc}"
+                    if name == "file_edit":
+                        path = p.get("file_path", "")
+                        short = path.split("/")[-1] if "/" in path else path
+                        old = str(p.get("old_string", ""))[:30]
+                        new = str(p.get("new_string", ""))[:30]
+                        return f"[dim]edit[/] {short}: [red]{old}[/] [dim]→[/] [green]{new}[/]"
+                    if name == "file_write":
+                        path = p.get("file_path", "")
+                        short = path.split("/")[-1] if "/" in path else path
+                        return f"[dim]write[/] {short}"
+                    if name == "bash":
+                        cmd = str(p.get("command", ""))[:60]
+                        return f"[dim]$[/] {cmd}"
+                    if name == "navigate":
+                        room = p.get("room", "?")
+                        return f"[dim]navigate →[/] {room}"
+                    if name == "explore":
+                        return "[dim]explore[/] starting background exploration"
+                    if name in ("walk", "turn", "stand", "sit", "lie_down", "stop"):
+                        parts = [name]
+                        if p.get("direction"):
+                            parts.append(str(p["direction"]))
+                        if p.get("distance"):
+                            parts.append(f"{p['distance']}m")
+                        if p.get("angle"):
+                            parts.append(f"{p['angle']}°")
+                        return "[dim]" + " ".join(parts) + "[/]"
+                    if name == "skill_reload":
+                        return f"[dim]reload[/] {p.get('skill_name', '?')}"
+                    if name == "scene_graph_query":
+                        qt = p.get("query_type", "?")
+                        room = p.get("room", "")
+                        return f"[dim]scene_graph[/] {qt}" + (f" ({room})" if room else "")
+                    if name in ("ros2_topics", "ros2_nodes"):
+                        action = p.get("action", "?")
+                        topic = p.get("topic", p.get("node", ""))
+                        return f"[dim]{name}[/] {action}" + (f" {topic}" if topic else "")
+                    if name == "ros2_log":
+                        return f"[dim]log[/] {p.get('log_name', '?')}"
+                    if name in ("glob", "grep"):
+                        pattern = p.get("pattern", "")[:40]
+                        return f"[dim]{name}[/] {pattern}"
+                    if name == "nav_state":
+                        return "[dim]nav_state[/]"
+                    if name == "terrain_status":
+                        return "[dim]terrain_status[/]"
+                    if name == "start_simulation":
+                        st = p.get("sim_type", "go2")
+                        return f"[dim]sim start[/] {st}"
+                    # Fallback: generic display
+                    if p:
+                        items = [f"{k}={str(v)[:20]}" for k, v in list(p.items())[:2]]
+                        return f"[dim]{name}[/]({', '.join(items)})"
+                    return f"[dim]{name}[/]"
+
+                def _format_result_summary(name: str, result: Any) -> str:
+                    """Extract key info from tool result for display."""
+                    if result.is_error:
+                        content = result.content or ""
+                        # Show first line of error + suggested action
+                        lines = content.split("\n")
+                        msg = lines[0][:60]
+                        suggested = next((l for l in lines if l.startswith("Suggested:")), "")
+                        if suggested:
+                            return f"  [dim]{msg}[/]\n    [yellow]{suggested}[/]"
+                        return f"  [dim]{msg}[/]"
+
+                    meta = result.metadata if hasattr(result, "metadata") else {}
+                    if not meta:
                         return ""
-                    items: list[str] = []
-                    for k, v in list(p.items())[:3]:
-                        v_str = str(v)
-                        if len(v_str) > 40:
-                            v_str = v_str[:37] + "..."
-                        if isinstance(v, str):
-                            v_str = f'"{v_str}"'
-                        items.append(f"{k}={v_str}")
-                    suffix = ", ..." if len(p) > 3 else ""
-                    return ", ".join(items) + suffix
+
+                    # Navigate: show arrival info
+                    if name == "navigate":
+                        room = meta.get("room", "")
+                        state = meta.get("robot_state_after", {})
+                        pos = state.get("position", [])
+                        if room and pos:
+                            return f"  [dim]▸ 到达 {room} ({pos[0]}, {pos[1]})[/]"
+                        if room:
+                            return f"  [dim]▸ 到达 {room}[/]"
+                    # Explore: show status
+                    if name == "explore":
+                        status = meta.get("status", "")
+                        rooms = meta.get("rooms_visited", meta.get("all_rooms", []))
+                        if rooms:
+                            return f"  [dim]▸ {len(rooms)} rooms discovered[/]"
+                    # Where am i
+                    if name == "where_am_i":
+                        room = meta.get("room", "")
+                        pos = meta.get("position", [])
+                        if room:
+                            return f"  [dim]▸ {room} ({pos[0]}, {pos[1]})[/]" if pos else f"  [dim]▸ {room}[/]"
+                    # Motor skills: show post-state
+                    state = meta.get("robot_state_after", {})
+                    if state:
+                        room = state.get("room", "")
+                        pos = state.get("position", [])
+                        if room and pos:
+                            return f"  [dim]▸ pos=({pos[0]}, {pos[1]}) room={room}[/]"
+
+                    return ""
 
                 def on_tool_start(name: str, p: dict[str, Any]) -> None:
                     _tool_start_times[name] = time.monotonic()
-                    ps = _format_params_brief(p)
-                    if ps:
-                        console.print(f"  [{TEAL}]{name}[/]([dim]{ps}[/]) ...", end="")
-                    else:
-                        console.print(f"  [{TEAL}]{name}[/]() ...", end="")
+                    display = _format_tool_display(name, p)
+                    console.print(f"  [{TEAL}]▸[/] {display} ...", end="")
 
                 def on_tool_end(name: str, result: Any) -> None:
                     elapsed = time.monotonic() - _tool_start_times.pop(name, time.monotonic())
                     tag = "[green]ok[/]" if not result.is_error else "[red]fail[/]"
                     console.print(f" {tag} [dim]{elapsed:.1f}s[/]")
+
+                    # Show result summary for important tools
+                    summary = _format_result_summary(name, result)
+                    if summary:
+                        console.print(summary)
 
                     # Hook explore event callback after sim/explore tools run
                     if name in ("start_simulation", "explore"):
