@@ -95,6 +95,7 @@ dev = [
 ]
 
 [project.scripts]
+vector = "vector_os_nano.robo.cli:main"
 vector-os = "run:main"
 vector-os-dashboard = "run:main_dashboard"
 vector-os-mcp = "vector_os_nano.mcp.server:main_sync"

@@ -47,7 +47,7 @@ from vector_os_nano.vcli.session import (
 )
 from vector_os_nano.vcli.permissions import PermissionContext
 from vector_os_nano.vcli.prompt import build_system_prompt
-from vector_os_nano.vcli.tools import ToolRegistry, discover_all_tools
+from vector_os_nano.vcli.tools import CategorizedToolRegistry, ToolRegistry, discover_all_tools, discover_categorized_tools
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -957,14 +957,20 @@ def main(argv: list[str] | None = None) -> None:
     # Agent (optional hardware)
     agent = _init_agent(args)
 
-    # Tools
-    registry: ToolRegistry = ToolRegistry()
-    for tool in discover_all_tools():
-        registry.register(tool)
+    # Tools (categorized registry for scalable tool management)
+    registry: CategorizedToolRegistry = CategorizedToolRegistry()
+    tools_list, cat_map = discover_categorized_tools()
+    for t in tools_list:
+        cat = "default"
+        for c, names in cat_map.items():
+            if t.name in names:
+                cat = c
+                break
+        registry.register(t, category=cat)
     if agent is not None:
         from vector_os_nano.vcli.tools.skill_wrapper import wrap_skills
         for skill_tool in wrap_skills(agent):
-            registry.register(skill_tool)
+            registry.register(skill_tool, category="robot")
 
     # Permissions
     permissions = PermissionContext(no_permission=args.no_permission)
@@ -986,8 +992,23 @@ def main(argv: list[str] | None = None) -> None:
     else:
         session = create_session(metadata={"model": model})
 
-    # System prompt
-    system_prompt = build_system_prompt(agent=agent, cwd=Path.cwd())
+    # System prompt (with live robot context)
+    robot_ctx_provider = None
+    try:
+        from vector_os_nano.vcli.robot_context import RobotContextProvider
+        base = getattr(agent, "_base", None) if agent else None
+        sg = getattr(agent, "_spatial_memory", None) if agent else None
+        robot_ctx_provider = RobotContextProvider(base=base, scene_graph=sg)
+    except ImportError:
+        pass
+    system_prompt = build_system_prompt(agent=agent, cwd=Path.cwd(), robot_context=robot_ctx_provider)
+
+    # Wrap in DynamicSystemPrompt so robot state refreshes each turn
+    try:
+        from vector_os_nano.vcli.dynamic_prompt import DynamicSystemPrompt
+        system_prompt = DynamicSystemPrompt(system_prompt, robot_ctx_provider)
+    except ImportError:
+        pass
 
     # Backend + engine (deferred if no API key — /login can set it up)
     engine: VectorEngine | None = None
@@ -996,6 +1017,8 @@ def main(argv: list[str] | None = None) -> None:
         engine = VectorEngine(backend=backend, registry=registry, system_prompt=system_prompt, permissions=permissions)
 
     # Mutable app state
+    _spatial_memory = getattr(agent, "_spatial_memory", None) if agent else None
+    _skill_registry = getattr(agent, "_skill_registry", None) if agent else None
     app_state: dict[str, Any] = {
         "agent": agent,
         "registry": registry,
@@ -1004,6 +1027,8 @@ def main(argv: list[str] | None = None) -> None:
         "provider": provider,
         "api_key": api_key,
         "base_url": base_url,
+        "scene_graph": _spatial_memory,
+        "skill_registry": _skill_registry,
     }
 
     # Banner — detect auth source for display

@@ -1,8 +1,43 @@
 # Vector OS Nano SDK — Progress
 
-**Last updated:** 2026-04-06
+**Last updated:** 2026-04-08
 **Version:** v1.3.0
-**Branch:** feat/sim-to-real-nav (24 commits, +2908/-694)
+**Branch:** robo-cli (new — unified CLI)
+
+## Vector CLI (NEW)
+
+Unified `vector` command — all robot interaction from the terminal.
+
+```bash
+vector                    # Interactive REPL
+vector go2 stand          # One-shot Go2 command (12 commands)
+vector arm home           # Arm commands (8 commands)
+vector gripper open       # Gripper commands
+vector perception detect  # VLM commands
+vector sim start          # Simulation lifecycle
+vector ros nodes          # ROS2 diagnostics (via rosm)
+vector status             # Hardware status (22 skills registered)
+vector skills             # List all skills with aliases
+vector chat               # LLM agent mode (vcli engine)
+```
+
+Package: `vector_os_nano/robo/` (13 files, 1419 lines)
+Entry point: `vector` (pyproject.toml)
+Framework: Click (same as rosm)
+
+## Vibe Code for Robotics (NEW)
+
+AI dev environment — write code + control robot in one session.
+
+New capabilities added to VectorEngine:
+- **RobotContextProvider** — position, room, SceneGraph, nav state injected into LLM prompt
+- **7 new tools**: scene_graph_query, ros2_topics, ros2_nodes, ros2_log, nav_state, terrain_status, skill_reload
+- **CategorizedToolRegistry** — tools grouped by category (code/robot/diag/system), enable/disable at runtime
+- **REPL → VectorEngine** — `vector` REPL now uses full agent loop with all tools
+- **Hot reload** — edit skill code, reload without restarting sim
+
+Package: `vcli/tools/` (4 new files) + `vcli/robot_context.py`
+Tests: 415 vcli unit tests (all green)
 
 ## Architecture
 

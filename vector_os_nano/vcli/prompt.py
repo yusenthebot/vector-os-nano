@@ -66,6 +66,7 @@ def build_system_prompt(
     agent: Any = None,
     cwd: Path | None = None,
     session: Any = None,
+    robot_context: Any = None,
 ) -> list[dict]:
     """Build system prompt as a list of text blocks.
 
@@ -107,6 +108,15 @@ def build_system_prompt(
         world_text = _format_world(agent)
         if world_text:
             blocks.append({"type": "text", "text": f"World Model:\n{world_text}"})
+
+    # -- Dynamic: robot state (live context from hardware) --------------------
+    if robot_context is not None:
+        try:
+            block = robot_context.get_context_block()
+            if block:
+                blocks.append(block)
+        except Exception:
+            pass
 
     # -- Dynamic: VECTOR.md --------------------------------------------------
     vector_md = _load_vector_md(cwd)
