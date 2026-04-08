@@ -33,42 +33,49 @@
 
 ---
 
-### Built-in Agentic CLI: Vibe-code your robot
+### Vector CLI: Vibe-code your robot
 
-Vector OS Nano ships with `vector-cli` -- an agentic terminal harness with V, the AI core. Talk to your robot, write code, run simulations, and explore environments, all from one prompt.
+Vector OS Nano is built around `vector-cli` -- an AI-powered terminal environment where you control robots, edit code, and diagnose issues, all from one prompt. Talk naturally; the AI agent decides which tools to use.
 
 ```bash
 pip install -e .
-vector-cli                     # auto-detects Claude subscription or OpenRouter key
+vector-cli                     # interactive AI agent (auto-detects API key)
+vector go2 stand               # one-shot command (no LLM needed)
+vector status                  # check hardware state
 ```
 
 ```
-vector> start the go2 simulation
-  start_simulation(sim_type="go2", gui=true) ... ok 2.1s
-
 vector> explore the house
-  explore(duration=60) ... ok 62.3s
+  start_simulation(sim_type="go2", gui=true) ... ok 2.1s
+  explore() ... ok 62.3s
 
-vector> list all python files here
-  glob(pattern="**/*.py") ... ok 0.1s
+vector> the dog hits walls at corners during explore
+  file_read(path="scripts/go2_vnav_bridge.py") ... ok 0.2s
+  file_edit(old="_MAX_SPEED = 0.6", new="_MAX_SPEED = 0.4") ... ok 0.1s
+  skill_reload(skill_name="walk") ... ok 0.3s
 
-vector> !git status                    # ! prefix for direct shell
+  I reduced the turn speed from 0.6 to 0.4 m/s. Want me to re-run explore to test?
 ```
 
 **What V can do:**
 
-| Capability | Tools |
-|------------|-------|
-| Robot control | start_simulation, walk, turn, stand, sit, explore, navigate, pick, place |
-| Codebase work | file_read, file_write, file_edit, bash, glob, grep |
-| Perception | world_query, robot_status, detect, describe |
-| Web | web_fetch (documentation, API references) |
+| Capability | Tools | Category |
+|------------|-------|----------|
+| Robot control | 22 wrapped skills (walk, navigate, explore, pick, place...) + scene_graph_query | robot |
+| Codebase work | file_read, file_write, file_edit, bash, glob, grep | code |
+| ROS2 diagnostics | ros2_topics (list/hz/echo), ros2_nodes (list/info), ros2_log | diag |
+| System | robot_status, start_simulation, skill_reload (hot reload), nav_state, terrain_status | system |
+| Web | web_fetch (documentation, API references) | system |
+
+**Key architecture: CategorizedToolRegistry.** All 39 tools are organized into categories (code, robot, diag, system) that can be enabled/disabled at runtime. The AI always sees live robot state (position, room, SceneGraph) via DynamicSystemPrompt -- refreshed every turn, not stale from startup. Motor skills return post-execution verification (position + room after navigate). Failed skills include recovery hints ("Room not explored. Run explore first.").
 
 **Authentication:** Claude subscription (auto-detected from Claude Code), Anthropic API key, OpenRouter, or local models via `--base-url`.
 
 **Slash commands:** `/help` `/model` `/tools` `/agent` `/status` `/login` `/compact` `/clear` `/copy` `/export` -- type `/` + Tab for auto-complete with descriptions.
 
-**Architecture:** Multi-backend LLM engine (Anthropic, OpenRouter, local models via OpenAI-compatible API) with streaming, tool-use loop, 6-layer permission system, JSONL session persistence, and concurrent read-only tool execution. 19 robot skills auto-registered at runtime when hardware connects.
+**One-shot CLI:** `vector go2 stand`, `vector arm home`, `vector sim start` -- scriptable commands that run without LLM. See `vector --help` for full command tree.
+
+**Full documentation:** See `docs/cli-tool-system.md` for the complete tool call architecture.
 
 <p align="center">
   <img src="images/agent.png" width="700" alt="Vector CLI with Go2 simulation">
@@ -408,7 +415,13 @@ vector_os_nano/
 │   ├── go2/           walk, turn, stand, sit, explore, stop, where_am_i
 │   ├── navigate.py    Room navigation (nav stack or dead-reckoning)
 │   └── ...            pick, place, home, scan, detect, gripper, wave
-├── cli/               Rich CLI + TUI dashboard
+├── robo/              Vector CLI backbone (Click, one-shot + REPL)
+│   └── groups/        Command groups: go2, arm, perception, sim, ros
+├── vcli/              AI agent engine (VectorEngine + 39 tools)
+│   ├── tools/         CategorizedToolRegistry (code/robot/diag/system)
+│   ├── robot_context.py  Live robot state injected into LLM prompt
+│   └── dynamic_prompt.py Auto-refresh state each turn
+├── cli/               Legacy CLI + TUI dashboard
 ├── mcp/               MCP server (tools + resources)
 ├── web/               FastAPI + WebSocket dashboard
 └── ros2/              Optional ROS2 integration
