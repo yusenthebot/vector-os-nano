@@ -1049,6 +1049,35 @@ def main(argv: list[str] | None = None) -> None:
         "skill_registry": _skill_registry,
     }
 
+    # VGG cognitive layer (optional)
+    def _vgg_step_display(step: Any) -> None:
+        """Print VGG step progress to console."""
+        name = getattr(step, "sub_goal_name", "?")
+        strategy = getattr(step, "strategy", "?")
+        success = getattr(step, "success", False)
+        verify = getattr(step, "verify_result", False)
+        dur = getattr(step, "duration_sec", 0.0)
+        fallback = getattr(step, "fallback_used", False)
+        err = getattr(step, "error", "")
+
+        tag = f"[green]ok[/]" if success else f"[red]fail[/]"
+        verify_tag = "[green]verified[/]" if verify else "[red]unverified[/]"
+        fb_tag = " [yellow](fallback)[/]" if fallback else ""
+        err_tag = f" [red]{err}[/]" if err and not success else ""
+
+        print(f"  [{TEAL}]>[/] {name} via {strategy} ... {tag} {verify_tag}{fb_tag}{err_tag} [dim]{dur:.1f}s[/]")
+
+    try:
+        engine.init_vgg(
+            agent=agent,
+            skill_registry=_skill_registry,
+            on_vgg_step=_vgg_step_display,
+        )
+        if engine._vgg_enabled:
+            console.print(f"[dim]  VGG cognitive layer: enabled[/dim]")
+    except Exception:
+        pass
+
     # Banner — detect auth source for display
     from vector_os_nano.vcli.config import load_claude_oauth
     _oauth = load_claude_oauth()
@@ -1291,6 +1320,35 @@ def main(argv: list[str] | None = None) -> None:
                     if name in ("start_simulation", "explore"):
                         _setup_explore_events(console)
 
+                # --- VGG: try cognitive pipeline for complex tasks ---
+                vgg_trace = engine.try_vgg(user_input)
+                if vgg_trace is not None:
+                    # VGG handled the task — show summary
+                    tree = vgg_trace.goal_tree
+                    n_steps = len(vgg_trace.steps)
+                    n_ok = sum(1 for s in vgg_trace.steps if s.success)
+                    console.print()
+                    print(f"  [{TEAL}]>[/] [bold]VGG[/] {tree.goal}")
+                    # Steps already printed by _vgg_step_display callback
+                    tag = "[green]complete[/]" if vgg_trace.success else "[red]incomplete[/]"
+                    print(f"  [{TEAL}]>[/] [bold]VGG[/] {tag}: {n_ok}/{n_steps} verified ({vgg_trace.total_duration_sec:.1f}s)")
+                    console.print()
+
+                    # Feed result to LLM for natural language response
+                    step_summary = "\n".join(
+                        f"  {s.sub_goal_name}: {'ok' if s.success else 'FAILED'}"
+                        + (f" ({s.error})" if s.error else "")
+                        for s in vgg_trace.steps
+                    )
+                    session.append_user(user_input)
+                    session.append_assistant(
+                        f"[VGG executed]\nGoal: {tree.goal}\n"
+                        f"Result: {'success' if vgg_trace.success else 'partial failure'}\n"
+                        f"Steps:\n{step_summary}"
+                    )
+                    continue
+
+                # --- Normal tool_use path ---
                 thinking_panel = Panel(
                     Text("thinking...", style="dim italic"),
                     title=V_LABEL,

@@ -37,8 +37,9 @@ try:
         GoalExecutor,
         GoalVerifier,
         StrategySelector,
+        StrategyStats,
     )
-    from vector_os_nano.vcli.cognitive.types import ExecutionTrace, StepRecord
+    from vector_os_nano.vcli.cognitive.types import ExecutionTrace, GoalTree, StepRecord
     _VGG_AVAILABLE = True
 except ImportError:
     _VGG_AVAILABLE = False
@@ -127,29 +128,38 @@ class VectorEngine:
     # VGG — optional cognitive pipeline
     # ------------------------------------------------------------------
 
-    def init_vgg(self, backend: Any = None) -> None:
+    def init_vgg(
+        self,
+        backend: Any = None,
+        agent: Any = None,
+        skill_registry: Any = None,
+        on_vgg_step: "Callable[[StepRecord], None] | None" = None,
+    ) -> None:
         """Initialise the VGG cognitive pipeline components.
 
         Safe to call at any time. If initialisation fails for any reason
         (missing dependencies, bad backend), _vgg_enabled stays False and
         the engine continues to work through the normal tool_use path.
-
-        Args:
-            backend: LLMBackend to use for GoalDecomposer. Defaults to the
-                     engine's own backend if not provided.
         """
         if not _VGG_AVAILABLE:
             logger.warning("VGG components not available — VGG disabled")
             return
 
         _backend = backend or self._backend
+        self._vgg_agent = agent
+        self._vgg_step_callback = on_vgg_step
         try:
+            # Build primitives namespace for GoalVerifier
+            ns = self._build_verifier_namespace(agent)
+            stats = StrategyStats()
             decomposer = GoalDecomposer(_backend)
-            verifier = GoalVerifier({})
-            selector = StrategySelector()
+            verifier = GoalVerifier(ns)
+            selector = StrategySelector(skill_registry=skill_registry, stats=stats)
             executor = GoalExecutor(
                 strategy_selector=selector,
                 verifier=verifier,
+                skill_registry=skill_registry,
+                stats=stats,
             )
             self._goal_decomposer = decomposer
             self._goal_executor = executor
@@ -158,6 +168,31 @@ class VectorEngine:
         except Exception as exc:  # noqa: BLE001
             logger.warning("VGG initialisation failed (%s) — VGG disabled", exc)
             self._vgg_enabled = False
+
+    def _build_verifier_namespace(self, agent: Any) -> dict[str, Any]:
+        """Build function namespace for GoalVerifier from agent state."""
+        ns: dict[str, Any] = {}
+        if agent is None:
+            return ns
+        base = getattr(agent, "_base", None)
+        sg = getattr(agent, "_spatial_memory", None)
+        if base:
+            ns["get_position"] = lambda: tuple(base.get_position())
+            ns["get_heading"] = base.get_heading
+        if sg:
+            ns["nearest_room"] = lambda: sg.nearest_room(
+                *base.get_position()[:2]
+            ) if base else None
+            ns["get_visited_rooms"] = sg.get_visited_rooms
+            ns["query_rooms"] = lambda: [
+                {"id": r.room_id, "x": r.center_x, "y": r.center_y}
+                for r in sg.get_all_rooms()
+            ]
+            ns["world_stats"] = sg.stats
+        # Safe stubs for perception (require camera — may not be available)
+        ns.setdefault("describe_scene", lambda: "")
+        ns.setdefault("detect_objects", lambda query="": [])
+        return ns
 
     def try_vgg(self, user_message: str) -> "ExecutionTrace | None":
         """Attempt VGG pipeline for complex tasks.
@@ -193,20 +228,45 @@ class VectorEngine:
             return None
 
     def _build_world_context(self) -> str:
-        """Build a brief world context string for the GoalDecomposer.
-
-        Provides whatever robot/scene information is accessible to the engine.
-        Returns an empty string if nothing is available (decomposer handles that).
-        """
-        return ""
+        """Build a brief world context string for the GoalDecomposer."""
+        parts: list[str] = []
+        agent = getattr(self, "_vgg_agent", None)
+        if agent is None:
+            return ""
+        base = getattr(agent, "_base", None)
+        sg = getattr(agent, "_spatial_memory", None)
+        if base:
+            try:
+                pos = base.get_position()
+                heading = base.get_heading()
+                parts.append(f"Position: ({pos[0]:.1f}, {pos[1]:.1f})")
+                parts.append(f"Heading: {heading:.1f} rad")
+            except Exception:
+                pass
+        if sg:
+            try:
+                stats = sg.stats()
+                parts.append(
+                    f"SceneGraph: {stats.get('rooms', 0)} rooms, "
+                    f"{stats.get('visited_rooms', 0)} visited"
+                )
+                if base:
+                    pos = base.get_position()
+                    room = sg.nearest_room(pos[0], pos[1])
+                    if room:
+                        parts.append(f"Current room: {room}")
+                rooms = sg.get_visited_rooms()
+                if rooms:
+                    parts.append(f"Known rooms: {', '.join(rooms)}")
+            except Exception:
+                pass
+        return "\n".join(parts) if parts else ""
 
     def _on_vgg_step(self, step: Any) -> None:
         """Callback invoked by GoalExecutor after each sub-goal completes."""
-        logger.debug(
-            "VGG step: %s — success=%s",
-            getattr(step, "sub_goal_name", "?"),
-            getattr(step, "success", "?"),
-        )
+        cb = getattr(self, "_vgg_step_callback", None)
+        if cb:
+            cb(step)
 
     # ------------------------------------------------------------------
     # Public API
