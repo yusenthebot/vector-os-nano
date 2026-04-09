@@ -152,7 +152,7 @@ class VectorEngine:
             # Build primitives namespace for GoalVerifier
             ns = self._build_verifier_namespace(agent)
             stats = StrategyStats()
-            decomposer = GoalDecomposer(_backend)
+            decomposer = GoalDecomposer(_backend, skill_registry=skill_registry)
             verifier = GoalVerifier(ns)
             selector = StrategySelector(skill_registry=skill_registry, stats=stats)
             executor = GoalExecutor(
@@ -216,7 +216,9 @@ class VectorEngine:
             return None
         if self._intent_router is None:
             return None
-        if not self._intent_router.should_use_vgg(user_message):
+        # Pass skill_registry so should_use_vgg can check direct skill matches
+        _sr = getattr(self._vgg_agent, "_skill_registry", None) if hasattr(self, "_vgg_agent") else None
+        if not self._intent_router.should_use_vgg(user_message, skill_registry=_sr):
             return None
         world_context = self._build_world_context()
         try:

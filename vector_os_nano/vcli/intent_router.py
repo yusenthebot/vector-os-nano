@@ -161,15 +161,27 @@ class IntentRouter:
 
         return False
 
-    def should_use_vgg(self, user_message: str) -> bool:
+    def should_use_vgg(self, user_message: str, skill_registry: Any = None) -> bool:
         """Return True if this message should go through VGG pipeline.
 
         Broader than is_complex(): also triggers for motor actions (navigate,
-        patrol, explore) that benefit from async execution with progress feedback,
-        even if they're single-step tasks.
+        patrol, explore) that benefit from async execution with progress feedback.
+
+        However, if the message directly matches a single skill (e.g. "探索"
+        matches ExploreSkill), skip VGG — the skill handles it better.
         """
         if not user_message or len(user_message) < 2:
             return False
+
+        # Direct skill match → skip VGG, let the skill handle it directly
+        if skill_registry is not None:
+            try:
+                match = skill_registry.match(user_message)
+                if match is not None and match.direct:
+                    return False  # Single skill can handle this
+            except Exception:
+                pass
+
         if self.is_complex(user_message):
             return True
         msg_lower = user_message.lower()

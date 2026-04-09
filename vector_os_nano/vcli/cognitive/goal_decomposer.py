@@ -59,7 +59,7 @@ class GoalDecomposer:
     # Max sub-goals to prevent over-decomposition
     MAX_SUB_GOALS: int = 8
 
-    # Available strategies the LLM can reference
+    # Default strategies — overridden at runtime from actual SkillRegistry
     KNOWN_STRATEGIES: frozenset[str] = frozenset({
         "navigate_skill",
         "look_skill",
@@ -71,8 +71,6 @@ class GoalDecomposer:
         "walk_forward",
         "turn",
         "scan_360",
-        "door_chain_fallback",
-        "scan_room_360_then_report",
     })
 
     # Functions available in verify expressions
@@ -109,8 +107,7 @@ class GoalDecomposer:
         "walk_forward": "Walk straight forward a set distance",
         "turn": "Rotate in place by given angle",
         "scan_360": "Rotate 360° while recording observations",
-        "door_chain_fallback": "Follow door chain to reach target room",
-        "scan_room_360_then_report": "Rotate full 360° then summarise scene",
+        "patrol_skill": "Visit multiple rooms in sequence",
     }
 
     # Verify function signatures for the system prompt
@@ -188,19 +185,27 @@ Response:
   "context_snapshot": "Robot is in hallway, kitchen is adjacent."
 }"""
 
-    def __init__(self, backend: Any, template_library: Any = None) -> None:
+    def __init__(self, backend: Any, template_library: Any = None, skill_registry: Any = None) -> None:
         """Initialise with an LLMBackend (must implement .call()).
 
         Args:
-            backend: Any object implementing the LLMBackend Protocol
-                     (has .call(messages, tools, system, max_tokens)).
-            template_library: Optional TemplateLibrary — checked before calling
-                              the LLM.  When a template matches the task, the
-                              instantiated GoalTree is returned immediately and
-                              the LLM backend is not called.
+            backend: Any object implementing the LLMBackend Protocol.
+            template_library: Optional TemplateLibrary for template matching.
+            skill_registry: Optional SkillRegistry — when provided, KNOWN_STRATEGIES
+                           is built dynamically from registered skill names.
         """
         self._backend = backend
         self._template_library = template_library
+        # Build strategies from actual registered skills
+        if skill_registry is not None:
+            try:
+                skill_names = {s.name for s in skill_registry.list_skills()}
+                real_strategies = {f"{n}_skill" for n in skill_names} | {
+                    "walk_forward", "turn", "scan_360",
+                }
+                self.KNOWN_STRATEGIES = frozenset(real_strategies)
+            except Exception:
+                pass  # keep defaults
 
     # ------------------------------------------------------------------
     # Public API
