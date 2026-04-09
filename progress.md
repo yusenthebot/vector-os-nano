@@ -1,38 +1,42 @@
 # Vector OS Nano SDK — Progress
 
-**Last updated:** 2026-04-08
+**Last updated:** 2026-04-09
 **Version:** v1.4.0-dev
-**Branch:** robo-cli (13 commits ahead of master)
+**Branch:** robo-cli (25 commits ahead of master)
 
-## VGG: Verified Goal Graph — Phase 1+2 Complete
+## VGG: Verified Goal Graph — Complete Framework
 
-Cognitive layer — LLM decomposes complex tasks into verifiable sub-goal trees. Full implementation with code execution sandbox, persistent strategy learning, and template compilation.
+Cognitive layer — ALL actionable commands flow through VGG. LLM decomposes complex tasks into verifiable sub-goal trees. Simple commands get 1-step GoalTrees without LLM call.
 
 ```
-User: "去厨房看看有没有杯子"
+User input
   ↓
-GoalDecomposer (LLM → GoalTree JSON, template matching first)
-  ├─ reach_kitchen    verify: nearest_room() == 'kitchen'    strategy: navigate_skill
-  ├─ observe_table    verify: 'table' in describe_scene()    strategy: look_skill
-  └─ detect_cup       verify: len(detect_objects('cup')) > 0  strategy: vlm_detect
-  ↓
-GoalExecutor: execute step → verify → fallback if failed
-  ↓
-StrategyStats: record success rate, feed into StrategySelector
-  ↓
-ExperienceCompiler: convert successful traces → reusable templates
+should_use_vgg?
+  ├─ Action → VGG
+  │    ├─ Simple (skill match) → 1-step GoalTree (fast, no LLM)
+  │    └─ Complex (multi-step) → LLM decomposition → GoalTree
+  │    ↓
+  │  VGG Harness: 3-layer feedback loop
+  │    Layer 1: step retry (alt strategies)
+  │    Layer 2: continue past failure
+  │    Layer 3: re-plan with failure context
+  │    ↓
+  │  GoalExecutor → verify → trace → stats
+  │
+  └─ Conversation → tool_use path (LLM direct)
 ```
 
 ### Cognitive Layer (vcli/cognitive/)
 
 | Component | Purpose |
 |-----------|---------|
-| GoalDecomposer | LLM → GoalTree, template matching first |
+| GoalDecomposer | LLM → GoalTree; template + skill fast path |
 | GoalVerifier | Safe sandbox for verify expressions |
 | StrategySelector | Rule + stats-driven strategy selection |
 | GoalExecutor | Execute + verify + fallback + stats recording |
-| CodeExecutor | RestrictedPython sandbox (velocity clamped, AST validated, 30s timeout) |
-| StrategyStats | Persistent success rate tracking (~/.vector_os_nano/strategy_stats.json) |
+| VGGHarness | 3-layer feedback loop (retry → continue → re-plan) |
+| CodeExecutor | RestrictedPython sandbox (velocity clamped) |
+| StrategyStats | Persistent success rate tracking |
 | ExperienceCompiler | Traces → parameterized templates |
 | TemplateLibrary | Store + match + instantiate templates |
 
@@ -46,75 +50,40 @@ ExperienceCompiler: convert successful traces → reusable templates
 
 ### CLI Integration
 
-- IntentRouter.is_complex(): keyword + multi-verb detection
-- GoalTree plan displayed BEFORE execution
-- Step-by-step feedback with [idx/total] prefix
-- vgg_decompose() / vgg_execute() split for plan-then-execute flow
+- Async execution — CLI never blocks during navigation/explore
+- GoalTree plan shown before execution
+- Step-by-step [idx/total] progress feedback
+- VGG only active after sim start (requires functioning robot)
 
 Design spec: `docs/vgg-design-spec.md`
 
 ## Sensor Configuration
 
-- **Lidar**: Livox MID-360, -20 deg downward tilt (match real Go2 hardware)
-- **Terrain Analysis**: VFoV -30/+35 deg (matched to MID-360 at 20deg tilt, world frame)
-- **VLM**: OpenRouter (google/gemma-4-31b-it) — replaces local Ollama
+- **Lidar**: Livox MID-360, -20 deg downward tilt (match real Go2)
+- **Terrain Analysis**: VFoV -30/+35 deg (matched to MID-360)
+- **VLM**: OpenRouter (google/gemma-4-31b-it)
+- **Ceiling filter**: points > 1.8m filtered from /registered_scan (fixes V-Graph)
 
 ## Navigation Pipeline
 
 ```
-Explore: TARE autonomous → position-based room detection → SceneGraph doors
-Navigate: FAR V-Graph → door-chain fallback (nav stack waypoints with obstacle avoidance)
-Path follower: TRACK/TURN modes, cylinder body safety, space-aware speed
+Explore: TARE → room detection → SceneGraph doors
+Navigate: FAR V-Graph → door-chain fallback (nav stack waypoints)
+Path follower: TRACK/TURN modes, cylinder body safety
+Stuck recovery: boxed-in detection → 3-4s sustained reverse
 ```
-
-### V-Graph Ceiling Fix (In Progress)
-
-Root cause identified: ceiling points (intensity > 1.8m) pollute FAR's obstacle cloud.
-- Fix: filter ceiling points in _publish_pointcloud() before publishing /registered_scan
-- FAR now only sees ground + walls → visibility checks work correctly
-
-### Door-chain Navigation (In Progress)
-
-Fallback mechanism: when FAR graph is incomplete, fall back to SceneGraph BFS waypoint chain.
-- Changed from dead-reckoning (straight line through walls) to nav stack waypoints
-- Uses base.navigate_to() with localPlanner obstacle avoidance
 
 ## Vector CLI
 
-Unified `vector` command — all robot interaction from terminal.
-
 ```bash
-vector                    # Interactive REPL
-vector go2 stand          # One-shot Go2 command (12 commands)
-vector arm home           # Arm commands (8 commands)
-vector gripper open       # Gripper commands
-vector perception detect  # VLM commands
+vector                    # Interactive REPL (VGG cognitive layer)
+vector go2 stand          # One-shot Go2 commands
 vector sim start          # Simulation lifecycle
-vector ros nodes          # ROS2 diagnostics (via rosm)
-vector status             # Hardware status (22 skills registered)
-vector skills             # List all skills with aliases
-vector chat               # LLM agent mode (vgg cognitive layer)
+vector ros nodes          # ROS2 diagnostics
+vector chat               # LLM agent mode
 ```
 
-## Vibe Code for Robotics
-
-AI dev environment — write code + control robot in one session.
-- CategorizedToolRegistry: 39 tools (code/robot/diag/system)
-- IntentRouter: keyword-based tool routing (~52% token savings)
-- DynamicSystemPrompt: robot state refreshed every LLM turn
-- Hot reload: edit skill code, reload without restarting sim
-
-## Architecture
-
-```
-vector-cli (agent process)          launch_explore.sh (subprocess)
-  VGG cognitive layer                 MuJoCoGo2 (convex MPC, 1kHz)
-  LLM + SceneGraph + VLM              Go2VNavBridge (200Hz odom)
-  Go2ROS2Proxy ◄── ROS2 ──►           localPlanner + FAR + TARE
-  22 Go2 skills                        terrainAnalysis + RViz
-```
-
-## Test Coverage: 1000+ Tests
+## Test Coverage: 470+ VGG tests, 1000+ total
 
 | Suite | Tests | Status |
 |-------|-------|--------|
@@ -126,20 +95,17 @@ vector-cli (agent process)          launch_explore.sh (subprocess)
 | Nav fixes L39-L40 | 27 | pass |
 | VGG Phase 1 L41-L46 | 187 | pass |
 | VGG Phase 2 L47-L50 | 87 | pass |
-| VGG CLI Feedback | 25 | pass |
+| VGG CLI L51 | 25 | pass |
+| Door-chain L52 | 18 | pass |
+| Ceiling filter L53 | 21 | pass |
+| VGG Integration L54 | 29 | pass |
+| CLI Scenarios L55 | 52 | pass |
+| VGG Harness L56 | 24 | pass |
 | Other | 80+ | pass |
 
 ## Known Limitations
 
-- FAR V-Graph coverage depends on TARE exploration thoroughness
-- TARE sometimes misses rooms → door-chain fallback handles it
+- VGG complex decomposition quality depends on LLM model
+- Async skills (explore, patrol) report "launched" not "completed" in VGG
+- FAR V-Graph ceiling fix needs live validation
 - Real-world room detection needs SLAM + spatial understanding
-- VGG GoalDecomposer quality depends on LLM (needs live testing)
-
-## Next Milestones
-
-- Complete V-Graph ceiling filter, deploy on real Go2
-- Test door-chain obstacle avoidance
-- Run VGG live on real navigation tasks
-- Train ExperienceCompiler templates from user sessions
-- Phase 3: RL executor integration
