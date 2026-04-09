@@ -791,15 +791,15 @@ class Go2VNavBridge(Node):
 
         return min_dist
 
-    def _scan_surroundings(self) -> tuple[float, float, float]:
-        """Scan cached pointcloud for nearby obstacles in 3 zones.
+    def _scan_surroundings(self) -> tuple[float, float, float, float]:
+        """Scan cached pointcloud for nearby obstacles in 4 zones.
 
-        Returns (front_dist, left_dist, right_dist) in meters.
+        Returns (front_dist, left_dist, right_dist, back_dist) in meters.
         Each is the min distance to an obstacle in that zone, or inf.
-        Uses body-frame projection: front = ±30deg, left/right = 30-120deg.
+        Uses body-frame projection: front/back = ±30deg, left/right = 30-120deg.
         """
         if not self._cached_points:
-            return (float('inf'), float('inf'), float('inf'))
+            return (float('inf'), float('inf'), float('inf'), float('inf'))
 
         odom = self._go2.get_odometry()
         heading = self._go2.get_heading()
@@ -810,6 +810,7 @@ class Go2VNavBridge(Node):
         front_min = float('inf')
         left_min = float('inf')
         right_min = float('inf')
+        back_min = float('inf')
 
         for x, y, z, _ in self._cached_points:
             dz = z - ground_z
@@ -826,12 +827,14 @@ class Go2VNavBridge(Node):
             angle = math.atan2(abs(lat), fwd)
             if fwd > 0 and angle < 0.52:  # front ±30deg
                 front_min = min(front_min, d)
+            elif fwd < 0 and angle > 2.62:  # back ±30deg (pi-0.52)
+                back_min = min(back_min, d)
             elif lat > 0 and angle < 2.1:  # left 30-120deg
                 left_min = min(left_min, d)
             elif lat < 0 and angle < 2.1:  # right 30-120deg
                 right_min = min(right_min, d)
 
-        return (front_min, left_min, right_min)
+        return (front_min, left_min, right_min, back_min)
 
     def _follow_path(self) -> None:
         """Omnidirectional quadruped path follower (20 Hz).
@@ -853,9 +856,9 @@ class Go2VNavBridge(Node):
         if now < self._wall_escape_until:
             # Wall escape — use GENTLE velocities (robot may be off-balance)
             if now < self._wall_escape_phase2:
-                tgt_vx, tgt_vy, tgt_yaw = -0.2, 0.0, 0.0
+                tgt_vx, tgt_vy, tgt_yaw = -0.3, 0.0, 0.0  # reverse at 0.3 m/s
             else:
-                front_d, left_d, right_d = self._scan_surroundings()
+                front_d, left_d, right_d, back_d = self._scan_surroundings()
                 tgt_vy = 0.10 if right_d > left_d else -0.10
                 tgt_yaw = 0.3 if right_d > left_d else -0.3
                 tgt_vx, tgt_vy, tgt_yaw = -0.1, tgt_vy, tgt_yaw
@@ -879,13 +882,23 @@ class Go2VNavBridge(Node):
             self._wall_contact_time = 0.0
 
         if self._wall_contact_time > 0.5:
-            front_d, left_d, right_d = self._scan_surroundings()
-            open_side = "right" if right_d > left_d else "left"
-            self.get_logger().warn(
-                f"Wall escape: reverse 1s then strafe {open_side}, front_d={front_d_check:.2f}"
-            )
-            self._wall_escape_phase2 = now + 1.0
-            self._wall_escape_until = now + 2.5
+            front_d, left_d, right_d, back_d = self._scan_surroundings()
+            all_tight = front_d < 0.5 and left_d < 0.4 and right_d < 0.4
+            if all_tight and back_d > 0.5:
+                # Boxed in with only rear open — sustained reverse (3s)
+                self.get_logger().warn(
+                    f"Boxed in: F={front_d:.2f} L={left_d:.2f} R={right_d:.2f} B={back_d:.2f} "
+                    f"— sustained reverse 3s"
+                )
+                self._wall_escape_phase2 = now + 3.0  # pure reverse for 3s
+                self._wall_escape_until = now + 3.0    # no strafe phase
+            else:
+                open_side = "right" if right_d > left_d else "left"
+                self.get_logger().warn(
+                    f"Wall escape: reverse 1s then strafe {open_side}, front_d={front_d_check:.2f}"
+                )
+                self._wall_escape_phase2 = now + 1.0
+                self._wall_escape_until = now + 2.5
             self._wall_contact_time = 0.0
             self._current_path = []
             self._stuck_count = 0
@@ -976,7 +989,7 @@ class Go2VNavBridge(Node):
         abs_err = abs(dir_diff)
 
         # --- Space-aware speed: slow in tight spaces, fast in open ---
-        front_d, left_d, right_d = self._scan_surroundings()
+        front_d, left_d, right_d, _back_d = self._scan_surroundings()
         front_gap = front_d - 0.34   # body front extent
         left_gap = left_d - 0.19     # body side extent
         right_gap = right_d - 0.19
@@ -1190,15 +1203,23 @@ class Go2VNavBridge(Node):
                 )
             elif self._stuck_count == 4:  # 8s — sustained escape maneuver
                 now = time.time()
-                front_d, left_d, right_d = self._scan_surroundings()
-                open_side = "right" if right_d > left_d else "left"
-                self.get_logger().warn(
-                    f"Stuck 8s — escape: reverse 1s + strafe {open_side}"
-                )
-                # Use wall escape mechanism for sustained 2.5s maneuver
-                # (not a single velocity set that gets overridden in 50ms)
-                self._wall_escape_phase2 = now + 1.0   # 1s reverse
-                self._wall_escape_until = now + 2.5     # 1.5s strafe
+                front_d, left_d, right_d, back_d = self._scan_surroundings()
+                all_tight = front_d < 0.5 and left_d < 0.4 and right_d < 0.4
+                if all_tight and back_d > 0.5:
+                    # Boxed in — sustained reverse is the only way out
+                    self.get_logger().warn(
+                        f"Stuck 8s boxed: F={front_d:.2f} L={left_d:.2f} "
+                        f"R={right_d:.2f} B={back_d:.2f} — reverse 4s"
+                    )
+                    self._wall_escape_phase2 = now + 4.0
+                    self._wall_escape_until = now + 4.0  # pure reverse, no strafe
+                else:
+                    open_side = "right" if right_d > left_d else "left"
+                    self.get_logger().warn(
+                        f"Stuck 8s — escape: reverse 1s + strafe {open_side}"
+                    )
+                    self._wall_escape_phase2 = now + 1.0   # 1s reverse
+                    self._wall_escape_until = now + 2.5     # 1.5s strafe
                 self._current_path = []
                 self._stuck_count = 0
                 self._stuck_history.append((odom.x, odom.y))
