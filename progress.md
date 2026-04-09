@@ -1,8 +1,8 @@
 # Vector OS Nano SDK — Progress
 
 **Last updated:** 2026-04-09
-**Version:** v1.4.0-dev
-**Branch:** robo-cli (25 commits ahead of master)
+**Version:** v1.5.0-dev
+**Branch:** robo-cli (29 commits ahead of master)
 
 ## VGG: Verified Goal Graph — Complete Framework
 
@@ -39,14 +39,17 @@ should_use_vgg?
 | StrategyStats | Persistent success rate tracking |
 | ExperienceCompiler | Traces → parameterized templates |
 | TemplateLibrary | Store + match + instantiate templates |
+| ObjectMemory | Time-aware object tracking with exponential confidence decay |
+| predict | Rule-based state prediction from room topology |
+| VisualVerifier | VLM-based visual verification fallback |
 
 ### Primitives API (vcli/primitives/)
 
-25 functions across 4 categories:
+30 functions across 4 categories:
 - **locomotion** (8): get_position, get_heading, walk_forward, turn, stop, stand, sit, set_velocity
 - **navigation** (5): nearest_room, publish_goal, wait_until_near, get_door_chain, navigate_to_room
 - **perception** (6): capture_image, describe_scene, detect_objects, identify_room, measure_distance, scan_360
-- **world** (6): query_rooms, query_doors, query_objects, get_visited_rooms, path_between, world_stats
+- **world** (11): query_rooms, query_doors, query_objects, get_visited_rooms, path_between, world_stats, last_seen, certainty, find_object, objects_in_room, room_coverage
 
 ### CLI Integration
 
@@ -83,7 +86,7 @@ vector ros nodes          # ROS2 diagnostics
 vector chat               # LLM agent mode
 ```
 
-## Test Coverage: 470+ VGG tests, 1000+ total
+## Test Coverage: 630+ VGG tests, 1150+ total
 
 | Suite | Tests | Status |
 |-------|-------|--------|
@@ -101,7 +104,24 @@ vector chat               # LLM agent mode
 | VGG Integration L54 | 29 | pass |
 | CLI Scenarios L55 | 52 | pass |
 | VGG Harness L56 | 24 | pass |
+| ObjectMemory L57 | 39 | pass |
+| predict L58 | 35 | pass |
+| VisualVerifier L59 | 28 | pass |
+| Namespace Integration L60 | 21 | pass |
+| Auto-Observe L61 | 36 | pass |
 | Other | 80+ | pass |
+
+## Phase 3: Active World Model
+
+```
+ObjectMemory: SceneGraph → TrackedObject (指数衰减: conf * exp(-0.001 * elapsed))
+  ↓
+GoalVerifier namespace: last_seen(), certainty(), find_object(), objects_in_room(), room_coverage(), predict_navigation()
+  ↓
+VisualVerifier: verify 失败 → VLM 拍照二次确认 (感知步骤才触发)
+  ↓
+Auto-Observe: 探索时每个新 viewpoint → VLM 自动识别物体 → SceneGraph + ObjectMemory
+```
 
 ## Known Limitations
 
@@ -109,3 +129,4 @@ vector chat               # LLM agent mode
 - Async skills (explore, patrol) report "launched" not "completed" in VGG
 - FAR V-Graph ceiling fix needs live validation
 - Real-world room detection needs SLAM + spatial understanding
+- Phase 3 functions need live validation with real LLM + sim
