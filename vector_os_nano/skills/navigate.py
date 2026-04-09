@@ -78,7 +78,9 @@ _ROOM_ALIASES: dict[str, str] = {
 
 _WALK_SPEED: float = 0.6     # m/s
 _TURN_SPEED: float = 0.8     # rad/s
-_ARRIVAL_RADIUS: float = 0.5  # meters -- close enough to target
+_ARRIVAL_RADIUS: float = 0.5  # meters -- close enough to target (dead-reckoning helper)
+_DOORCHAIN_ARRIVAL_RADIUS: float = 0.8  # meters -- arrival threshold for nav stack door-chain
+_DOORCHAIN_WAYPOINT_TIMEOUT: float = 30.0  # seconds per waypoint in door-chain nav stack mode
 
 _MIN_VISIT_COUNT: int = 3  # trust SceneGraph position only after N visits
 
@@ -454,7 +456,13 @@ class NavigateSkill:
         )
 
     def _dead_reckoning(self, room_key: str, context: SkillContext) -> SkillResult:
-        """Navigate via turn+walk dead-reckoning using SceneGraph door chain."""
+        """Navigate via nav stack door chain using SceneGraph waypoints.
+
+        Publishes each waypoint to /way_point via base.navigate_to() so the
+        localPlanner handles obstacle avoidance.  Each waypoint has a
+        _DOORCHAIN_WAYPOINT_TIMEOUT second budget; arrival is confirmed when
+        the robot is within _DOORCHAIN_ARRIVAL_RADIUS meters of the target.
+        """
         base = context.base
         sg = context.services.get("spatial_memory")
 
@@ -475,7 +483,7 @@ class NavigateSkill:
         if target_room_node is not None:
             target_cx = target_room_node.center_x
             target_cy = target_room_node.center_y
-            if _distance(cx, cy, target_cx, target_cy) < _ARRIVAL_RADIUS:
+            if _distance(cx, cy, target_cx, target_cy) < _DOORCHAIN_ARRIVAL_RADIUS:
                 return SkillResult(
                     success=True,
                     result_data={
@@ -485,7 +493,7 @@ class NavigateSkill:
                     },
                 )
 
-        logger.info("[NAV] Dead-reckoning: %s -> %s", src_room, room_key)
+        logger.info("[NAV] Door-chain (nav stack): %s -> %s", src_room, room_key)
 
         # Get waypoint sequence from SceneGraph door chain
         waypoints = sg.get_door_chain(src_room, room_key)
@@ -500,13 +508,21 @@ class NavigateSkill:
                 diagnosis_code="room_not_explored",
             )
 
-        # Execute each waypoint
+        # Execute each waypoint via nav stack (obstacle avoidance)
         for wx, wy, label in waypoints:
-            ok = _navigate_to_waypoint(base, wx, wy, label)
+            # Check arrival before sending — skip waypoint if already close enough
+            cur_pos = base.get_position()
+            if _distance(cur_pos[0], cur_pos[1], wx, wy) < _DOORCHAIN_ARRIVAL_RADIUS:
+                logger.info("[NAV] Already within %.1fm of %s — skipping", _DOORCHAIN_ARRIVAL_RADIUS, label)
+                continue
+
+            logger.info("[NAV] Navigate to waypoint %s (%.1f, %.1f)", label, wx, wy)
+            ok = base.navigate_to(float(wx), float(wy), timeout=_DOORCHAIN_WAYPOINT_TIMEOUT)
             if not ok:
+                # navigate_to returned False — timed out or rejected by nav stack
                 return SkillResult(
                     success=False,
-                    error_message=f"Navigation failed near {label}",
+                    error_message=f"Navigation timed out near {label}",
                     diagnosis_code="navigation_failed",
                 )
 

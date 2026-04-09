@@ -316,19 +316,22 @@ def test_dead_reckoning_uses_door_chain() -> None:
     """_dead_reckoning builds waypoints from SceneGraph doors, not hardcoded dicts."""
     sg = _make_explored_sg()
 
-    # Place robot at living_room position
+    # Place robot at living_room position.
+    # base.navigate_to is present — _dead_reckoning now uses nav stack (not walk).
     base = _make_mock_base(x=3.0, y=2.5, z=0.3)
-    # Remove navigate_to so proxy mode is skipped
-    del base.navigate_to
+    base.navigate_to.return_value = True  # nav stack succeeds for each waypoint
 
     ctx = _make_skill_context(base, sg)
 
     skill = NavigateSkill()
     result = skill._dead_reckoning("kitchen", ctx)
 
-    # Should have called walk() for each waypoint (door + destination)
-    # living_room -> hallway door -> kitchen door -> kitchen center
-    assert base.walk.call_count >= 1 or result.success
+    # _dead_reckoning must call base.navigate_to at least once (one door in chain)
+    # and must succeed overall.
+    assert base.navigate_to.call_count >= 1, (
+        f"Expected base.navigate_to() calls, got {base.navigate_to.call_count}"
+    )
+    assert result.success
 
 
 def test_dead_reckoning_no_sg_returns_error() -> None:
