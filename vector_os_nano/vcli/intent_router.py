@@ -40,12 +40,93 @@ _RULES: list[tuple[frozenset[str], tuple[str, ...]]] = [
 ]
 
 
+
+# ---------------------------------------------------------------------------
+# Complexity detection keyword sets
+# ---------------------------------------------------------------------------
+
+# Sequential: implies ordering / multi-step flow
+_SEQUENTIAL_KEYWORDS: frozenset[str] = frozenset({
+    "然后", "再", "接着", "之后",
+    "and then", "then",
+})
+
+# Conditional: implies branching logic
+_CONDITIONAL_KEYWORDS: frozenset[str] = frozenset({
+    "如果", "假如",
+    "if", "whether",
+})
+
+# Scope: implies iteration over multiple targets
+_SCOPE_KEYWORDS: frozenset[str] = frozenset({
+    "所有", "每个", "检查所有",
+    "all rooms", "every", "each",
+})
+
+# Simultaneous conjunction joining actions
+_SIMULTANEOUS_KEYWORDS: frozenset[str] = frozenset({
+    "同时",
+})
+
+# Perception + judgment patterns (requires multi-step reasoning)
+_PERCEPTION_JUDGMENT_PHRASES: tuple[str, ...] = (
+    "看看有没有", "看看是否",
+    "check if", "see if",
+)
+
+
 class IntentRouter:
     """Classify user intent to select relevant tool categories.
 
     Returns a list of category names, or None when intent is ambiguous
     (meaning all tools should be sent).
     """
+
+    def is_complex(self, user_message: str) -> bool:
+        """Detect whether a user message describes a multi-step / complex task.
+
+        Returns True when the message contains sequential, conditional, scope, or
+        perception+judgment keywords — indicating that a single tool call is unlikely
+        to satisfy the request and VGG decomposition should be attempted.
+
+        Rules (checked in order):
+        1. Empty or very short messages (< 5 chars) → False
+        2. Perception+judgment phrases (看看有没有, check if, see if, …) → True
+        3. Sequential keywords (然后, and then, …) → True
+        4. Conditional keywords (如果, if, whether, …) → True
+        5. Scope keywords (所有, every, each, …) → True
+        6. Simultaneous conjunction (同时) → True
+        7. Otherwise → False
+
+        Note: "if" in English triggers True (conditional). Ambiguous short greetings
+        like "hello" or "hi" are short enough to return False without reaching rule 4.
+        """
+        if not user_message or len(user_message) < 5:
+            return False
+
+        msg_lower = user_message.lower()
+
+        # Rule 2: perception + judgment (substring match — order matters)
+        if any(phrase in msg_lower for phrase in _PERCEPTION_JUDGMENT_PHRASES):
+            return True
+
+        # Rule 3: sequential keywords
+        if any(kw in msg_lower for kw in _SEQUENTIAL_KEYWORDS):
+            return True
+
+        # Rule 4: conditional keywords
+        if any(kw in msg_lower for kw in _CONDITIONAL_KEYWORDS):
+            return True
+
+        # Rule 5: scope keywords
+        if any(kw in msg_lower for kw in _SCOPE_KEYWORDS):
+            return True
+
+        # Rule 6: simultaneous conjunction
+        if any(kw in msg_lower for kw in _SIMULTANEOUS_KEYWORDS):
+            return True
+
+        return False
 
     def route(self, user_message: str) -> list[str] | None:
         """Classify user message into tool categories.

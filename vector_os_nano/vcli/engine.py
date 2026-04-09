@@ -30,6 +30,19 @@ from vector_os_nano.vcli.tools.base import (
     ToolResult,
 )
 
+# Lazy import guard — VGG components may not be installed in all deployments
+try:
+    from vector_os_nano.vcli.cognitive import (
+        GoalDecomposer,
+        GoalExecutor,
+        GoalVerifier,
+        StrategySelector,
+    )
+    from vector_os_nano.vcli.cognitive.types import ExecutionTrace, StepRecord
+    _VGG_AVAILABLE = True
+except ImportError:
+    _VGG_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -104,6 +117,96 @@ class VectorEngine:
         self._max_tokens: int = max_tokens
         self._intent_router = intent_router  # IntentRouter or None
         self._hooks = hooks                  # ToolHookRegistry or None
+
+        # VGG cognitive layer (optional — disabled by default)
+        self._vgg_enabled: bool = False
+        self._goal_decomposer: Any = None
+        self._goal_executor: Any = None
+
+    # ------------------------------------------------------------------
+    # VGG — optional cognitive pipeline
+    # ------------------------------------------------------------------
+
+    def init_vgg(self, backend: Any = None) -> None:
+        """Initialise the VGG cognitive pipeline components.
+
+        Safe to call at any time. If initialisation fails for any reason
+        (missing dependencies, bad backend), _vgg_enabled stays False and
+        the engine continues to work through the normal tool_use path.
+
+        Args:
+            backend: LLMBackend to use for GoalDecomposer. Defaults to the
+                     engine's own backend if not provided.
+        """
+        if not _VGG_AVAILABLE:
+            logger.warning("VGG components not available — VGG disabled")
+            return
+
+        _backend = backend or self._backend
+        try:
+            decomposer = GoalDecomposer(_backend)
+            verifier = GoalVerifier({})
+            selector = StrategySelector()
+            executor = GoalExecutor(
+                strategy_selector=selector,
+                verifier=verifier,
+            )
+            self._goal_decomposer = decomposer
+            self._goal_executor = executor
+            self._vgg_enabled = True
+            logger.debug("VGG pipeline initialised successfully")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("VGG initialisation failed (%s) — VGG disabled", exc)
+            self._vgg_enabled = False
+
+    def try_vgg(self, user_message: str) -> "ExecutionTrace | None":
+        """Attempt VGG pipeline for complex tasks.
+
+        Returns an ExecutionTrace when VGG is enabled and the message is
+        classified as complex. Returns None in all other cases so the caller
+        can fall back to the normal tool_use path.
+
+        Args:
+            user_message: The user's raw input text.
+
+        Returns:
+            ExecutionTrace on successful VGG execution, or None.
+        """
+        if not self._vgg_enabled:
+            return None
+
+        # Require an intent_router to determine complexity
+        if self._intent_router is None:
+            return None
+
+        if not self._intent_router.is_complex(user_message):
+            return None
+
+        world_context = self._build_world_context()
+
+        try:
+            goal_tree = self._goal_decomposer.decompose(user_message, world_context)
+            trace = self._goal_executor.execute(goal_tree, on_step=self._on_vgg_step)
+            return trace
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("VGG execution failed (%s) — falling back to tool_use", exc)
+            return None
+
+    def _build_world_context(self) -> str:
+        """Build a brief world context string for the GoalDecomposer.
+
+        Provides whatever robot/scene information is accessible to the engine.
+        Returns an empty string if nothing is available (decomposer handles that).
+        """
+        return ""
+
+    def _on_vgg_step(self, step: Any) -> None:
+        """Callback invoked by GoalExecutor after each sub-goal completes."""
+        logger.debug(
+            "VGG step: %s — success=%s",
+            getattr(step, "sub_goal_name", "?"),
+            getattr(step, "success", "?"),
+        )
 
     # ------------------------------------------------------------------
     # Public API
