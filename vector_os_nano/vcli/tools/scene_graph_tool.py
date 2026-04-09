@@ -229,5 +229,25 @@ class SceneGraphQueryTool:
     @staticmethod
     def _query_summary(sg: Any) -> ToolResult:
         summary = sg.get_room_summary()
-        data = {"summary": summary}
+        data: dict[str, Any] = {"summary": summary}
+
+        # Include live explore status so LLM knows if exploration is in progress
+        try:
+            from vector_os_nano.skills.go2.explore import is_exploring, get_explore_status
+            if is_exploring():
+                status = get_explore_status()
+                data["explore_in_progress"] = True
+                data["explore_rooms_found"] = status["rooms_found_count"]
+                data["explore_total_expected"] = status["total_expected"]
+                data["explore_rooms_this_session"] = status["rooms_found"]
+                data["note"] = (
+                    f"Exploration is RUNNING — {status['rooms_found_count']}"
+                    f"/{status['total_expected']} rooms found so far. "
+                    f"SceneGraph may contain old data from previous sessions."
+                )
+            else:
+                data["explore_in_progress"] = False
+        except ImportError:
+            pass
+
         return ToolResult(content=json.dumps(data, indent=2))

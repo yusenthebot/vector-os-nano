@@ -160,6 +160,29 @@ def is_exploring() -> bool:
     return _explore_running
 
 
+def get_explore_status() -> dict:
+    """Get current exploration progress.
+
+    Returns dict with:
+        running: bool — is exploration active
+        rooms_found: list[str] — rooms discovered this session
+        rooms_found_count: int
+        total_expected: int — target room count (from SceneGraph)
+    """
+    total = 0
+    if _spatial_memory is not None:
+        try:
+            total = len(_spatial_memory.get_all_rooms())
+        except Exception:
+            pass
+    return {
+        "running": _explore_running,
+        "rooms_found": sorted(_explore_visited),
+        "rooms_found_count": len(_explore_visited),
+        "total_expected": total,
+    }
+
+
 def stop_tare_only() -> None:
     """Stop TARE planner while keeping FAR + localPlanner alive.
 

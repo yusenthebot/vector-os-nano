@@ -331,8 +331,8 @@ class VectorEngine:
         """Generate a verify expression for a known skill."""
         _VERIFY_MAP: dict[str, str] = {
             "navigate": "nearest_room() == '{arg}'" if arg else "True",
-            "explore": "len(get_visited_rooms()) > 0",
-            "patrol": "len(get_visited_rooms()) >= 3",
+            "explore": "True",  # async skill — launched = success, progress via events
+            "patrol": "True",   # async skill — launched = success
             "look": "len(describe_scene()) > 0",
             "describe_scene": "len(describe_scene()) > 0",
             "where_am_i": "True",
