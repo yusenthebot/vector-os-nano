@@ -36,6 +36,7 @@ class GoalExecutor:
         primitives: Any = None,
         build_context: Callable | None = None,
         stats: Any = None,
+        visual_verifier_agent: Any = None,
     ) -> None:
         """Initialise the executor.
 
@@ -48,6 +49,8 @@ class GoalExecutor:
             build_context: Optional callable that builds a SkillContext for skill execution.
             stats: Optional StrategyStats — records per-step outcomes for data-driven
                    strategy selection.  Auto-saved after each full execution.
+            visual_verifier_agent: Optional agent ref for VLM-based visual verification
+                                   fallback when primary verify fails on perception steps.
         """
         self._selector = strategy_selector
         self._verifier = verifier
@@ -55,6 +58,7 @@ class GoalExecutor:
         self._primitives = primitives
         self._build_context = build_context
         self._stats = stats
+        self._visual_verifier_agent = visual_verifier_agent
 
     # ------------------------------------------------------------------
     # Public API
@@ -252,6 +256,39 @@ class GoalExecutor:
                 error="",
                 fallback_used=False,
             )
+
+        # --- Phase 3: Visual verification fallback ---
+        if self._visual_verifier_agent is not None:
+            try:
+                from vector_os_nano.vcli.cognitive.visual_verifier import should_verify, verify_visual
+                if should_verify(
+                    sub_goal_name=sub_goal.name,
+                    sub_goal_description=sub_goal.description,
+                    strategy=strategy_name,
+                    verify_expr=sub_goal.verify,
+                    verify_result=verify_result,
+                ):
+                    vv_result = verify_visual(
+                        agent=self._visual_verifier_agent,
+                        sub_goal_description=sub_goal.description,
+                        verify_expr=sub_goal.verify,
+                    )
+                    if vv_result.triggered and vv_result.success:
+                        logger.info(
+                            "GoalExecutor: visual verification overrode failed verify for %s",
+                            sub_goal.name,
+                        )
+                        return StepRecord(
+                            sub_goal_name=sub_goal.name,
+                            strategy=strategy_name,
+                            success=True,
+                            verify_result=True,  # overridden by visual
+                            duration_sec=time.monotonic() - step_start,
+                            error="",
+                            fallback_used=False,
+                        )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("GoalExecutor: visual verification failed: %s", exc)
 
         # Verification failed — try fail_action if present
         if sub_goal.fail_action:

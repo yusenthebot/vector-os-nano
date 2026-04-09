@@ -83,6 +83,13 @@ class GoalDecomposer:
         "describe_scene",
         "detect_objects",
         "world_stats",
+        # Phase 3: Active World Model functions
+        "last_seen",
+        "certainty",
+        "objects_in_room",
+        "find_object",
+        "room_coverage",
+        "predict_navigation",
     })
 
     # Safe Python builtins that may appear in verify expressions alongside
@@ -120,6 +127,13 @@ class GoalDecomposer:
         "describe_scene": "describe_scene() -> str  # VLM description of current view",
         "detect_objects": "detect_objects(query: str = '') -> list[dict]  # object detections",
         "world_stats": "world_stats() -> dict  # {'rooms': int, 'objects': int, 'visited': int}",
+        # Phase 3: Active World Model functions
+        "last_seen": "last_seen(category: str) -> dict | None  # most recent observation of category",
+        "certainty": "certainty(fact: str) -> float  # time-decayed confidence, e.g. certainty('cup在kitchen')",
+        "objects_in_room": "objects_in_room(room_id: str) -> list[dict]  # objects with confidence in room",
+        "find_object": "find_object(category: str) -> list[dict]  # all known locations of category",
+        "room_coverage": "room_coverage(room_id: str) -> float  # exploration coverage 0.0~1.0",
+        "predict_navigation": "predict_navigation(target: str) -> dict  # {reachable, door_count, rooms_on_path}",
     }
 
     # ------------------------------------------------------------------

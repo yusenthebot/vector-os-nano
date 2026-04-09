@@ -150,6 +150,22 @@ class VectorEngine:
         self._vgg_agent = agent
         self._vgg_step_callback = on_vgg_step
         try:
+            # ObjectMemory — sync from SceneGraph if available
+            try:
+                from vector_os_nano.vcli.cognitive.object_memory import ObjectMemory
+                _sg_ref = getattr(agent, "_spatial_memory", None)
+                if _sg_ref is not None:
+                    self._object_memory = ObjectMemory()
+                    self._object_memory.sync_from_scene_graph(_sg_ref)
+                    logger.debug(
+                        "ObjectMemory initialized with %d objects",
+                        len(self._object_memory._objects),
+                    )
+                else:
+                    self._object_memory = None
+            except ImportError:
+                self._object_memory = None
+
             # Build primitives namespace for GoalVerifier
             ns = self._build_verifier_namespace(agent)
             stats = StrategyStats()
@@ -185,6 +201,7 @@ class VectorEngine:
                 skill_registry=skill_registry,
                 build_context=_build_context,
                 stats=stats,
+                visual_verifier_agent=agent,
             )
             self._goal_decomposer = decomposer
             self._goal_executor = executor
@@ -228,6 +245,45 @@ class VectorEngine:
         # Safe stubs for perception (require camera — may not be available)
         ns.setdefault("describe_scene", lambda: "")
         ns.setdefault("detect_objects", lambda query="": [])
+
+        # --- Phase 3: Active World Model functions ---
+        # ObjectMemory functions (if ObjectMemory available on engine)
+        _obj_mem = getattr(self, "_object_memory", None)
+        if _obj_mem is not None:
+            ns["last_seen"] = _obj_mem.last_seen
+            ns["certainty"] = _obj_mem.certainty
+            ns["objects_in_room"] = _obj_mem.objects_in_room
+            ns["find_object"] = _obj_mem.find_object
+
+        # Room coverage (from SceneGraph)
+        if sg:
+            ns["room_coverage"] = sg.get_room_coverage
+
+        # predict_navigation (from predict module)
+        if sg:
+            from vector_os_nano.vcli.cognitive.predict import predict_navigation
+            _current_room_fn = ns.get("nearest_room")
+            def _predict_nav(target: str) -> dict:
+                current = _current_room_fn() if _current_room_fn else ""
+                return predict_navigation(sg, current or "", target)
+            ns["predict_navigation"] = _predict_nav
+
+        # Safe stubs for Phase 3 functions when dependencies unavailable
+        ns.setdefault("last_seen", lambda category="": None)
+        ns.setdefault("certainty", lambda fact="": 0.0)
+        ns.setdefault("objects_in_room", lambda room_id="": [])
+        ns.setdefault("find_object", lambda category="": [])
+        ns.setdefault("room_coverage", lambda room_id="": 0.0)
+        ns.setdefault(
+            "predict_navigation",
+            lambda target="": {
+                "reachable": False,
+                "door_count": 0,
+                "estimated_steps": 0,
+                "rooms_on_path": [],
+                "confidence": 0.0,
+            },
+        )
         return ns
 
     def try_vgg(self, user_message: str) -> "ExecutionTrace | None":

@@ -1,4 +1,4 @@
-"""VGG cognitive layer — types, verifier, decomposer, strategy selector, executor, stats, sandbox, and experience.
+"""VGG cognitive layer — types, verifier, decomposer, strategy selector, executor, stats, sandbox, experience, and object memory.
 
 Public surface::
 
@@ -20,6 +20,8 @@ Public surface::
         GoalTemplate,
         ExperienceCompiler,
         TemplateLibrary,
+        ObjectMemory,
+        TrackedObject,
     )
 """
 from __future__ import annotations
@@ -37,6 +39,7 @@ from vector_os_nano.vcli.cognitive.strategy_selector import StrategyResult, Stra
 from vector_os_nano.vcli.cognitive.strategy_stats import StrategyRecord, StrategyStats
 from vector_os_nano.vcli.cognitive.template_library import TemplateLibrary
 from vector_os_nano.vcli.cognitive.vgg_harness import VGGHarness, HarnessConfig, FailureRecord
+from vector_os_nano.vcli.cognitive.object_memory import ObjectMemory, TrackedObject
 from vector_os_nano.vcli.cognitive.types import (
     ExecutionTrace,
     GoalTree,
@@ -54,6 +57,7 @@ __all__ = [
     "GoalTemplate",
     "GoalTree",
     "GoalVerifier",
+    "ObjectMemory",
     "StepRecord",
     "StrategyRecord",
     "StrategyResult",
@@ -62,6 +66,7 @@ __all__ = [
     "SubGoal",
     "SubGoalTemplate",
     "TemplateLibrary",
+    "TrackedObject",
     "VGGHarness",
     "HarnessConfig",
     "FailureRecord",
