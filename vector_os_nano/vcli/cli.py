@@ -1050,8 +1050,14 @@ def main(argv: list[str] | None = None) -> None:
     }
 
     # VGG cognitive layer (optional)
+    _vgg_step_idx = [0]
+    _vgg_total = [0]
+
     def _vgg_step_display(step: Any) -> None:
         """Print VGG step progress to console."""
+        _vgg_step_idx[0] += 1
+        idx = _vgg_step_idx[0]
+        total = _vgg_total[0]
         name = getattr(step, "sub_goal_name", "?")
         strategy = getattr(step, "strategy", "?")
         success = getattr(step, "success", False)
@@ -1065,7 +1071,8 @@ def main(argv: list[str] | None = None) -> None:
         fb_tag = " [yellow](fallback)[/]" if fallback else ""
         err_tag = f" [red]{err}[/]" if err and not success else ""
 
-        console.print(f"  [{TEAL}]>[/] {name} via {strategy} ... {tag} {verify_tag}{fb_tag}{err_tag} [dim]{dur:.1f}s[/]")
+        prefix = f"[{idx}/{total}] " if total > 0 else ""
+        console.print(f"  [{TEAL}]>[/] {prefix}{name} via {strategy} ... {tag} {verify_tag}{fb_tag}{err_tag} [dim]{dur:.1f}s[/]")
 
     try:
         engine.init_vgg(
