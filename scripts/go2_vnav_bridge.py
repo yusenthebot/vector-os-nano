@@ -76,6 +76,13 @@ _SENSOR_X: float = 0.3
 _SENSOR_Y: float = 0.0
 _SENSOR_Z: float = 0.2
 
+# FAR V-Graph ceiling filter: points with intensity (= height above ground_z)
+# above this threshold are classified as ceiling by FAR and block edge formation.
+# Ceiling at ~2.4m → intensity ~2.0 → FAR sees obstacle everywhere → no V-Graph edges.
+# 1.8m preserves all meaningful navigation features (walls, door frames, furniture)
+# while excluding ceiling returns that FAR interprets as obstacles.
+_CEILING_FILTER_HEIGHT: float = 1.8
+
 
 class TerrainAccumulator:
     """Accumulates pointcloud data into a 2D voxel grid for terrain persistence."""
@@ -554,19 +561,23 @@ class Go2VNavBridge(Node):
 
         point_step = 16
         data = bytearray()
+        filtered_count = 0
         for x, y, z, _ in points:
             intensity = z - ground_z
+            if intensity > _CEILING_FILTER_HEIGHT:
+                continue
             data.extend(struct.pack("ffff", x, y, z, intensity))
+            filtered_count += 1
 
         msg = PointCloud2()
         msg.header.stamp = now
         msg.header.frame_id = "map"
         msg.height = 1
-        msg.width = len(points)
+        msg.width = filtered_count
         msg.fields = fields
         msg.is_bigendian = False
         msg.point_step = point_step
-        msg.row_step = point_step * len(points)
+        msg.row_step = point_step * filtered_count
         msg.data = bytes(data)
         msg.is_dense = True
         self._pc_pub.publish(msg)
