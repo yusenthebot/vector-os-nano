@@ -195,37 +195,39 @@ class VectorEngine:
         return ns
 
     def try_vgg(self, user_message: str) -> "ExecutionTrace | None":
-        """Attempt VGG pipeline for complex tasks.
+        """Attempt VGG pipeline for complex tasks (decompose + execute).
 
         Returns an ExecutionTrace when VGG is enabled and the message is
         classified as complex. Returns None in all other cases so the caller
         can fall back to the normal tool_use path.
-
-        Args:
-            user_message: The user's raw input text.
-
-        Returns:
-            ExecutionTrace on successful VGG execution, or None.
         """
-        if not self._vgg_enabled:
+        tree = self.vgg_decompose(user_message)
+        if tree is None:
             return None
-
-        # Require an intent_router to determine complexity
-        if self._intent_router is None:
-            return None
-
-        if not self._intent_router.is_complex(user_message):
-            return None
-
-        world_context = self._build_world_context()
-
         try:
-            goal_tree = self._goal_decomposer.decompose(user_message, world_context)
-            trace = self._goal_executor.execute(goal_tree, on_step=self._on_vgg_step)
-            return trace
+            return self.vgg_execute(tree)
         except Exception as exc:  # noqa: BLE001
             logger.warning("VGG execution failed (%s) — falling back to tool_use", exc)
             return None
+
+    def vgg_decompose(self, user_message: str) -> "GoalTree | None":
+        """Decompose only — returns GoalTree or None if not complex / VGG disabled."""
+        if not self._vgg_enabled:
+            return None
+        if self._intent_router is None:
+            return None
+        if not self._intent_router.is_complex(user_message):
+            return None
+        world_context = self._build_world_context()
+        try:
+            return self._goal_decomposer.decompose(user_message, world_context)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("VGG decompose failed (%s)", exc)
+            return None
+
+    def vgg_execute(self, goal_tree: "GoalTree") -> "ExecutionTrace":
+        """Execute a pre-decomposed GoalTree. Returns ExecutionTrace."""
+        return self._goal_executor.execute(goal_tree, on_step=self._on_vgg_step)
 
     def _build_world_context(self) -> str:
         """Build a brief world context string for the GoalDecomposer."""

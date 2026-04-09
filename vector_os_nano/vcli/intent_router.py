@@ -74,6 +74,26 @@ _PERCEPTION_JUDGMENT_PHRASES: tuple[str, ...] = (
     "check if", "see if",
 )
 
+# Action verbs — if 2+ distinct verbs present, task is multi-action → complex
+_ACTION_VERBS: frozenset[str] = frozenset({
+    "结束", "停止", "开始", "去", "到", "看", "找", "检查",
+    "巡逻", "探索", "导航", "走", "站", "坐", "拿", "放",
+    "stop", "start", "go", "check", "find", "patrol", "explore",
+    "navigate", "look", "pick", "place", "scan",
+})
+
+
+def _has_multiple_actions(msg: str) -> bool:
+    """Return True if message contains 2+ distinct action verbs."""
+    found: set[str] = set()
+    msg_lower = msg.lower()
+    for verb in _ACTION_VERBS:
+        if verb in msg_lower:
+            found.add(verb)
+        if len(found) >= 2:
+            return True
+    return False
+
 
 class IntentRouter:
     """Classify user intent to select relevant tool categories.
@@ -124,6 +144,10 @@ class IntentRouter:
 
         # Rule 6: simultaneous conjunction
         if any(kw in msg_lower for kw in _SIMULTANEOUS_KEYWORDS):
+            return True
+
+        # Rule 7: multiple action verbs (2+ distinct verbs → multi-step)
+        if _has_multiple_actions(msg_lower):
             return True
 
         return False
