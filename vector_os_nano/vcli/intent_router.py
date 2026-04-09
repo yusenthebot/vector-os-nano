@@ -167,23 +167,34 @@ class IntentRouter:
         Broader than is_complex(): also triggers for motor actions (navigate,
         patrol, explore) that benefit from async execution with progress feedback.
 
-        However, if the message directly matches a single skill (e.g. "探索"
-        matches ExploreSkill), skip VGG — the skill handles it better.
+        However, if the message matches a single known skill AND is not complex,
+        skip VGG — the skill handles it better directly.
+
+        Priority order:
+        1. If is_complex() → VGG (multi-step/conditional, regardless of prefix match)
+        2. If skill_registry has a match (any match) → bypass VGG (direct skill)
+        3. If motor pattern keyword present → VGG
         """
         if not user_message or len(user_message) < 2:
             return False
 
-        # Direct skill match → skip VGG, let the skill handle it directly
+        # Complex check first — overrides any skill prefix match.
+        # "去厨房看看有没有杯子" starts with "去" (NavigateSkill), but the
+        # 看看有没有 phrase makes it complex → must go through VGG.
+        if self.is_complex(user_message):
+            return True
+
+        # Any skill match on the full message → bypass VGG (not complex).
+        # Use match-any (not match.direct) so ExploreSkill (direct=False)
+        # also bypasses VGG: a non-complex "explore" is a plain skill call.
         if skill_registry is not None:
             try:
                 match = skill_registry.match(user_message)
-                if match is not None and match.direct:
-                    return False  # Single skill can handle this
+                if match is not None:
+                    return False  # Single skill can handle this directly
             except Exception:
                 pass
 
-        if self.is_complex(user_message):
-            return True
         msg_lower = user_message.lower()
         return any(pat in msg_lower for pat in _MOTOR_PATTERNS)
 

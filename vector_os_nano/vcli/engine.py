@@ -155,10 +155,34 @@ class VectorEngine:
             decomposer = GoalDecomposer(_backend, skill_registry=skill_registry)
             verifier = GoalVerifier(ns)
             selector = StrategySelector(skill_registry=skill_registry, stats=stats)
+
+            # Build a SkillContext factory so GoalExecutor can execute skills.
+            # Skills need context.base, context.services etc. — wire from agent.
+            _agent_ref = agent
+            _skill_registry_ref = skill_registry
+
+            def _build_context() -> Any:
+                from vector_os_nano.core.skill import SkillContext
+                _base = getattr(_agent_ref, "_base", None)
+                _sg = getattr(_agent_ref, "_spatial_memory", None)
+                _vlm = getattr(_agent_ref, "_vlm", None)
+                services: dict = {}
+                if _sg is not None:
+                    services["spatial_memory"] = _sg
+                if _skill_registry_ref is not None:
+                    services["skill_registry"] = _skill_registry_ref
+                if _vlm is not None:
+                    services["vlm"] = _vlm
+                return SkillContext(
+                    bases={"go2": _base} if _base is not None else {},
+                    services=services,
+                )
+
             executor = GoalExecutor(
                 strategy_selector=selector,
                 verifier=verifier,
                 skill_registry=skill_registry,
+                build_context=_build_context,
                 stats=stats,
             )
             self._goal_decomposer = decomposer
