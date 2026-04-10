@@ -130,49 +130,26 @@ Auto-Observe: 探索时每个新 viewpoint → VLM 自动识别物体 → SceneG
 ## TODO
 
 - MuJoCo sim 环境太简单 — 需要增加家具、物品、更复杂的房间布局来测试 Phase 3 物体追踪
-- FAR V-Graph 不映射 — 可能是 vector-cli 启动方式的线程冲突问题（见下方分析）
+- Web 可视化前端 — rosbridge + Three.js 替代 RViz（ADR-004, feat/web-viz 分支）
+- TARE kAutoStart 需要在 indoor_small.yaml 里手动设为 true（会被 linter 改回 false）
+
+## FAR V-Graph 调参记录 (2026-04-09)
+
+根本原因: `new_intensity_thred: 2.0` — bridge 的 intensity = height above ground，ceiling filter 1.8m 导致所有点 < 2.0，FAR 不认为有"新"障碍物 → V-Graph 不建。改为 0.5 后数据层有改善。
+
+调参尝试:
+- `is_static_env: true` → 让 FAR 行为更差（obs 归零），不要用
+- 降低 `connect_votes_size` 10→3, `node_finalize_thred` 6→3 → 效果不明显
+- 增大 `dynamic_obs_dacay_time` 2→30, `new_points_decay_time` 1→15 → 效果更差
+
+最终配置: 只改 `new_intensity_thred: 0.5`，其余保持原始值。
+
+实际状态: FAR 数据层在工作 — `/free_paths` 18k-60k 点持续发布，`/global_path` 5-58 poses。V-Graph edges 存在但 RViz 看不到（PointCloud2 用 2px Points 渲染，不是线段）。
+
+结论: 不是 FAR 不工作，是 RViz 不适合显示 V-Graph。→ 自建 Web 可视化。
 
 ## Known Limitations
 
 - VGG complex decomposition quality depends on LLM model
 - Async skills (explore, patrol) report "launched" not "completed" in VGG
 - Real-world room detection needs SLAM + spatial understanding
-
-## V-Graph 线程冲突分析
-
-FAR V-Graph 一直不建图，之前假设是天花板点云污染（已加 ceiling filter）。
-但更可能的原因是 **MuJoCo 线程不安全 + vector-cli 的多线程访问冲突**。
-
-当前线程模型（vector-cli --sim-go2 启动）：
-
-```
-Thread 1: MuJoCo physics loop (1kHz)
-  └── mj_step1/mj_step2, _update_odometry, _update_lidar
-      直接读写 mj.data (qpos, qvel, sensordata)
-
-Thread 2: ROS2 bridge spin (rclpy.spin in daemon thread)
-  └── _publish_odom (200Hz): 读 go2.get_position/get_heading/get_odometry
-  └── _publish_pointcloud (5Hz): 读 go2.get_3d_pointcloud → 读 _last_pointcloud
-  └── _publish_camera (5Hz): 读 go2.get_camera_frame → mj.Renderer.render()
-  └── _follow_path (20Hz): 写 go2.set_velocity
-
-Thread 3: CLI main thread (用户交互)
-  └── VGG execute → skill.execute → go2.set_velocity / get_position
-```
-
-问题：
-- Thread 1 的 physics loop 在 mj_step 期间修改 mj.data
-- Thread 2 的 bridge 同时读 mj.data（get_position、get_3d_pointcloud）
-- **mj.Renderer.render()** 和 **mj_step** 不能并发 — MuJoCo 文档明确说不安全
-- get_3d_pointcloud 返回的 _last_pointcloud 在 physics thread 里更新，bridge thread 里读取，无锁保护
-- _cmd_lock 只保护速度命令，不保护传感器读取
-
-后果：
-- /registered_scan 可能包含不完整或错误的点云数据
-- FAR 收到乱数据 → 无法建立 visibility edges → V-Graph 为空
-- 间歇性问题（取决于线程调度时机）
-
-潜在修复方向：
-1. 给 MuJoCoGo2 加 data_lock (RLock)，所有传感器读取和 physics step 互斥
-2. 或: physics loop 每步结束时做 snapshot（copy qpos/pointcloud），bridge 只读 snapshot
-3. 或: bridge 和 physics 合并到同一线程（bridge timer 在 physics loop 内调用）
