@@ -180,10 +180,20 @@
     </link>
     <joint name="RR_calf_joint" type="revolute"><parent>RR_thigh</parent><child>RR_calf</child><pose>0 0 -0.213 0 0 0</pose><axis><xyz>0 1 0</xyz><dynamics><damping>0.1</damping><friction>0.2</friction></dynamics><limit><lower>-2.7227</lower><upper>-0.83776</upper><effort>35.55</effort><velocity>20.06</velocity></limit></axis></joint>
 
-    <!-- gz_ros2_control integration -->
-    <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
-      <parameters>$(find go2_description)/config/ros2_control.yaml</parameters>
+    <!-- gz_quadruped_hardware integration
+         Replaces generic gz_ros2_control with the quadruped-specific plugin that
+         handles kp/kd PD interfaces and foot-force sensors.
+         Plugin built at: ~/Desktop/quadruped_ros2_control/install/gz_quadruped_hardware/ -->
+    <plugin filename="gz_quadruped_hardware-system"
+            name="gz_quadruped_hardware::GazeboSimQuadrupedPlugin">
+      <parameters>gazebo/models/go2/ros2_control.yaml</parameters>
     </plugin>
+
+    <!-- IMU and force-torque system plugins required by gz_quadruped_hardware -->
+    <plugin filename="gz-sim-imu-system"
+            name="gz::sim::systems::Imu"/>
+    <plugin filename="gz-sim-forcetorque-system"
+            name="gz::sim::systems::ForceTorque"/>
 
   </model>
 </sdf>

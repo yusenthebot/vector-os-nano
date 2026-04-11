@@ -1,8 +1,8 @@
 # Vector OS Nano SDK — Progress
 
 **Last updated:** 2026-04-11
-**Version:** v1.6.0-dev
-**Branch:** feat/web-viz
+**Version:** v1.7.0-dev
+**Branch:** sim-with-gazebo
 
 ## VGG: Verified Goal Graph — Complete Framework
 
@@ -144,110 +144,110 @@ ROS2 Topics → foxglove_bridge (ws://8765) → Foxglove Studio
 
 已知限制: V-Graph 线段在 Foxglove 中只能显示为散点或很细的 marker（PointCloud2 无法渲染为 LineSegments，MarkerArray 线宽由 FAR 源码决定）。MuJoCo sim 的点云密度和视觉效果不如真实 LiDAR。
 
-## Isaac Sim 集成 (2026-04-10) — 默认仿真后端
+## Gazebo Harmonic 集成 (2026-04-11) — 主仿真后端
 
-Isaac Sim 5.1.0 (Docker) 作为主仿真后端。光追渲染 + RTX 传感器 + 复杂室内环境。
+Gazebo Sim 8.10.0 (Harmonic) 原生 ROS2 Jazzy，无 Docker。Go2 URDF 来自 quadruped_ros2_control (489 stars)。
 
-**状态: 已验证运行** — GUI 可视化 + ROS2 topic 50Hz 稳定 + 传感器已附加。
+**状态: 运行中** — 3 controllers active, 传感器 topic 全部发布。
 
 ```
 Host (Ubuntu 24.04 + ROS2 Jazzy)
-  vector-cli → VGG → IsaacSimProxy (BaseProtocol)
-       ↕ DDS (CycloneDDS, --network host, same Jazzy!)
-Docker (Isaac Sim 5.1 + Ubuntu 24.04 + ROS2 Jazzy)
-  isaac_sim_physics.py → PhysX + sensors → shared state files
-  ros2_publisher.py    → reads state → publishes ROS2 topics
+  vector-cli → VGG → GazeboGo2Proxy (BaseProtocol)
+       │ ROS2 topics (native, no Docker)
+  Gz Sim Harmonic (DART physics)
+    Go2 URDF (12 DOF) + unitree_guide_controller
+    MID-360 gpu_lidar + D435 RGB/Depth + IMU
+    ros_gz_bridge → ROS2 topics
 ```
-
-**关键架构: 两进程**
-- Isaac Sim Python 3.11 (物理 + 传感器) — 写状态到 /tmp/isaac_state/
-- 系统 Python 3.12 (ROS2 Jazzy) — 读状态发布 topic
-- 原因: Isaac Sim 内置 Python 3.11 与 ROS2 Jazzy 的 rclpy (Python 3.12) C extension 不兼容
 
 ### 架构
 
 | 组件 | 文件 | 说明 |
 |------|------|------|
-| Docker | `docker/isaac-sim/` | Dockerfile + compose + CycloneDDS + entrypoint |
-| Bridge | `docker/isaac-sim/bridge/isaac_sim_bridge.py` | ROS2 node: odom/tf/joints/scan/camera/joy/speed |
-| 场景 | `docker/isaac-sim/bridge/go2_scene.py` | 6 场景: flat/room/apartment/navigation/hospital |
-| 传感器 | `docker/isaac-sim/bridge/go2_sensors.py` | Livox MID-360 + D435 配置 |
-| Lidar 配置 | `docker/isaac-sim/bridge/lidar_configs/Livox_MID360.json` | 自定义 RTX lidar |
-| Host Proxy | `vector_os_nano/hardware/sim/isaac_sim_proxy.py` | BaseProtocol (继承 Go2ROS2Proxy) |
-| Arm Proxy | `vector_os_nano/hardware/sim/isaac_sim_arm_proxy.py` | ArmProtocol via ROS2 |
-| CLI | `vector_os_nano/vcli/tools/sim_tool.py` | `backend=isaac` 默认 |
-| 启动 | `scripts/launch_isaac.sh` / `stop_isaac.sh` | 一键启动/停止 |
+| Proxy | `vector_os_nano/hardware/sim/gazebo_go2_proxy.py` | BaseProtocol (继承 Go2ROS2Proxy) |
+| Go2 模型 | `gazebo/models/go2/` | SDF + sensors.xacro + ros2_control.yaml |
+| 传感器 | `gazebo/models/go2/sensors.xacro` | MID-360 + D435 (注入 Go2 URDF) |
+| Bridge | `gazebo/config/bridge.yaml` | ros_gz_bridge topic 映射 |
+| Launch | `gazebo/launch/go2_sim.launch.py` | Gz + spawn + bridge + controllers |
+| 世界 | `gazebo/worlds/apartment.sdf` | 5 房间公寓 + 14 家具 + 8 可抓取物体 |
+| CLI | `vector_os_nano/vcli/tools/sim_tool.py` | `backend=gazebo` |
+| 脚本 | `scripts/launch_gazebo.sh` / `stop_gazebo.sh` | 一键启动/停止 |
+| 控制器 | `~/Desktop/quadruped_ros2_control/` | unitree_guide_controller (FSM) |
 
-### 传感器配置 (匹配 MuJoCo)
+### 传感器配置
 
-| 传感器 | 挂载 | 参数 |
-|--------|------|------|
-| Livox MID-360 | base_link + (0.3, 0, 0.2)m, -20 deg | VFoV -7~+52 deg, 360 deg HFoV, 30 rings, 12m range |
-| RealSense D435 | base_link + (0.3, 0, 0.05)m, -5 deg | 640x480, FoV 42 deg, RGB + depth aligned |
+| 传感器 | 挂载 | 参数 | 实测 |
+|--------|------|------|------|
+| Livox MID-360 | trunk + (0.15, 0, 0.15)m, -20 deg | 360x30, 0.1-12m, 10Hz | 8 Hz, 10800 pts |
+| RealSense D435 RGB | trunk + (0.27, 0, 0.12)m, +5 deg | 640x480, 30Hz | 22 Hz, rgb8 |
+| RealSense D435 Depth | co-located | 640x480, 0.3-10m | publishing |
+| IMU | trunk center | 200Hz | publishing |
 
-### 场景
+### 世界
 
-| 场景 | 说明 | 用途 |
+| 世界 | 说明 | 用途 |
 |------|------|------|
-| flat | 平地 + Go2 | 基础测试 |
-| room | 4x5m 单房间 + 桌椅 | 简单导航 |
-| apartment | 3 房间 + 门 | 多房间导航 |
-| navigation | 60m2 五房间公寓 (走廊+客厅+厨房+卧室+浴室, 8+ 可抓取物体) | 完整导航 + 操作测试 |
-| hospital | Isaac Sim 内置医院 | 最复杂导航 |
+| empty_room | 5x6m 单房间 | 快速验证 |
+| apartment | 65m2 五房间 (客厅+厨房+卧室+浴室+走廊, 14 家具, 8 可抓取物体) | 导航 + VLN |
 
-### 测试: 263 passed, 51 skipped, 0 failed
+### 测试: 120 passed, 0 failed
 
 | 文件 | 数量 | 覆盖 |
 |------|------|------|
-| test_isaac_sim_proxy.py | 62 | Protocol, Docker 检查, 状态, 运动, 导航 |
-| test_isaac_arm_proxy.py | 51 skip | TDD stubs |
-| test_docker_config.py | 49 | Dockerfile, compose, DDS, 脚本 |
-| test_topic_compat.py | 44 | Topic 名/类型/QoS/传感器匹配 |
-| test_backend_switch.py | 45 | CLI backend 路由, 兼容性 |
-| test_isaac_e2e_chain.py | 63 | 全链路: Docker→DDS→Proxy→Primitives→VGG |
+| test_gazebo_proxy.py | 21 | Proxy identity, health check, lifecycle |
+| test_gazebo_bridge.py | 12 | YAML 有效性, topic 映射 |
+| test_gazebo_model.py | 15 | SDF 有效性, joints, sensors |
+| test_gazebo_launch.py | 16 | Launch file 结构 |
+| test_gazebo_scripts.py | 14 | Shell 脚本有效性 |
+| test_gazebo_backend.py | 6 | CLI backend 路由 |
+| test_gazebo_world.py | 23 | empty_room + apartment SDF |
+| test_gazebo_controller.py | 13 | ros2_control config |
 
 ### 启动方式
 
 ```bash
-# 构建 (首次)
-docker build --network host -t vector-isaac-sim:latest docker/isaac-sim/
+# 依赖 (首次)
+cd ~/Desktop/quadruped_ros2_control
+colcon build --packages-up-to unitree_guide_controller --symlink-install
 
 # 启动
-ISAAC_SCENE=navigation docker compose -f docker/isaac-sim/docker-compose.yaml up
+source /opt/ros/jazzy/setup.bash
+source ~/Desktop/quadruped_ros2_control/install/setup.bash
+ros2 launch gazebo/launch/go2_sim.launch.py world:=apartment gui:=true
 
-# 验证
-ros2 topic list | grep state_estimation
+# 或一键脚本
+bash scripts/launch_gazebo.sh --world apartment
+bash scripts/stop_gazebo.sh
 
 # vector-cli 连接
-vector sim start    # 默认 isaac 后端
+vector sim start --backend gazebo
 ```
 
 ### 已验证
 
-- [x] Docker 构建成功 (Isaac Sim 5.1.0 + ROS2 Jazzy)
-- [x] GPU passthrough (RTX 5080, driver 580.126.20, CUDA 13.0)
-- [x] Isaac Sim GUI 可视化 (ISAAC_HEADLESS=false)
-- [x] 物理循环运行 (200 Hz PhysX)
-- [x] Livox MID-360 RTX lidar 附加
-- [x] RealSense D435 RGB+Depth 相机附加
-- [x] ROS2 topic 全部发布 (12 topics, /state_estimation 50 Hz)
-- [x] Host ROS2 Jazzy 可见容器内 topic (DDS 直通)
-- [x] 真实 Go2 USD 模型从 Nucleus 加载 (12 DOF articulation)
-- [x] RL locomotion policy 加载 (JIT, 45-dim obs, 12-dim action)
-- [x] Go2 站立稳定 (z=0.319, headless 验证)
-- [x] Go2 前进 (dx=0.47m/3s, headless 验证)
-- [x] 关节映射 Lab↔Sim 验证正确
+- [x] Gz Sim 8.10.0 启动 (无 Docker)
+- [x] Go2 URDF 从 quadruped_ros2_control 加载 (12 DOF)
+- [x] unitree_guide_controller active
+- [x] joint_state_broadcaster active (887 Hz)
+- [x] imu_sensor_broadcaster active
+- [x] MID-360 gpu_lidar 发布 /registered_scan (8 Hz, 10800 pts)
+- [x] D435 RGB 发布 /camera/image (22 Hz, 640x480 rgb8)
+- [x] D435 Depth 发布 /camera/depth
+- [x] IMU 发布 /imu/data
+- [x] apartment.sdf 加载 (5 rooms, 14 furniture, 8 objects)
+- [x] gz sdf -k apartment.sdf → Valid
 
 ### 待完成
 
-- [ ] cmd_vel → RL policy 传递链路 debug (ROS2 → shared file → physics)
-- [ ] 键盘遥控 debug (Isaac Sim 5.1 keyboard event API)
-- [ ] Isaac Lab 安装 (isaaclab.sh install 需要修 setuptools/pip)
-- [ ] 自训练 Go2 policy (Isaac Lab + RSL-RL)
-- [ ] Wire RTX lidar annotator → real scan data
-- [ ] Wire RenderProduct camera → real image data
-- [ ] 连接 Vector nav stack (FAR/TARE)
-- [ ] 开发模式: 挂载代码 volume 避免 rebuild
+- [ ] CLI `vector sim start --backend gazebo` 实际行走测试
+- [ ] rl_quadruped_controller 集成 (需要 libtorch 2.5.0)
+- [ ] 连接 Vector nav stack (FAR/TARE) — topic 已对齐
+- [ ] VLM 感知测试 (camera frame → room identification)
+
+## Isaac Sim 集成 (2026-04-10) — 已归档
+
+归档在 `web-viz-Isaac-sim` 分支。Isaac Sim 5.1.0 Docker 可运行但 cmd_vel 链路未通。
+详见归档分支代码和 `docker/isaac-sim/`。
 
 ## FAR V-Graph 调参记录 (2026-04-09)
 
