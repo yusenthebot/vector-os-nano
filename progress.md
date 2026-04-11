@@ -1,8 +1,8 @@
 # Vector OS Nano SDK — Progress
 
-**Last updated:** 2026-04-09
-**Version:** v1.5.0-dev
-**Branch:** robo-cli (29 commits ahead of master)
+**Last updated:** 2026-04-10
+**Version:** v1.6.0-dev
+**Branch:** feat/web-viz
 
 ## VGG: Verified Goal Graph — Complete Framework
 
@@ -144,13 +144,110 @@ ROS2 Topics → foxglove_bridge (ws://8765) → Foxglove Studio
 
 已知限制: V-Graph 线段在 Foxglove 中只能显示为散点或很细的 marker（PointCloud2 无法渲染为 LineSegments，MarkerArray 线宽由 FAR 源码决定）。MuJoCo sim 的点云密度和视觉效果不如真实 LiDAR。
 
-## TODO
+## Isaac Sim 集成 (2026-04-10) — 默认仿真后端
 
-- Isaac Lab 集成 — 替代/补充 MuJoCo 仿真（更好的物理+视觉）
-- Foxglove 自定义面板 (Wave 2): SceneGraph/ObjectMemory/VGG React 扩展
-- V-Graph 线段渲染: 需要 Foxglove custom panel 或回到 Three.js 方案
-- MuJoCo sim 环境太简单 — 需要增加家具、物品、更复杂的房间布局
-- TARE kAutoStart 需要在 indoor_small.yaml 里手动设为 true（会被 linter 改回 false）
+Isaac Sim 5.1.0 (Docker) 作为主仿真后端。光追渲染 + RTX 传感器 + 复杂室内环境。
+
+**状态: 已验证运行** — GUI 可视化 + ROS2 topic 50Hz 稳定 + 传感器已附加。
+
+```
+Host (Ubuntu 24.04 + ROS2 Jazzy)
+  vector-cli → VGG → IsaacSimProxy (BaseProtocol)
+       ↕ DDS (CycloneDDS, --network host, same Jazzy!)
+Docker (Isaac Sim 5.1 + Ubuntu 24.04 + ROS2 Jazzy)
+  isaac_sim_physics.py → PhysX + sensors → shared state files
+  ros2_publisher.py    → reads state → publishes ROS2 topics
+```
+
+**关键架构: 两进程**
+- Isaac Sim Python 3.11 (物理 + 传感器) — 写状态到 /tmp/isaac_state/
+- 系统 Python 3.12 (ROS2 Jazzy) — 读状态发布 topic
+- 原因: Isaac Sim 内置 Python 3.11 与 ROS2 Jazzy 的 rclpy (Python 3.12) C extension 不兼容
+
+### 架构
+
+| 组件 | 文件 | 说明 |
+|------|------|------|
+| Docker | `docker/isaac-sim/` | Dockerfile + compose + CycloneDDS + entrypoint |
+| Bridge | `docker/isaac-sim/bridge/isaac_sim_bridge.py` | ROS2 node: odom/tf/joints/scan/camera/joy/speed |
+| 场景 | `docker/isaac-sim/bridge/go2_scene.py` | 6 场景: flat/room/apartment/navigation/hospital |
+| 传感器 | `docker/isaac-sim/bridge/go2_sensors.py` | Livox MID-360 + D435 配置 |
+| Lidar 配置 | `docker/isaac-sim/bridge/lidar_configs/Livox_MID360.json` | 自定义 RTX lidar |
+| Host Proxy | `vector_os_nano/hardware/sim/isaac_sim_proxy.py` | BaseProtocol (继承 Go2ROS2Proxy) |
+| Arm Proxy | `vector_os_nano/hardware/sim/isaac_sim_arm_proxy.py` | ArmProtocol via ROS2 |
+| CLI | `vector_os_nano/vcli/tools/sim_tool.py` | `backend=isaac` 默认 |
+| 启动 | `scripts/launch_isaac.sh` / `stop_isaac.sh` | 一键启动/停止 |
+
+### 传感器配置 (匹配 MuJoCo)
+
+| 传感器 | 挂载 | 参数 |
+|--------|------|------|
+| Livox MID-360 | base_link + (0.3, 0, 0.2)m, -20 deg | VFoV -7~+52 deg, 360 deg HFoV, 30 rings, 12m range |
+| RealSense D435 | base_link + (0.3, 0, 0.05)m, -5 deg | 640x480, FoV 42 deg, RGB + depth aligned |
+
+### 场景
+
+| 场景 | 说明 | 用途 |
+|------|------|------|
+| flat | 平地 + Go2 | 基础测试 |
+| room | 4x5m 单房间 + 桌椅 | 简单导航 |
+| apartment | 3 房间 + 门 | 多房间导航 |
+| navigation | 60m2 五房间公寓 (走廊+客厅+厨房+卧室+浴室, 8+ 可抓取物体) | 完整导航 + 操作测试 |
+| hospital | Isaac Sim 内置医院 | 最复杂导航 |
+
+### 测试: 263 passed, 51 skipped, 0 failed
+
+| 文件 | 数量 | 覆盖 |
+|------|------|------|
+| test_isaac_sim_proxy.py | 62 | Protocol, Docker 检查, 状态, 运动, 导航 |
+| test_isaac_arm_proxy.py | 51 skip | TDD stubs |
+| test_docker_config.py | 49 | Dockerfile, compose, DDS, 脚本 |
+| test_topic_compat.py | 44 | Topic 名/类型/QoS/传感器匹配 |
+| test_backend_switch.py | 45 | CLI backend 路由, 兼容性 |
+| test_isaac_e2e_chain.py | 63 | 全链路: Docker→DDS→Proxy→Primitives→VGG |
+
+### 启动方式
+
+```bash
+# 构建 (首次)
+docker build --network host -t vector-isaac-sim:latest docker/isaac-sim/
+
+# 启动
+ISAAC_SCENE=navigation docker compose -f docker/isaac-sim/docker-compose.yaml up
+
+# 验证
+ros2 topic list | grep state_estimation
+
+# vector-cli 连接
+vector sim start    # 默认 isaac 后端
+```
+
+### 已验证
+
+- [x] Docker 构建成功 (Isaac Sim 5.1.0 + ROS2 Jazzy)
+- [x] GPU passthrough (RTX 5080, driver 580.126.20, CUDA 13.0)
+- [x] Isaac Sim GUI 可视化 (ISAAC_HEADLESS=false)
+- [x] 物理循环运行 (200 Hz PhysX)
+- [x] Livox MID-360 RTX lidar 附加
+- [x] RealSense D435 RGB+Depth 相机附加
+- [x] ROS2 topic 全部发布 (12 topics, /state_estimation 50 Hz)
+- [x] Host ROS2 Jazzy 可见容器内 topic (DDS 直通)
+- [x] 真实 Go2 USD 模型从 Nucleus 加载 (12 DOF articulation)
+- [x] RL locomotion policy 加载 (JIT, 45-dim obs, 12-dim action)
+- [x] Go2 站立稳定 (z=0.319, headless 验证)
+- [x] Go2 前进 (dx=0.47m/3s, headless 验证)
+- [x] 关节映射 Lab↔Sim 验证正确
+
+### 待完成
+
+- [ ] cmd_vel → RL policy 传递链路 debug (ROS2 → shared file → physics)
+- [ ] 键盘遥控 debug (Isaac Sim 5.1 keyboard event API)
+- [ ] Isaac Lab 安装 (isaaclab.sh install 需要修 setuptools/pip)
+- [ ] 自训练 Go2 policy (Isaac Lab + RSL-RL)
+- [ ] Wire RTX lidar annotator → real scan data
+- [ ] Wire RenderProduct camera → real image data
+- [ ] 连接 Vector nav stack (FAR/TARE)
+- [ ] 开发模式: 挂载代码 volume 避免 rebuild
 
 ## FAR V-Graph 调参记录 (2026-04-09)
 

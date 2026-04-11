@@ -38,8 +38,14 @@ class SimStartTool:
             },
             "gui": {
                 "type": "boolean",
-                "description": "Open the MuJoCo viewer window (default: true)",
+                "description": "Open viewer/GUI window (default: true)",
                 "default": True,
+            },
+            "backend": {
+                "type": "string",
+                "enum": ["isaac", "mujoco"],
+                "default": "isaac",
+                "description": "Simulation backend: 'isaac' (photorealistic, default) or 'mujoco' (lightweight fallback)",
             },
         },
         "required": ["sim_type"],
@@ -48,6 +54,7 @@ class SimStartTool:
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
         sim_type: str = params["sim_type"]
         gui: bool = params.get("gui", True)
+        backend: str = params.get("backend", "isaac")
         app = context.app_state
         if app is None:
             return ToolResult(content="No app state available", is_error=True)
@@ -63,12 +70,21 @@ class SimStartTool:
                 return ToolResult(content=f"Go2 sim already running: {type(current_base).__name__}")
 
         try:
-            if sim_type == "arm":
-                agent = self._start_arm(gui=gui)
-            elif sim_type == "go2":
-                agent = self._start_go2(gui=gui)
+            if backend == "isaac":
+                if sim_type == "go2":
+                    agent = self._start_isaac_go2()
+                elif sim_type == "arm":
+                    agent = self._start_isaac_arm()
+                else:
+                    return ToolResult(content=f"Unknown sim type: {sim_type}", is_error=True)
             else:
-                return ToolResult(content=f"Unknown sim type: {sim_type}", is_error=True)
+                # Default: mujoco backend (existing paths unchanged)
+                if sim_type == "arm":
+                    agent = self._start_arm(gui=gui)
+                elif sim_type == "go2":
+                    agent = self._start_go2(gui=gui)
+                else:
+                    return ToolResult(content=f"Unknown sim type: {sim_type}", is_error=True)
         except Exception as exc:
             return ToolResult(content=f"Failed to start {sim_type} sim: {exc}", is_error=True)
 
@@ -214,6 +230,70 @@ class SimStartTool:
         base._scene_graph = agent._spatial_memory
 
         return agent
+
+    @staticmethod
+    def _start_isaac_go2() -> Any:
+        """Connect to Go2 in Isaac Sim Docker (must already be running).
+
+        Uses IsaacSimProxy over ROS2 topics — identical interface to
+        Go2ROS2Proxy but assumes Isaac Sim is already live. No subprocess
+        launch or sleep(20) needed.
+        """
+        import os
+        from vector_os_nano.hardware.sim.isaac_sim_proxy import IsaacSimProxy  # type: ignore[import]
+        from vector_os_nano.core.agent import Agent  # type: ignore[import]
+        from vector_os_nano.core.config import load_config
+
+        proxy = IsaacSimProxy()
+        proxy.connect()
+
+        repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)
+        ))))
+        cfg_path = os.path.join(repo, "config", "user.yaml")
+        cfg = load_config(cfg_path) if os.path.exists(cfg_path) else {}
+        api_key = cfg.get("llm", {}).get("api_key") or os.environ.get("OPENROUTER_API_KEY", "")
+
+        agent = Agent(base=proxy, llm_api_key=api_key, config=cfg)
+
+        # Go2 skills
+        from vector_os_nano.skills.go2 import get_go2_skills  # type: ignore[import]
+        for skill in get_go2_skills():
+            agent._skill_registry.register(skill)
+
+        # VLM perception (GPT-4o via OpenRouter)
+        if api_key:
+            try:
+                from vector_os_nano.perception.vlm_go2 import Go2VLMPerception
+                agent._vlm = Go2VLMPerception(config={"api_key": api_key})
+            except Exception:
+                agent._vlm = None
+
+        # Scene graph — persistent
+        import os as _os
+        from vector_os_nano.core.scene_graph import SceneGraph
+        _persist_path = _os.path.expanduser("~/.vector_os_nano/scene_graph.yaml")
+        _os.makedirs(_os.path.dirname(_persist_path), exist_ok=True)
+        sg = SceneGraph(persist_path=_persist_path)
+        sg.load()
+        agent._spatial_memory = sg
+        proxy._scene_graph = agent._spatial_memory
+
+        return agent
+
+    @staticmethod
+    def _start_isaac_arm() -> Any:
+        """Connect to a 6-DOF arm in Isaac Sim Docker (must already be running).
+
+        Uses IsaacSimArmProxy over ROS2 topics. Isaac Sim must be running
+        before calling this method.
+        """
+        from vector_os_nano.hardware.sim.isaac_sim_arm_proxy import IsaacSimArmProxy  # type: ignore[import]
+        from vector_os_nano.core.agent import Agent  # type: ignore[import]
+
+        arm = IsaacSimArmProxy()
+        arm.connect()
+        return Agent(arm=arm)
 
     def check_permissions(
         self, params: dict[str, Any], context: ToolContext

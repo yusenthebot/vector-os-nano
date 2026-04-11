@@ -22,6 +22,8 @@ class Go2ROS2Proxy:
                 /camera/image (Image) for VLM perception
     """
 
+    _NODE_NAME: str = "go2_agent_proxy"
+
     def __init__(self) -> None:
         self._node: Any = None
         self._cmd_pub: Any = None
@@ -52,7 +54,7 @@ class Go2ROS2Proxy:
             if not rclpy.ok():
                 rclpy.init()
 
-            self._node = Node("go2_agent_proxy")
+            self._node = Node(self._NODE_NAME)
 
             reliable_qos = QoSProfile(
                 reliability=ReliabilityPolicy.RELIABLE,
@@ -314,6 +316,10 @@ class Go2ROS2Proxy:
             time.sleep(0.25)  # 4Hz — keeps _teleop_until fresh
         self.set_velocity(0.0, 0.0, 0.0)
         return True
+
+    def stop(self) -> None:
+        """Emergency stop — immediately halt all motion."""
+        self.set_velocity(0.0, 0.0, 0.0)
 
     def stand(self, duration: float = 1.0) -> None:
         """Stop motion and hold position for *duration* seconds."""
