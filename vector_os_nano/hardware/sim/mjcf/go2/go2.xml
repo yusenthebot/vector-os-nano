@@ -75,11 +75,18 @@
       <geom size="0.05 0.045" pos="0.285 0 0.01" type="cylinder" class="collision" />
       <geom size="0.047" pos="0.293 0 -0.06" class="collision" />
       <site name="imu" pos="-0.02557 0 0.04232" />
-      <!-- RealSense D435 mounted on Go2 head, looking forward (+X in body) -->
-      <!-- D435 body: 90x25x25mm. pos: 0.3m forward, 0.05m up from CoM -->
-      <!-- xyaxes: X_cam=body_-Y (right in image), Y_cam=body_+Z (up in image) -->
-      <!-- This makes camera look along body +X with slight -5deg downward tilt -->
-      <body name="d435_camera" pos="0.30 0.0 0.05" euler="-5 0 0">
+
+      <!-- Livox MID-360 LiDAR — shoulder-mounted, behind head, 20 deg forward tilt -->
+      <!-- Real mounting: on bracket behind head, x=0.15 z=0.10 from trunk CoM -->
+      <body name="mid360_lidar" pos="0.15 0.0 0.10" euler="-20 0 0">
+        <geom type="cylinder" size="0.05 0.03" rgba="0.2 0.2 0.2 1" mass="0.265"
+              contype="0" conaffinity="0" />
+        <site name="mid360_site" pos="0 0 0.03" />
+      </body>
+
+      <!-- RealSense D435 — in front of MID-360, on head area, 5 deg downward tilt -->
+      <!-- Real mounting: forward of lidar, x=0.27 z=0.08 from trunk CoM -->
+      <body name="d435_camera" pos="0.27 0.0 0.08" euler="-5 0 0">
         <geom type="box" size="0.045 0.0125 0.0125" rgba="0.15 0.15 0.15 1" mass="0.072"
               contype="0" conaffinity="0" />
         <geom type="cylinder" size="0.008 0.005" pos="0.02 0.0 0.0" euler="0 90 0"

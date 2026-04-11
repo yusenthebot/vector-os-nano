@@ -8,7 +8,7 @@ Supported simulations:
   go2   — Unitree Go2 quadruped (MuJoCoGo2 / IsaacSimProxy / GazeboGo2Proxy)
 
 Supported backends:
-  gazebo — Gz Sim Harmonic (default, ROS2-native)
+  mujoco — MuJoCo (default, physics + textured rendering)
   mujoco — MuJoCo 3.x (lightweight fallback)
   gazebo — Gz Sim Harmonic (ROS2-native, open-source)
 """
@@ -33,7 +33,7 @@ from vector_os_nano.vcli.tools.base import (
 class SimStartTool:
     """Start a simulation and register its skills into the tool registry.
 
-    Backends: gazebo (default, ROS2-native), mujoco (lightweight), isaac (Docker, archived).
+    Backends: mujoco (default), gazebo (Gz Sim Harmonic), isaac (Docker, archived).
     """
 
     input_schema: dict[str, Any] = {
@@ -52,10 +52,10 @@ class SimStartTool:
             "backend": {
                 "type": "string",
                 "enum": ["isaac", "mujoco", "gazebo"],
-                "default": "gazebo",
+                "default": "mujoco",
                 "description": (
-                    "Simulation backend: 'gazebo' (Gz Sim Harmonic, default), "
-                    "'mujoco' (lightweight fallback), or 'isaac' (Docker, archived)"
+                    "Simulation backend: 'mujoco' (default, physics + textured rendering), "
+                    "'gazebo' (Gz Sim Harmonic), or 'isaac' (Docker, archived)"
                 ),
             },
         },
@@ -65,7 +65,7 @@ class SimStartTool:
     def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
         sim_type: str = params["sim_type"]
         gui: bool = params.get("gui", True)
-        backend: str = params.get("backend", "gazebo")
+        backend: str = params.get("backend", "mujoco")
         app = context.app_state
         if app is None:
             return ToolResult(content="No app state available", is_error=True)
