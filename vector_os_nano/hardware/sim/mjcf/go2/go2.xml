@@ -79,7 +79,8 @@
       <!-- Livox MID-360 LiDAR — bracket-mounted on top of body center -->
       <!-- Real photo: puck on tall bracket, body center, well above trunk top -->
       <!-- trunk top z≈0.057, bracket lifts ~8cm → sensor at z≈0.14 -->
-      <body name="mid360_lidar" pos="0.0 0.0 0.14" euler="-20 0 0">
+      <!-- 20 deg forward tilt = 0.349 rad (compiler angle="radian") -->
+      <body name="mid360_lidar" pos="0.0 0.0 0.14" euler="0 -0.349 0">
         <!-- bracket post -->
         <geom type="cylinder" size="0.012 0.04" pos="0 0 -0.04" rgba="0.4 0.4 0.4 1"
               mass="0.05" contype="0" conaffinity="0" />
@@ -91,7 +92,8 @@
 
       <!-- RealSense D435 — mounted in front of MID-360, on bracket arm -->
       <!-- Real photo: forward of lidar, lower, pointing forward -->
-      <body name="d435_camera" pos="0.12 0.0 0.10" euler="-5 0 0">
+      <!-- 5 deg downward tilt = 0.087 rad -->
+      <body name="d435_camera" pos="0.12 0.0 0.10" euler="0 -0.087 0">
         <geom type="box" size="0.045 0.0125 0.0125" rgba="0.15 0.15 0.15 1" mass="0.072"
               contype="0" conaffinity="0" />
         <geom type="cylinder" size="0.008 0.005" pos="0.02 0.0 0.0" euler="0 90 0"
