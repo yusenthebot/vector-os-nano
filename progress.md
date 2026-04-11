@@ -162,29 +162,44 @@ vector-cli → "启动仿真" → MuJoCo Go2 + 室内环境
 | RealSense D435 | trunk + (0.25, 0, 0.10)m, 下倾 5 deg | 640x480, fovy=42, RGB+Depth |
 | IMU | trunk center | quat + gyro + acc |
 
-**下一步: 增强 MuJoCo 渲染质量**
+**渲染增强 (done)**
 
-当前: cuboid 几何体 + checker 纹理 → VLM 无法识别房间
-目标: OBJ mesh 家具 + PNG 纹理 → VLM 可分辨厨房/卧室/客厅
+OBJ mesh 家具 (Kenney Furniture Kit, CC0):
+- 27 个 OBJ 模型, 按 MTL 材质拆分为 68 个子 mesh
+- 每个子 mesh 独立 rgba 颜色 (沙发红, 木纹棕, 金属银, 绿植绿...)
+- inertia="shell" 全部家具 mesh (防止薄片 mesh 报错)
+- Y-up → Z-up: euler="1.5708 0 0"
+- 碰撞体: 隐形 box (group="3"), 与视觉 mesh 分离
+
+场景优化:
+- Shadow: 2048 (10+ 灯 × shadowsize^2 = GPU 炸弹, 不能太大)
+- 相机默认: 640x480, shadow + reflection 渲染标志
+- 填充光: 4 个 bounce lights (castshadow=false) + sun 增强
+- 墙面纹理: gradient plaster, 木地板 texrepeat 10x10
+- 踢脚线 + 门框: visual-only geoms
+- GUI 追踪相机: distance=5.5, elevation=-20, 跟随机器人 XY
+
+MuJoCo 家具导入 pipeline:
+```
+OBJ+MTL → split by usemtl → sub-OBJ per material
+  → <mesh inertia="shell"> + <geom type="mesh" euler="1.5708 0 0" rgba="...">
+  → invisible collision box (group="3")
+```
+
+**下一步: OBJ mesh 家具 + PNG 纹理**
 
 MuJoCo 3.6.0 支持:
 - OBJ mesh 导入 (带 UV + 法线)
 - PNG 纹理贴图 (albedo)
 - PBR 材质 (metallic/roughness, 3.2+)
-- 阴影 (shadow resolution 4096)
-- 1920x1080 离屏渲染
 
 资源:
 - [furniture_sim](https://github.com/vikashplus/furniture_sim) — 14 件带纹理家具 (Apache 2.0)
 - Gazebo Fuel / 3DGEMS / Sketchfab — OBJ 家具模型 (转换为 MuJoCo XML)
 
-### Gazebo Harmonic — 备用 (有 bug)
+### Gazebo Harmonic — 暂停
 
-Gazebo Sim 8.10.0 已集成但 `gz_quadruped_hardware` 有 bug（controller active 但关节不动）。
-传感器链路已验证（lidar + camera + odom 全部发布），119 测试通过。
-等 gz_quadruped_hardware 修复后可重新启用。
-
-代码保留在: `gazebo/`, `scripts/launch_gazebo.sh`, `GazeboGo2Proxy`
+方向暂停，代码保留在: `gazebo/`, `scripts/launch_gazebo.sh`, `GazeboGo2Proxy`
 
 ### Isaac Sim — 归档
 
