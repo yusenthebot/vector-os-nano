@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-04-11
 **Version:** v1.7.0-dev
-**Branch:** sim-with-gazebo
+**Branch:** gazebo-better-render
 
 ## VGG: Verified Goal Graph — Complete Framework
 
@@ -144,110 +144,51 @@ ROS2 Topics → foxglove_bridge (ws://8765) → Foxglove Studio
 
 已知限制: V-Graph 线段在 Foxglove 中只能显示为散点或很细的 marker（PointCloud2 无法渲染为 LineSegments，MarkerArray 线宽由 FAR 源码决定）。MuJoCo sim 的点云密度和视觉效果不如真实 LiDAR。
 
-## Gazebo Harmonic 集成 (2026-04-11) — 主仿真后端
+## 仿真后端 (2026-04-11)
 
-Gazebo Sim 8.10.0 (Harmonic) 原生 ROS2 Jazzy，无 Docker。Go2 URDF 来自 quadruped_ros2_control (489 stars)。
+### MuJoCo — 主仿真后端 (默认)
 
-**状态: 运行中** — 3 controllers active, 传感器 topic 全部发布。
-
-```
-Host (Ubuntu 24.04 + ROS2 Jazzy)
-  vector-cli → VGG → GazeboGo2Proxy (BaseProtocol)
-       │ ROS2 topics (native, no Docker)
-  Gz Sim Harmonic (DART physics)
-    Go2 URDF (12 DOF) + unitree_guide_controller
-    MID-360 gpu_lidar + D435 RGB/Depth + IMU
-    ros_gz_bridge → ROS2 topics
-```
-
-### 架构
-
-| 组件 | 文件 | 说明 |
-|------|------|------|
-| Proxy | `vector_os_nano/hardware/sim/gazebo_go2_proxy.py` | BaseProtocol (继承 Go2ROS2Proxy) |
-| Go2 模型 | `gazebo/models/go2/` | SDF + sensors.xacro + ros2_control.yaml |
-| 传感器 | `gazebo/models/go2/sensors.xacro` | MID-360 + D435 (注入 Go2 URDF) |
-| Bridge | `gazebo/config/bridge.yaml` | ros_gz_bridge topic 映射 |
-| Launch | `gazebo/launch/go2_sim.launch.py` | Gz + spawn + bridge + controllers |
-| 世界 | `gazebo/worlds/apartment.sdf` | 5 房间公寓 + 14 家具 + 8 可抓取物体 |
-| CLI | `vector_os_nano/vcli/tools/sim_tool.py` | `backend=gazebo` |
-| 脚本 | `scripts/launch_gazebo.sh` / `stop_gazebo.sh` | 一键启动/停止 |
-| 控制器 | `~/Desktop/quadruped_ros2_control/` | unitree_guide_controller (FSM) |
-
-### 传感器配置
-
-| 传感器 | 挂载 | 参数 | 实测 |
-|--------|------|------|------|
-| Livox MID-360 | trunk + (0.15, 0, 0.15)m, -20 deg | 360x30, 0.1-12m, 10Hz | 8 Hz, 10800 pts |
-| RealSense D435 RGB | trunk + (0.27, 0, 0.12)m, +5 deg | 640x480, 30Hz | 22 Hz, rgb8 |
-| RealSense D435 Depth | co-located | 640x480, 0.3-10m | publishing |
-| IMU | trunk center | 200Hz | publishing |
-
-### 世界
-
-| 世界 | 说明 | 用途 |
-|------|------|------|
-| empty_room | 5x6m 单房间 | 快速验证 |
-| apartment | 65m2 五房间 (客厅+厨房+卧室+浴室+走廊, 14 家具, 8 可抓取物体) | 导航 + VLN |
-
-### 测试: 120 passed, 0 failed
-
-| 文件 | 数量 | 覆盖 |
-|------|------|------|
-| test_gazebo_proxy.py | 21 | Proxy identity, health check, lifecycle |
-| test_gazebo_bridge.py | 12 | YAML 有效性, topic 映射 |
-| test_gazebo_model.py | 15 | SDF 有效性, joints, sensors |
-| test_gazebo_launch.py | 16 | Launch file 结构 |
-| test_gazebo_scripts.py | 14 | Shell 脚本有效性 |
-| test_gazebo_backend.py | 6 | CLI backend 路由 |
-| test_gazebo_world.py | 23 | empty_room + apartment SDF |
-| test_gazebo_controller.py | 13 | ros2_control config |
-
-### 启动方式
+MuJoCo 3.6.0。四足步态物理验证、VGG 认知层开发。vector-cli 默认后端。
 
 ```bash
-# 依赖 (首次)
-cd ~/Desktop/quadruped_ros2_control
-colcon build --packages-up-to unitree_guide_controller --symlink-install
-
-# 启动
-source /opt/ros/jazzy/setup.bash
-source ~/Desktop/quadruped_ros2_control/install/setup.bash
-ros2 launch gazebo/launch/go2_sim.launch.py world:=apartment gui:=true
-
-# 或一键脚本
-bash scripts/launch_gazebo.sh --world apartment
-bash scripts/stop_gazebo.sh
-
-# vector-cli 连接
-vector sim start --backend gazebo
+vector-cli → "启动仿真" → MuJoCo Go2 + 室内环境
 ```
 
-### 已验证
+**传感器配置 (匹配真实 Go2 硬件)**
 
-- [x] Gz Sim 8.10.0 启动 (无 Docker)
-- [x] Go2 URDF 从 quadruped_ros2_control 加载 (12 DOF)
-- [x] unitree_guide_controller active
-- [x] joint_state_broadcaster active (887 Hz)
-- [x] imu_sensor_broadcaster active
-- [x] MID-360 gpu_lidar 发布 /registered_scan (8 Hz, 10800 pts)
-- [x] D435 RGB 发布 /camera/image (22 Hz, 640x480 rgb8)
-- [x] D435 Depth 发布 /camera/depth
-- [x] IMU 发布 /imu/data
-- [x] apartment.sdf 加载 (5 rooms, 14 furniture, 8 objects)
-- [x] gz sdf -k apartment.sdf → Valid
+| 传感器 | 挂载 | 参数 |
+|--------|------|------|
+| Livox MID-360 | trunk + (0.15, 0, 0.14)m, 前倾 20 deg | raycast lidar, 360 HFoV |
+| RealSense D435 | trunk + (0.25, 0, 0.10)m, 下倾 5 deg | 640x480, fovy=42, RGB+Depth |
+| IMU | trunk center | quat + gyro + acc |
 
-### 待完成
+**下一步: 增强 MuJoCo 渲染质量**
 
-- [ ] CLI `vector sim start --backend gazebo` 实际行走测试
-- [ ] rl_quadruped_controller 集成 (需要 libtorch 2.5.0)
-- [ ] 连接 Vector nav stack (FAR/TARE) — topic 已对齐
-- [ ] VLM 感知测试 (camera frame → room identification)
+当前: cuboid 几何体 + checker 纹理 → VLM 无法识别房间
+目标: OBJ mesh 家具 + PNG 纹理 → VLM 可分辨厨房/卧室/客厅
 
-## Isaac Sim 集成 (2026-04-10) — 已归档
+MuJoCo 3.6.0 支持:
+- OBJ mesh 导入 (带 UV + 法线)
+- PNG 纹理贴图 (albedo)
+- PBR 材质 (metallic/roughness, 3.2+)
+- 阴影 (shadow resolution 4096)
+- 1920x1080 离屏渲染
 
-归档在 `web-viz-Isaac-sim` 分支。Isaac Sim 5.1.0 Docker 可运行但 cmd_vel 链路未通。
-详见归档分支代码和 `docker/isaac-sim/`。
+资源:
+- [furniture_sim](https://github.com/vikashplus/furniture_sim) — 14 件带纹理家具 (Apache 2.0)
+- Gazebo Fuel / 3DGEMS / Sketchfab — OBJ 家具模型 (转换为 MuJoCo XML)
+
+### Gazebo Harmonic — 备用 (有 bug)
+
+Gazebo Sim 8.10.0 已集成但 `gz_quadruped_hardware` 有 bug（controller active 但关节不动）。
+传感器链路已验证（lidar + camera + odom 全部发布），119 测试通过。
+等 gz_quadruped_hardware 修复后可重新启用。
+
+代码保留在: `gazebo/`, `scripts/launch_gazebo.sh`, `GazeboGo2Proxy`
+
+### Isaac Sim — 归档
+
+归档在 `web-viz-Isaac-sim` 分支。cmd_vel 链路未通。
 
 ## FAR V-Graph 调参记录 (2026-04-09)
 
