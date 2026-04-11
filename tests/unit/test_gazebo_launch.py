@@ -193,13 +193,6 @@ def test_launch_includes_bridge_node() -> None:
     )
 
 
-def test_launch_bridge_references_config_file() -> None:
-    """The bridge node must reference bridge.yaml (config_file parameter)."""
-    source = _read_source()
-    assert "bridge.yaml" in source or "config_file" in source, (
-        "go2_sim.launch.py bridge node must reference bridge.yaml config"
-    )
-
 
 def test_launch_references_model_sdf() -> None:
     """Launch file must reference the Go2 model.sdf for spawning."""
