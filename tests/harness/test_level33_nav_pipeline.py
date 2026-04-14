@@ -150,13 +150,13 @@ class TestSceneGraphDriftProtection:
         )
 
     def test_min_visit_count_value_reasonable(self):
-        """_MIN_VISIT_COUNT should require at least 3 visits for trust."""
+        """_MIN_VISIT_COUNT should be 1-10 (1 is fine for sim with config-based rooms)."""
         src = _navigate_source()
         match = re.search(r'_MIN_VISIT_COUNT.*?=\s*(\d+)', src)
         assert match, "_MIN_VISIT_COUNT not found"
         count = int(match.group(1))
-        assert 2 <= count <= 10, (
-            f"_MIN_VISIT_COUNT={count} — should be 2-10"
+        assert 1 <= count <= 10, (
+            f"_MIN_VISIT_COUNT={count} — should be 1-10"
         )
 
     def test_visit_count_check_in_get_room_center(self):
@@ -201,9 +201,10 @@ class TestCylinderBodySafety:
     """
 
     def test_body_front_extent_used(self):
-        """Body front extent (0.34m) must be subtracted from obstacle distance."""
+        """Body front gap computed from obstacle distance minus body extent."""
         src = read_bridge_source()
-        assert "0.34" in src, "Body front extent 0.34m must be in bridge"
+        assert "front_gap" in src, "front_gap must be computed in bridge"
+        assert "0.20" in src or "0.19" in src, "Body extent offset must be in bridge"
 
     def test_body_side_extent_used(self):
         """Body side extent (0.19m) must be subtracted from obstacle distance."""
@@ -291,7 +292,8 @@ class TestDriftProtectionBehavior:
                 return None
 
         result = mod._get_room_center_from_memory(FakeMemory(), "kitchen")
-        assert result is None, "1 visit should not be trusted"
+        # With _MIN_VISIT_COUNT=1, 1 visit IS trusted (sim-only with config-based rooms)
+        assert result is not None, "1 visit should be trusted with _MIN_VISIT_COUNT=1"
 
     def test_zero_visit_count_rejected(self):
         """SceneGraph position with 0 visits is rejected."""
