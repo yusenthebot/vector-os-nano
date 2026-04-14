@@ -2,10 +2,10 @@
 
 **Verified Goal Graph (VGG) — Design Specification**
 
-版本: 0.2 (Phase 1+2 implemented)
-日期: 2026-04-08
+版本: 0.3 (Phase 1+2+3 implemented, v2.0 abort + reliability upgrades)
+日期: 2026-04-14
 作者: Vector Robotics Architect
-状态: Phase 1 + 2 实装完成，生产就绪，等待 CEO 批准测试部署
+状态: 生产就绪。全局 abort 信号、prompt caching、3-layer retry 均已实装。
 
 ---
 
