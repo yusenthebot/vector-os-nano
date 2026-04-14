@@ -1,15 +1,18 @@
 {
   "project": "v2.0-vectorengine-unification",
-  "current_phase": "spec",
+  "current_phase": "execute",
   "spec_status": "approved",
   "plan_status": "approved",
-  "tasks_status": "pending",
-  "tasks_progress": { "total": 0, "completed": 0, "in_progress": 0, "pending": 0 },
-  "test_metrics": { "total_tests": 3651, "passed": 3651, "failed": 0, "coverage_percent": 0 },
+  "tasks_status": "in_progress",
+  "tasks_progress": { "total": 15, "completed": 0, "in_progress": 0, "pending": 15 },
+  "test_metrics": { "total_tests": 3250, "passed": 3250, "failed": 0, "coverage_percent": 0 },
+  "wave": 3,
+  "wave_description": "全栈可靠性 + 可观测性 + 引擎质量",
   "history": [
-    { "timestamp": "2026-04-14T01:00:00Z", "action": "init", "agent": "architect", "details": "v1.9.0 VGG task framework overhaul — global abort, async skills, P0 stop" },
-    { "timestamp": "2026-04-14T01:00:00Z", "action": "spec_approved", "agent": "ceo", "details": "v1.9.0 approved" },
-    { "timestamp": "2026-04-14T17:00:00Z", "action": "scope_change", "agent": "architect", "details": "v1.9.0 升级为 v2.0 — 统一 VectorEngine + VGG 全面升级。删除 robo/cli/web legacy。" },
-    { "timestamp": "2026-04-14T17:00:00Z", "action": "spec_draft", "agent": "architect", "details": "v2.0 spec: 4 phases — unify MCP, abort signal, VGG upgrade, engine quality" }
+    { "timestamp": "2026-04-14T01:00:00Z", "action": "init", "agent": "architect", "details": "v1.9.0 → v2.0 scope expansion" },
+    { "timestamp": "2026-04-14T01:00:00Z", "action": "spec_approved", "agent": "ceo", "details": "v2.0 approved" },
+    { "timestamp": "2026-04-14T17:00:00Z", "action": "wave1_complete", "agent": "alpha+beta", "details": "MCP unified, 17712 lines deleted" },
+    { "timestamp": "2026-04-14T18:00:00Z", "action": "wave2_complete", "agent": "dispatcher", "details": "Abort signal, 14 tests, P0 stop <100ms" },
+    { "timestamp": "2026-04-14T19:00:00Z", "action": "wave3_start", "agent": "dispatcher", "details": "15 tasks: A1-A5 nav reliability, B1-B4 feedback, C1-C6 engine quality" }
   ]
 }
