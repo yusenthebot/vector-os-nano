@@ -31,15 +31,15 @@ far_planner:
     util/angle_noise: 15.0  # Unit: degree
     util/accept_max_align_angle: 4.0   # Unit: degree
     util/obs_inflate_size: 1
-    util/new_intensity_thred: 2.0
+    util/new_intensity_thred: 0.5
     util/terrain_free_Z: 0.15
     util/dyosb_update_thred: 4
     util/new_point_counter: 5
-    util/dynamic_obs_dacay_time: 2.0  # Unit: second
+    util/dynamic_obs_dacay_time: 999999.0  # static indoor — no decay
     util/new_points_decay_time: 1.0   # Unit: second
 
     # Dynamic Graph Params
-    graph/connect_votes_size: 10        
+    graph/connect_votes_size: 5
     graph/clear_dumper_thred: 4
     graph/node_finalize_thred: 6
     graph/filter_pool_size: 12
