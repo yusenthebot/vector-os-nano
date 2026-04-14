@@ -214,8 +214,19 @@ MuJoCo 3.6.0 支持:
 
 FAR数据层正常: `/free_paths` 18k-60k点, `/global_path` 5-58 poses。
 
+## Next: v1.9.0 — VGG Task Framework Overhaul (.sdd/spec.md)
+
+Core issue: stop can't interrupt VGG execution. `_vgg_cancel` Event exists but nothing checks it.
+
+1. **Global abort signal** (`vcli/cognitive/abort.py`) — threading.Event贯穿全栈
+2. **Stop P0 bypass** — "stop/停" 硬编码匹配，绕过LLM/VGG，<100ms
+3. **Async skill support** — GoalExecutor等explore完成再执行下一步
+4. **Abort check points** — VGGHarness、GoalExecutor、navigate_to、explore全部检查abort
+5. **Engine context** — current_room/previous_room → "这里"/"回去"
+6. **CLI streaming** — 多步任务实时进度显示
+7. **Command priority** — P0(stop) > P1(new task) > P2(query) > P3(background)
+
 ## Known Limitations
 
 - VGG complex decomposition quality depends on LLM model
-- Async skills (explore, patrol) report "launched" not "completed" in VGG
 - Real-world room detection needs SLAM + spatial understanding
