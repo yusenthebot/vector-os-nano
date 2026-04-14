@@ -1,8 +1,16 @@
-# Vector CLI — Tool Call 系统架构
+# VectorEngine — 统一执行引擎
 
 ## 概述
 
-Vector CLI 是一个 AI 驱动的机器人开发环境。用户说自然语言，AI agent 通过工具系统同时控制机器人、编辑代码、诊断问题 —— 一个 session 里完成所有事。
+VectorEngine 是 Vector OS Nano 的唯一执行引擎。v2.0 起，CLI 和 MCP 共用同一引擎：
+
+```
+vector-cli  ─┐
+             ├→ VectorEngine → VGG / tool_use → skill.execute()
+vector-os-mcp┘
+```
+
+用户说自然语言，AI agent 通过工具系统同时控制机器人、编辑代码、诊断问题 —— 一个 session 里完成所有事。
 
 ```
 用户: "探索的时候狗在转角撞墙"
