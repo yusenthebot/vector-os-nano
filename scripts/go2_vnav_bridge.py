@@ -115,12 +115,10 @@ _SENSOR_X: float = 0.3
 _SENSOR_Y: float = 0.0
 _SENSOR_Z: float = 0.2
 
-# FAR V-Graph ceiling filter: points with intensity (= height above ground_z)
-# above this threshold are classified as ceiling by FAR and block edge formation.
-# Ceiling at ~2.4m → intensity ~2.0 → FAR sees obstacle everywhere → no V-Graph edges.
-# 1.8m preserves all meaningful navigation features (walls, door frames, furniture)
-# while excluding ceiling returns that FAR interprets as obstacles.
-# Loaded from config/nav.yaml at startup; fallback keeps original behaviour.
+# Ceiling filter: points with height above ground exceeding this threshold are
+# excluded from /registered_scan. Matches FAR's vehicle_height (indoor.yaml: 1.0).
+# Debug harness (test_vgraph_debug.py) confirmed doors are CLEAR at 1.0m.
+# Loaded from config/nav.yaml at startup; fallback 1.8 keeps original behaviour.
 _CEILING_FILTER_HEIGHT: float = _nav("ceiling_filter_height", 1.8)
 
 
@@ -229,12 +227,6 @@ class Go2VNavBridge(Node):
         )
         self._pc_pub = self.create_publisher(
             PointCloud2, "/registered_scan", reliable_qos
-        )
-        self._terrain_map_pub = self.create_publisher(
-            PointCloud2, "/terrain_map", reliable_qos
-        )
-        self._terrain_map_ext_pub = self.create_publisher(
-            PointCloud2, "/terrain_map_ext", reliable_qos
         )
         self._scan_pub = self.create_publisher(
             LaserScanMsg, "/scan", reliable_qos
@@ -477,8 +469,6 @@ class Go2VNavBridge(Node):
 
         msg = self._build_terrain_pc2(self._terrain_replay_points)
         self._pc_pub.publish(msg)
-        self._terrain_map_pub.publish(msg)
-        self._terrain_map_ext_pub.publish(msg)
 
         self._terrain_replay_count += 1
         if self._terrain_replay_count == 1:
@@ -486,22 +476,6 @@ class Go2VNavBridge(Node):
                 f"Terrain replay: publishing {len(self._terrain_replay_points)} points "
                 f"({self._terrain_replay_max} frames at 5Hz)"
             )
-
-    def _publish_accumulated_terrain(self) -> None:
-        """Publish accumulated terrain directly to FAR input topics.
-
-        Bypasses terrainAnalysis's ~3.5m range filter so FAR gets full
-        terrain coverage for V-Graph building.
-        """
-        points = self._terrain_acc.to_pointcloud()
-        if not points:
-            return
-        msg = self._build_terrain_pc2(points)
-        self._terrain_map_pub.publish(msg)
-        self._terrain_map_ext_pub.publish(msg)
-        self.get_logger().info(
-            f"Terrain sync to FAR: {len(points)} points"
-        )
 
     def _joy_cb(self, msg: Joy) -> None:
         """Direct teleop: /joy axes → velocity (bypasses pathFollower).
@@ -598,7 +572,11 @@ class Go2VNavBridge(Node):
         self._tf_broadcaster.sendTransform(tv)
 
     def _publish_pointcloud(self) -> None:
-        """Publish /registered_scan (PointCloud2 in map frame)."""
+        """Publish /registered_scan (PointCloud2 in map frame, live local lidar only).
+
+        Ceiling-filtered: points above _CEILING_FILTER_HEIGHT are excluded.
+        TARE subscribes to this topic for frontier detection — must be LOCAL ONLY.
+        """
         points = self._go2.get_3d_pointcloud()
         if not points:
             return
@@ -617,6 +595,8 @@ class Go2VNavBridge(Node):
         point_step = 16
         data = bytearray()
         filtered_count = 0
+
+        # 1. Live local lidar (with ceiling filter)
         for x, y, z, _ in points:
             intensity = z - ground_z
             if intensity > _CEILING_FILTER_HEIGHT:
@@ -637,7 +617,7 @@ class Go2VNavBridge(Node):
         msg.is_dense = True
         self._pc_pub.publish(msg)
         self._diag_scan_count += 1
-        self._cached_points = points  # cache for obstacle check
+        self._cached_points = points  # cache for obstacle check (live only)
 
         # Accumulate terrain for persistence (only during active navigation)
         if self._nav_enabled:
@@ -870,8 +850,8 @@ class Go2VNavBridge(Node):
             # Skip ground points
             if z - ground_z < 0.10:
                 continue
-            # Skip high points (above robot)
-            if z - ground_z > 0.5:
+            # Skip high points (above obstacle relevance for Go2 at 0.45m standing)
+            if z - ground_z > 0.8:
                 continue
             # Transform to robot frame
             dx = x - odom.x
@@ -911,7 +891,7 @@ class Go2VNavBridge(Node):
 
         for x, y, z, _ in self._cached_points:
             dz = z - ground_z
-            if dz < 0.10 or dz > 0.5:
+            if dz < 0.10 or dz > 0.8:
                 continue
             dx = x - odom.x
             dy = y - odom.y
@@ -945,61 +925,84 @@ class Go2VNavBridge(Node):
         if time.time() < self._teleop_until:
             return
 
-        # --- Wall escape mode — two-phase: reverse first, then strafe ---
-        # Phase 1 (1s): pure reverse to clear wall contact
-        # Phase 2 (1.5s): strafe toward open side + turn away
-        # Head jammed against wall prevents lateral movement, so must back up first.
+        # --- Wall escape mode: reactive, direction-aware ---
+        # Re-scans surroundings EVERY tick to adapt to changing obstacles.
+        # Lidar is mounted -20° tilt on head (0.3m forward) — rear coverage
+        # is sparser, so back_d uses a conservative clearance threshold.
         now = time.time()
         if now < self._wall_escape_until:
-            # Wall escape — use GENTLE velocities (robot may be off-balance)
+            front_d, left_d, right_d, back_d = self._scan_surroundings()
+            # Lidar rear coverage is sparse due to -20° tilt — treat back_d
+            # as less reliable. Use conservative threshold (0.40m) vs front (0.30m).
+            back_clear = back_d > 0.40
+            left_clear = left_d > 0.25
+            right_clear = right_d > 0.25
+
             if now < self._wall_escape_phase2:
-                tgt_vx, tgt_vy, tgt_yaw = -0.3, 0.0, 0.0  # reverse at 0.3 m/s
+                # Phase 1: try to reverse — but only if back is clear
+                if back_clear:
+                    tgt_vx, tgt_vy, tgt_yaw = -0.35, 0.0, 0.0
+                else:
+                    # Back blocked — turn in place toward most open side
+                    if right_d > left_d:
+                        tgt_vx, tgt_vy, tgt_yaw = 0.0, 0.0, -0.4
+                    else:
+                        tgt_vx, tgt_vy, tgt_yaw = 0.0, 0.0, 0.4
             else:
-                front_d, left_d, right_d, back_d = self._scan_surroundings()
-                tgt_vy = 0.10 if right_d > left_d else -0.10
-                tgt_yaw = 0.3 if right_d > left_d else -0.3
-                tgt_vx, tgt_vy, tgt_yaw = -0.1, tgt_vy, tgt_yaw
-            # Smooth toward targets (reuse the same ramp logic)
-            _A = 0.03
+                # Phase 2: strafe toward open side + slight reverse
+                if right_clear and right_d > left_d:
+                    tgt_vy, tgt_yaw = 0.15, -0.35
+                elif left_clear:
+                    tgt_vy, tgt_yaw = -0.15, 0.35
+                elif right_clear:
+                    tgt_vy, tgt_yaw = 0.15, -0.35
+                else:
+                    tgt_vy = 0.0
+                    tgt_yaw = 0.4 if left_d > right_d else -0.4
+                tgt_vx = -0.10 if back_clear else 0.0
+
+            # Moderate ramp — responsive but not violent
+            _A = 0.04
             if self._pf_speed < tgt_vx: self._pf_speed = min(tgt_vx, self._pf_speed + _A)
             else: self._pf_speed = max(tgt_vx, self._pf_speed - _A)
-            if self._pf_lat < tgt_vy: self._pf_lat = min(tgt_vy, self._pf_lat + 0.01)
-            else: self._pf_lat = max(tgt_vy, self._pf_lat - 0.01)
-            if self._pf_yawrate < tgt_yaw: self._pf_yawrate = min(tgt_yaw, self._pf_yawrate + 0.04)
-            else: self._pf_yawrate = max(tgt_yaw, self._pf_yawrate - 0.04)
+            if self._pf_lat < tgt_vy: self._pf_lat = min(tgt_vy, self._pf_lat + 0.03)
+            else: self._pf_lat = max(tgt_vy, self._pf_lat - 0.03)
+            if self._pf_yawrate < tgt_yaw: self._pf_yawrate = min(tgt_yaw, self._pf_yawrate + 0.06)
+            else: self._pf_yawrate = max(tgt_yaw, self._pf_yawrate - 0.06)
             self._go2.set_velocity(self._pf_speed, self._pf_lat, self._pf_yawrate)
             self._last_cmd_time = now
             return
 
         # --- Wall contact detection (accumulate time when stuck against wall) ---
         front_d_check = self._check_front_obstacle()
-        if front_d_check < 0.25 and abs(self._pf_speed if hasattr(self, '_pf_speed') else 0.0) < 0.05:
+        cur_speed = self._pf_speed if hasattr(self, '_pf_speed') else 0.0
+        if front_d_check < 0.30 and cur_speed < 0.15:
             self._wall_contact_time += 1.0 / 20.0  # 20 Hz tick
         else:
             self._wall_contact_time = 0.0
 
-        if self._wall_contact_time > 0.5:
+        if self._wall_contact_time > 0.4:
             front_d, left_d, right_d, back_d = self._scan_surroundings()
+            self.get_logger().warn(
+                f"Wall escape triggered: F={front_d:.2f} L={left_d:.2f} "
+                f"R={right_d:.2f} B={back_d:.2f}"
+            )
             all_tight = front_d < 0.35 and left_d < 0.30 and right_d < 0.30
-            if all_tight and back_d > 0.5:
-                # Boxed in with only rear open — sustained reverse (3s)
-                self.get_logger().warn(
-                    f"Boxed in: F={front_d:.2f} L={left_d:.2f} R={right_d:.2f} B={back_d:.2f} "
-                    f"— sustained reverse 3s"
-                )
-                self._wall_escape_phase2 = now + 3.0  # pure reverse for 3s
-                self._wall_escape_until = now + 3.0    # no strafe phase
-            else:
-                open_side = "right" if right_d > left_d else "left"
-                self.get_logger().warn(
-                    f"Wall escape: reverse 1s then strafe {open_side}, front_d={front_d_check:.2f}"
-                )
-                self._wall_escape_phase2 = now + 1.0
+            if all_tight and back_d > 0.40:
+                # Boxed in with only rear open — sustained reverse
+                self._wall_escape_phase2 = now + 3.0
+                self._wall_escape_until = now + 3.0
+            elif back_d > 0.40:
+                # Front blocked, back clear — reverse then strafe
+                self._wall_escape_phase2 = now + 0.8
                 self._wall_escape_until = now + 2.5
+            else:
+                # Front AND back blocked — turn in place to find opening
+                self._wall_escape_phase2 = now  # skip reverse, go straight to strafe/turn
+                self._wall_escape_until = now + 2.0
             self._wall_contact_time = 0.0
             self._current_path = []
             self._stuck_count = 0
-            # Don't return — fall through to smoother below
 
         if not hasattr(self, '_pf_speed'):
             self._pf_speed = 0.0       # current forward speed
@@ -1138,13 +1141,26 @@ class Go2VNavBridge(Node):
         if end_dis < _STOP_DIS or path_size <= 1:
             target_speed = 0.0
 
+        # --- Narrow passage detection ---
+        # When both sides are tight but front is clear, robot is in a doorway
+        # or corridor. Reduce yaw aggressiveness to prevent spinning.
+        _in_narrow = left_gap < 0.20 and right_gap < 0.20 and front_gap > 0.15
+        if _in_narrow:
+            _eff_yaw_gain_turn = 3.0    # half normal — gentler turning in tight space
+            _eff_track_thre = 1.30      # 75° — stay in TRACK mode longer near doors
+            _eff_track_resume = 0.40    # 23° — need tighter alignment before resuming
+        else:
+            _eff_yaw_gain_turn = _YAW_GAIN_TURN   # 6.0
+            _eff_track_thre = _TRACK_THRE          # 60°
+            _eff_track_resume = _TRACK_RESUME      # 30°
+
         # --- Two-mode controller ---
         # Mode transition with hysteresis (prevents oscillation at boundary)
         if self._pf_turning:
-            if abs_err < _TRACK_RESUME:
+            if abs_err < _eff_track_resume:
                 self._pf_turning = False  # heading aligned → resume tracking
         else:
-            if abs_err > _TRACK_THRE:
+            if abs_err > _eff_track_thre:
                 self._pf_turning = True   # heading way off → stop and turn
 
         if end_dis <= _STOP_DIS:
@@ -1154,23 +1170,25 @@ class Go2VNavBridge(Node):
             vyaw = _YAW_GAIN_TRACK * dir_diff
 
         elif self._pf_turning:
-            # MODE 2: TURN — heading error > 60°
-            # If target nearly behind (>120°): reverse toward it instead of spinning
+            # MODE 2: TURN — heading error large
             if abs_err > 2.1:  # >120° — target is behind
                 vx = -0.15     # reverse toward target
                 vy = 0.0
-                vyaw = _YAW_GAIN_TURN * dir_diff * 0.5  # gentler yaw while reversing
+                vyaw = _eff_yaw_gain_turn * dir_diff * 0.5
+            elif _in_narrow:
+                # In doorway/corridor: keep moving forward while turning
+                # to avoid spinning in place
+                vx = 0.15
+                vy = 0.0
+                vyaw = _eff_yaw_gain_turn * dir_diff
             else:
                 vx = 0.05      # minimal forward creep for gait engagement
                 vy = 0.0
-                vyaw = _YAW_GAIN_TURN * dir_diff
+                vyaw = _eff_yaw_gain_turn * dir_diff
 
         else:
-            # MODE 1: TRACKING — heading error < 60°
-            # Reduce speed at larger heading errors — turn first, then accelerate.
-            # cos(err) already reduces vx, but we also slow overall speed
-            # to prevent high-speed turns (centripetal force → tip over).
-            err_scale = max(0.4, math.cos(abs_err))  # 1.0 at 0°, 0.5 at 60°
+            # MODE 1: TRACKING — heading error small
+            err_scale = max(0.4, math.cos(abs_err))
             track_speed = target_speed * err_scale
             vx = track_speed * math.cos(dir_diff)
             vy = -track_speed * math.sin(dir_diff)
@@ -1342,26 +1360,29 @@ class Go2VNavBridge(Node):
                     f"Stuck 4s at ({odom.x:.1f},{odom.y:.1f}) — "
                     f"sent /reset_waypoint to TARE"
                 )
-            elif self._stuck_count == 2:  # 4s — sustained escape maneuver
+            elif self._stuck_count == 2:  # 4s — direction-aware escape
                 now = time.time()
                 front_d, left_d, right_d, back_d = self._scan_surroundings()
+                _escape_dur = _nav("wall_escape_duration", 2.5)
+                self.get_logger().warn(
+                    f"Stuck 8s: F={front_d:.2f} L={left_d:.2f} "
+                    f"R={right_d:.2f} B={back_d:.2f}"
+                )
                 all_tight = front_d < 0.35 and left_d < 0.30 and right_d < 0.30
-                if all_tight and back_d > 0.5:
-                    # Boxed in — sustained reverse is the only way out
-                    self.get_logger().warn(
-                        f"Stuck 8s boxed: F={front_d:.2f} L={left_d:.2f} "
-                        f"R={right_d:.2f} B={back_d:.2f} — reverse 4s"
-                    )
+                # Conservative rear threshold — lidar rear coverage sparse at -20° tilt
+                back_clear = back_d > 0.40
+                if all_tight and back_clear:
+                    # Boxed in — sustained reverse
                     self._wall_escape_phase2 = now + 4.0
-                    self._wall_escape_until = now + 4.0  # pure reverse, no strafe
+                    self._wall_escape_until = now + 4.0
+                elif back_clear:
+                    # Front blocked, back clear — reverse then strafe
+                    self._wall_escape_phase2 = now + 0.8
+                    self._wall_escape_until = now + _escape_dur
                 else:
-                    open_side = "right" if right_d > left_d else "left"
-                    _escape_dur = _nav("wall_escape_duration", 2.5)
-                    self.get_logger().warn(
-                        f"Stuck 8s — escape: reverse 1s + strafe {open_side}"
-                    )
-                    self._wall_escape_phase2 = now + 1.0   # 1s reverse
-                    self._wall_escape_until = now + _escape_dur  # strafe until end
+                    # Front AND back blocked — turn in place
+                    self._wall_escape_phase2 = now
+                    self._wall_escape_until = now + _escape_dur
                 self._current_path = []
                 self._stuck_count = 0
                 self._stuck_wall_clock = 0.0
@@ -1395,16 +1416,9 @@ class Go2VNavBridge(Node):
         return ok
 
     def _auto_save_terrain(self) -> None:
-        """Auto-save terrain every 30s when nav is active and terrain has data.
-
-        Every other save (60s interval), also publishes accumulated terrain
-        directly to FAR's input topics, bypassing terrainAnalysis's range filter.
-        """
+        """Auto-save terrain every 30s when nav is active and terrain has data."""
         if self._nav_enabled and self._terrain_acc.size > 0:
             self.save_terrain()
-            self._terrain_save_count = getattr(self, '_terrain_save_count', 0) + 1
-            if self._terrain_save_count % 2 == 0:
-                self._publish_accumulated_terrain()
 
     def _publish_scene_graph_markers(self) -> None:
         """Publish scene graph visualization as MarkerArray (1 Hz)."""

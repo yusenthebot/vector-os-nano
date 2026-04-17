@@ -667,7 +667,10 @@ class NavigateSkill:
                     flush=True,
                 )
 
-            ok = base.navigate_to(
+            # Use go_to_waypoint (simple /way_point) to avoid recursive
+            # navigate_to → FAR probe → door-chain → navigate_to cascade.
+            _go_fn = getattr(base, "go_to_waypoint", None) or base.navigate_to
+            ok = _go_fn(
                 float(wx), float(wy),
                 timeout=per_wp,
                 on_progress=_progress,

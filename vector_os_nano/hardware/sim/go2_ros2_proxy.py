@@ -218,13 +218,14 @@ class Go2ROS2Proxy:
             pass
 
     def _waypoint_cb(self, msg: Any) -> None:
-        """Record timestamp when FAR publishes a /way_point.
+        """Record timestamp and position when FAR publishes a /way_point.
 
         This is the ONLY reliable signal that FAR has a routing graph and is
         actively routing to our /goal_point. localPlanner's /path is unreliable
         because it publishes even without a valid goal from FAR.
         """
         self._last_waypoint_time = time.time()
+        self._last_waypoint_pos = (msg.point.x, msg.point.y)
 
     # ------------------------------------------------------------------
     # State accessors
@@ -534,10 +535,12 @@ class Go2ROS2Proxy:
             if elapsed - _last_diag >= 5.0:
                 _last_diag = elapsed
                 wp_age = time.time() - self._last_waypoint_time if self._last_waypoint_time > 0 else -1
+                wp_pos = getattr(self, "_last_waypoint_pos", None)
+                wp_str = f"wp=({wp_pos[0]:.1f},{wp_pos[1]:.1f})" if wp_pos else "wp=?"
                 logger.info(
                     "[NAV] t=%.0fs pos=(%.1f,%.1f) goal=(%.1f,%.1f) "
-                    "dist=%.1fm waypoint_age=%.1fs",
-                    elapsed, pos[0], pos[1], x, y, dist, wp_age,
+                    "dist=%.1fm %s age=%.1fs",
+                    elapsed, pos[0], pos[1], x, y, dist, wp_str, wp_age,
                 )
 
             if dist < _ARRIVAL_DIST:
@@ -568,6 +571,86 @@ class Go2ROS2Proxy:
             self._waypoint_pub.publish(msg)
         except Exception as exc:
             logger.warning("[NAV] Failed to publish waypoint: %s", exc)
+
+    def go_to_waypoint(
+        self,
+        x: float,
+        y: float,
+        timeout: float = 30.0,
+        on_progress: Callable[[float, float], None] | None = None,
+    ) -> bool:
+        """Navigate to (x, y) by publishing /way_point directly to localPlanner.
+
+        Unlike navigate_to(), this does NOT probe FAR and does NOT fall back
+        to door-chain.  It simply publishes /way_point at 2 Hz and waits for
+        localPlanner + path follower to reach the goal.
+
+        Used by dead_reckoning (NavigateSkill) to avoid recursive cascades
+        where navigate_to → door-chain → navigate_to → door-chain → ...
+
+        Returns True when within arrival radius, False on timeout or stall.
+        """
+        if self._node is None:
+            return False
+
+        _ARRIVAL = _nav("arrival_radius", 0.8)
+        _STALL_LIMIT = _nav("stall_timeout", 30.0)
+
+        start = time.time()
+        deadline = start + timeout
+        last_dist = float("inf")
+        stall_time = 0.0
+        last_progress_time = start
+
+        logger.info("[NAV] go_to_waypoint(%.1f, %.1f) timeout=%.0fs", x, y, timeout)
+
+        while time.time() < deadline:
+            # Cancel check
+            if not os.path.exists("/tmp/vector_nav_active"):
+                self.set_velocity(0.0, 0.0, 0.0)
+                return False
+
+            # Abort check
+            try:
+                from vector_os_nano.vcli.cognitive.abort import is_abort_requested
+                if is_abort_requested():
+                    return False
+            except ImportError:
+                pass
+
+            self._publish_waypoint(x, y)
+            time.sleep(0.5)
+
+            pos = self.get_position()
+            dist = math.sqrt((pos[0] - x) ** 2 + (pos[1] - y) ** 2)
+
+            # Progress callback
+            now = time.time()
+            if on_progress is not None and now - last_progress_time >= 2.0:
+                last_progress_time = now
+                on_progress(dist, now - start)
+
+            # Arrival check
+            if dist < _ARRIVAL:
+                logger.info("[NAV] go_to_waypoint arrived (dist=%.1fm)", dist)
+                return True
+
+            # Stall detection — no recursive fallback, just return False
+            if dist < last_dist - 0.1:
+                stall_time = 0.0
+            else:
+                stall_time += 0.5
+            last_dist = dist
+
+            if stall_time >= _STALL_LIMIT:
+                logger.warning(
+                    "[NAV] go_to_waypoint stalled %.0fs at dist=%.1fm",
+                    stall_time, dist,
+                )
+                return False
+
+        logger.warning("[NAV] go_to_waypoint timeout after %.0fs", timeout)
+        return False
 
     def _navigate_via_doors(
         self, x: float, y: float, timeout: float,
@@ -608,30 +691,23 @@ class Go2ROS2Proxy:
             src_room, dst_room, len(chain),
         )
 
-        deadline = time.time() + timeout
-        _SEGMENT_ARRIVAL = 1.5  # meters
+        start = time.time()
+        deadline = start + timeout
 
-        for wx, wy, label in chain:
-            logger.info("[NAV] Door-chain -> %s (%.1f, %.1f)", label, wx, wy)
+        for i, (wx, wy, label) in enumerate(chain):
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                logger.warning("[NAV] Door-chain global timeout")
+                return False
+            n_remaining = len(chain) - i
+            per_wp = max(remaining / n_remaining, 5.0)
 
-            while time.time() < deadline:
-                if not os.path.exists("/tmp/vector_nav_active"):
-                    logger.info("[NAV] Door-chain cancelled by stop")
-                    self._nav_goal = None
-                    self.set_velocity(0.0, 0.0, 0.0)
-                    return False
+            logger.info("[NAV] Door-chain -> %s (%.1f, %.1f) budget=%.0fs",
+                        label, wx, wy, per_wp)
 
-                self._publish_waypoint(wx, wy)
-                time.sleep(0.5)
-
-                pos = self.get_position()
-                dist = math.sqrt((pos[0] - wx) ** 2 + (pos[1] - wy) ** 2)
-
-                if dist < _SEGMENT_ARRIVAL:
-                    logger.info("[NAV] Reached %s (dist=%.1fm)", label, dist)
-                    break
-            else:
-                logger.warning("[NAV] Door-chain timeout at %s", label)
+            ok = self.go_to_waypoint(wx, wy, timeout=per_wp)
+            if not ok:
+                logger.warning("[NAV] Door-chain: failed to reach %s", label)
                 return False
 
         # Final arrival check

@@ -1,8 +1,42 @@
 # Vector OS Nano SDK — Progress
 
-**Last updated:** 2026-04-14
+**Last updated:** 2026-04-16
 **Version:** v2.0-dev (branch: feat/v2.0-vectorengine-unification)
 **Base:** v1.8.0
+
+## v2.0.1 V-Graph 跨房间修复 — 完成 (2026-04-16)
+
+### 问题
+FAR V-Graph 一直是空的（0 nodes），探索时机器人只能用慢 fallback 的 door-chain。
+
+### Phase A（SDD）
+- Bridge 删除重复的 `/terrain_map` 发布（-55 行），恢复 single-publisher
+- 3 个 launch 脚本加上 Go2 terrain_analysis 参数（maxRelZ=1.5 等）
+- 22 个新 test，1 个删除，54 个 stale 测试清理
+
+### Phase B（根因定位）
+核心 bug 在 FAR（vector_navigation_stack fork）：
+- `indoor.yaml` 里 `vehicle_height: 1.0` 被误解为"障碍物 1m 以下截止"
+- 实际是 **robot base_link 离地面高度**（Go2 ≈ 0.28m）
+- `TraversableAnalysis` 找不到 `robot.z - vh ≈ -0.72m` 的地面 → kdtree 清空 → `ObsNeighborCloudWithTerrain` 把 2205 cells 砍到 8 cells → `GetSurroundObsCloud` 返回 0 点
+
+**修复（vector_navigation_stack）**:
+- `far_planner/config/indoor.yaml`: `vehicle_height: 1.0 → 0.3`
+- `far_planner/include/far_planner/contour_detector.h`: `SaveCurrentImg` 里段错误的 `RCLCPP_WARN(nh_->...)` 换成 `std::cout`（nh_ 从未初始化，是 upstream latent bug）
+
+### 验证
+| 指标 | 修前 | 修后 |
+|---|---|---|
+| /FAR_obs_debug | 0 pts | 4800+ pts |
+| global_vertex | 0 | 75 |
+| visibility_edge | 0 | 131 |
+| 跨房间边 | 无 | 有（如 kitchen↔living 门经过 hallway） |
+
+### 文档
+- `.sdd/DEBUG.md` — 完整 OBSERVE/HYPOTHESIZE/EXPERIMENT/CONCLUDE 记录
+- `~/.claude/skills/learned/far-vgraph-pipeline.md` — 可复用模式
+
+---
 
 ## v2.0 架构统一 — Wave 1-3 完成
 
@@ -181,8 +215,62 @@ vector-cli → "启动仿真" → MuJoCo Go2 + 室内环境
 
 归档在 `web-viz-Isaac-sim` 分支。
 
+## V-Graph Debug — 2026-04-15
+
+### Harness 创建
+
+`tests/harness/test_vgraph_debug.py` — headless MuJoCo 激光雷达分析门口可见性。
+
+### 结论：地形数据没问题
+
+5/6 门在 ceiling_filter=1.0m 下完全畅通（0个障碍物在可见性射线上）。
+只有 kitchen_study 被家具阻挡。
+
+之前以为需要全局地形合并到 /registered_scan — **不需要**。
+
+### 根因缩小到 FAR 内部
+
+- **H_A**: FAR 需要 5 次连续投票确认边（`connect_votes_size=5`）。穿门时间不够积累。
+- **H_B**: `IsInDirectConstraint` 检查节点法线方向，门附近的节点可能法线朝墙内。
+- 下一步：开启 FAR debug 日志 (`is_debug_output: true`)，观察穿门时哪个条件失败。
+
+### 测试修复
+
+- 修了 5 个 test_level12_tare_chain.py 的测试（`_start_tare` mock 错误）
+- 3267 tests, 0 collection errors
+
+## V-Graph Phase B — 2026-04-16 (BLOCKED)
+
+### Phase A DONE（未 commit）
+
+SDD 走完 spec→plan→task→execute。修 R1 + R2：
+- bridge 删 55 行（移除 `/terrain_map` 双发布冲突）
+- 3 launch 脚本加 `--ros-args -p maxRelZ:=1.5 …`（同 `launch_explore.sh`）
+- 54 个 pre-existing stale 测试清理（Alpha 10 files + Beta 5 files + Gamma 1 file + dispatcher 2 files）
+- production fixes: `vcli/engine.py` vgg_execute clear_abort、`scene_graph_viz.py` _build_object_markers、`skills/go2/look.py` objects 管道
+- **harness: 1349 passed / 0 real failures**（41 bulk = MuJoCo pollution）
+
+### Phase B BLOCKED — V-Graph 不建图
+
+**核心谜团**：`/terrain_map_ext` 有 15k obstacle，`/FAR_free_debug` 25k，但 `/FAR_obs_debug` 一直 0-143 点。free 路径 OK，**obs 路径断**。
+
+contour_detector 图像（`/tmp/far_contour_imgs/0.tiff`）全黑 → findContours 0 个 → 0 nodes。
+
+**试过失败的 FAR yaml 调参**：`is_static_env=true`、`dyosb_update_thred=10000`、`decay=1.0`、`obs_inflate_size=3`、`filter_count_value=2`。全部无进展甚至更糟。
+
+### 下 session 方向
+
+停止瞎调参。需要 C++ printf debug：
+1. `map_handler.cpp::UpdateObsCloudGrid` 加 log 确认 grid 是否真填充
+2. `temp_obs_ptr_` 在 `ExtractFreeAndObsCloud` 后的 size
+3. `neighbor_obs_indices_` 的 size
+4. `map_handler::is_init_` 状态
+
+config 现状：`is_debug_output: true`, `c_detector/is_save_img: true` 开着，其他 baseline。
+
 ## Known Limitations
 
 - VGG complex decomposition quality depends on LLM model
 - Real-world room detection needs SLAM + spatial understanding
 - C4 session 智能压缩尚未实现（低优先级，可后续迭代）
+- **V-Graph 未建图** — Phase B 待解

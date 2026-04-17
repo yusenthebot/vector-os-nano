@@ -74,29 +74,44 @@ _PERCEPTION_JUDGMENT_PHRASES: tuple[str, ...] = (
     "check if", "see if",
 )
 
-# Action verbs — if 2+ distinct verbs present, task is multi-action → complex
-_ACTION_VERBS: frozenset[str] = frozenset({
-    "结束", "停止", "开始", "去", "到", "看", "找", "检查",
-    "巡逻", "探索", "导航", "走", "站", "坐", "拿", "放",
-    "stop", "start", "go", "check", "find", "patrol", "explore",
-    "navigate", "look", "pick", "place", "scan",
-})
+# Action verb groups — synonyms within a group count as ONE action.
+# If 2+ distinct GROUPS are present, task is multi-action → complex.
+_ACTION_VERB_GROUPS: list[tuple[str, frozenset[str]]] = [
+    ("navigate", frozenset({"去", "到", "导航", "走到", "去到", "go", "navigate"})),
+    ("move", frozenset({"走", "前进", "walk"})),
+    ("look", frozenset({"看", "观察", "look", "scan"})),
+    ("find", frozenset({"找", "检查", "check", "find"})),
+    ("explore", frozenset({"探索", "explore"})),
+    ("patrol", frozenset({"巡逻", "patrol"})),
+    ("pick", frozenset({"拿", "抓", "pick"})),
+    ("place", frozenset({"放", "place"})),
+    ("stop", frozenset({"停止", "结束", "stop"})),
+    ("start", frozenset({"开始", "start"})),
+    ("stance", frozenset({"站", "坐", "stand", "sit"})),
+]
+
+# Flat set of all action verbs (for should_use_vgg single-verb check)
+_ACTION_VERBS: frozenset[str] = frozenset(
+    verb for _, group in _ACTION_VERB_GROUPS for verb in group
+)
 
 
 def _has_multiple_actions(msg: str) -> bool:
-    """Return True if message contains 2+ distinct action verbs."""
+    """Return True if message contains 2+ distinct action verb groups."""
     import re
-    found: set[str] = set()
+    matched_groups: set[str] = set()
     msg_lower = msg.lower()
-    for verb in _ACTION_VERBS:
-        if verb in msg_lower:
-            if verb.isascii():
-                # English: word boundary to avoid "go" in "go2sim"
-                if re.search(r'\b' + re.escape(verb) + r'\b', msg_lower):
-                    found.add(verb)
-            else:
-                found.add(verb)
-        if len(found) >= 2:
+    for group_name, verbs in _ACTION_VERB_GROUPS:
+        for verb in verbs:
+            if verb in msg_lower:
+                if verb.isascii():
+                    if re.search(r'\b' + re.escape(verb) + r'\b', msg_lower):
+                        matched_groups.add(group_name)
+                        break
+                else:
+                    matched_groups.add(group_name)
+                    break
+        if len(matched_groups) >= 2:
             return True
     return False
 

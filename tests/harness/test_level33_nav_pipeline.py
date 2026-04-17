@@ -96,14 +96,20 @@ class TestPhase2NoDirectWaypoint:
     """
 
     def test_phase2_publishes_goal_point(self):
-        """Phase 2 loop must publish /goal_point."""
+        """Phase 2 loop must publish /goal_point.
+
+        _publish_goal_point is called at 2 Hz inside the Phase 2 while loop.
+        The loop body is ~1600 chars from the Phase 2 comment due to cancel/abort
+        checks before the actual publish call. Use 2000 chars window.
+        """
         src = _proxy_source()
         # Find the actual Phase 2 code block (after the docstring)
         phase2_comment = src.find("# Phase 2: full navigation")
         if phase2_comment < 0:
             phase2_comment = src.find("Phase 2")
         assert phase2_comment > 0, "Phase 2 section not found"
-        phase2 = src[phase2_comment:phase2_comment + 1200]
+        # Use 2000 chars to cover cancel/abort/stall checks before the publish call
+        phase2 = src[phase2_comment:phase2_comment + 2000]
         assert "_publish_goal_point" in phase2
 
     def test_phase2_no_direct_waypoint(self):

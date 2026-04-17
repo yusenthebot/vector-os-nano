@@ -42,3 +42,4 @@ oauth_credentials.json
 .webui_secret_key
 CLAUDE.md
 lib/
+MUJOCO_LOG.TXT

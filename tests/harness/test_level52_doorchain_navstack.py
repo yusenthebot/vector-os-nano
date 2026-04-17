@@ -75,11 +75,12 @@ def _make_base_with_navigate_to(
     x: float = 3.0, y: float = 2.5, z: float = 0.3,
     navigate_to_result: bool = True,
 ) -> MagicMock:
-    """Mock base WITH navigate_to — triggers Mode 0 (proxy) path."""
+    """Mock base WITH navigate_to + go_to_waypoint — triggers Mode 0 (proxy) path."""
     base = MagicMock()
     base.get_position.return_value = [x, y, z]
     base.get_heading.return_value = 0.0
     base.navigate_to.return_value = navigate_to_result
+    base.go_to_waypoint.return_value = navigate_to_result
     base.walk.return_value = None
     return base
 
@@ -156,23 +157,22 @@ class TestDoorChainSourceAudit:
 
 
 class TestDoorChainCallsNavigateTo:
-    """Verify that in Mode 0+fallback path, navigate_to is called for each waypoint."""
+    """Verify that in Mode 0+fallback path, go_to_waypoint is called for each waypoint."""
 
     def test_doorchain_calls_navigate_to_for_each_waypoint(self) -> None:
-        """_dead_reckoning calls base.navigate_to once per door-chain waypoint."""
+        """_dead_reckoning calls base.go_to_waypoint once per door-chain waypoint."""
         sg = _make_sg_with_doors()
         # Position robot at living_room
         base = _make_base_with_navigate_to(x=3.0, y=2.5)
-        # navigate_to returns True (arrived), but we test _dead_reckoning directly
-        base.navigate_to.return_value = True
+        base.go_to_waypoint.return_value = True
         ctx = _make_ctx(base, sg)
 
         skill = NavigateSkill()
         result = skill._dead_reckoning("kitchen", ctx)
 
-        # Should have called base.navigate_to at least once (one door + room center)
-        assert base.navigate_to.call_count >= 1, (
-            f"Expected base.navigate_to() to be called, got {base.navigate_to.call_count} calls"
+        # Should have called base.go_to_waypoint at least once (one door + room center)
+        assert base.go_to_waypoint.call_count >= 1, (
+            f"Expected base.go_to_waypoint() to be called, got {base.go_to_waypoint.call_count} calls"
         )
 
     def test_doorchain_does_not_call_walk(self) -> None:
@@ -192,19 +192,19 @@ class TestDoorChainCallsNavigateTo:
         )
 
     def test_doorchain_multi_hop_calls_navigate_to_multiple_times(self) -> None:
-        """Multi-hop door chain calls navigate_to at least twice (one per door)."""
+        """Multi-hop door chain calls go_to_waypoint at least twice (one per door)."""
         sg = _make_sg_multi_hop()
         base = _make_base_with_navigate_to(x=3.0, y=2.5)
-        base.navigate_to.return_value = True
+        base.go_to_waypoint.return_value = True
         ctx = _make_ctx(base, sg)
 
         skill = NavigateSkill()
         skill._dead_reckoning("kitchen", ctx)
 
-        # Two doors: living_room->hallway, hallway->kitchen — at least 2 navigate_to calls
-        assert base.navigate_to.call_count >= 2, (
-            f"Multi-hop door-chain expected >=2 navigate_to calls, "
-            f"got {base.navigate_to.call_count}"
+        # Two doors: living_room->hallway, hallway->kitchen — at least 2 go_to_waypoint calls
+        assert base.go_to_waypoint.call_count >= 2, (
+            f"Multi-hop door-chain expected >=2 go_to_waypoint calls, "
+            f"got {base.go_to_waypoint.call_count}"
         )
 
     def test_doorchain_returns_success_when_navigate_to_succeeds(self) -> None:
@@ -221,11 +221,11 @@ class TestDoorChainCallsNavigateTo:
         assert result.result_data is not None
 
     def test_doorchain_returns_failure_when_navigate_to_fails(self) -> None:
-        """_dead_reckoning returns failure when navigate_to times out on a waypoint."""
+        """_dead_reckoning returns failure when go_to_waypoint times out on a waypoint."""
         sg = _make_sg_with_doors()
         base = _make_base_with_navigate_to(x=3.0, y=2.5)
-        # navigate_to fails (returns False = timeout)
-        base.navigate_to.return_value = False
+        # go_to_waypoint fails (returns False = timeout)
+        base.go_to_waypoint.return_value = False
         ctx = _make_ctx(base, sg)
 
         skill = NavigateSkill()

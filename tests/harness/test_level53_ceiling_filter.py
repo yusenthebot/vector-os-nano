@@ -63,6 +63,58 @@ def _get_build_terrain_pc2_src(src: str) -> str:
 # Test 1: _CEILING_FILTER_HEIGHT constant exists and is reasonable
 # ===================================================================
 
+def _get_ceiling_filter_height() -> float:
+    """Return the runtime value of _CEILING_FILTER_HEIGHT from the bridge module.
+
+    After the nav.yaml refactor, _CEILING_FILTER_HEIGHT is assigned via
+    _nav("ceiling_filter_height", 1.8) rather than a numeric literal.
+    We import the module to get the actual resolved value.
+    """
+    import importlib.util
+    import sys
+    spec = importlib.util.spec_from_file_location("_bridge_tmp", str(_BRIDGE))
+    # The bridge imports ROS2 packages — mock them so we can import the module.
+    _ros_mocks = [
+        "rclpy", "rclpy.node", "rclpy.qos", "rclpy.executors",
+        "geometry_msgs", "geometry_msgs.msg",
+        "nav_msgs", "nav_msgs.msg",
+        "sensor_msgs", "sensor_msgs.msg",
+        "std_msgs", "std_msgs.msg",
+        "tf2_ros",
+        "visualization_msgs", "visualization_msgs.msg",
+        "unitree_go", "unitree_go.msg",
+        "unitree_go2_ros2_interfaces", "unitree_go2_ros2_interfaces.msg",
+        "sensor_msgs.msg",
+        "std_srvs", "std_srvs.srv",
+        "point_cloud2", "sensor_msgs.point_cloud2",
+    ]
+    import types
+    for name in _ros_mocks:
+        if name not in sys.modules:
+            sys.modules[name] = types.ModuleType(name)
+
+    # Read the constant via source regex since the bridge has complex ROS2 deps
+    src = _read_bridge()
+    # Accept both: literal assignment AND _nav() call
+    # Pattern 1 (legacy): _CEILING_FILTER_HEIGHT: float = 1.8
+    m_literal = re.search(
+        r"^_CEILING_FILTER_HEIGHT\s*(?::\s*float\s*)?=\s*([0-9]+(?:\.[0-9]*)?)",
+        src, re.MULTILINE,
+    )
+    if m_literal:
+        return float(m_literal.group(1))
+    # Pattern 2 (current): _CEILING_FILTER_HEIGHT: float = _nav("ceiling_filter_height", 1.8)
+    m_nav = re.search(
+        r'^_CEILING_FILTER_HEIGHT\s*(?::\s*float\s*)?=\s*_nav\s*\([^,]+,\s*([0-9]+(?:\.[0-9]*)?)\)',
+        src, re.MULTILINE,
+    )
+    if m_nav:
+        return float(m_nav.group(1))
+    raise AssertionError(
+        "_CEILING_FILTER_HEIGHT not found as literal or _nav() call at module level"
+    )
+
+
 class TestCeilingFilterConstant:
 
     def test_ceiling_filter_height_constant_exists(self):
@@ -73,29 +125,23 @@ class TestCeilingFilterConstant:
         )
 
     def test_ceiling_filter_height_is_float_literal(self):
-        """_CEILING_FILTER_HEIGHT must be a float assigned at module level."""
+        """_CEILING_FILTER_HEIGHT must be assigned at module level (literal or _nav() call)."""
         src = _read_bridge()
-        # Match module-level assignment: _CEILING_FILTER_HEIGHT: float = <number>
-        # or _CEILING_FILTER_HEIGHT = <number>
+        # Accept both: numeric literal OR _nav() pattern (after nav.yaml refactor)
         m = re.search(
-            r"^_CEILING_FILTER_HEIGHT\s*(?::\s*float\s*)?=\s*([0-9]+(?:\.[0-9]*)?)",
+            r"^_CEILING_FILTER_HEIGHT\s*(?::\s*float\s*)?=\s*"
+            r"(?:[0-9]+(?:\.[0-9]*)?|_nav\s*\()",
             src,
             re.MULTILINE,
         )
         assert m is not None, (
-            "_CEILING_FILTER_HEIGHT must be assigned a numeric literal at module level"
+            "_CEILING_FILTER_HEIGHT must be assigned at module level "
+            "(numeric literal or _nav() call)"
         )
 
     def test_ceiling_filter_height_value_reasonable(self):
         """_CEILING_FILTER_HEIGHT must be between 1.0 and 2.5 for indoor use."""
-        src = _read_bridge()
-        m = re.search(
-            r"^_CEILING_FILTER_HEIGHT\s*(?::\s*float\s*)?=\s*([0-9]+(?:\.[0-9]*)?)",
-            src,
-            re.MULTILINE,
-        )
-        assert m is not None
-        value = float(m.group(1))
+        value = _get_ceiling_filter_height()
         assert 1.0 <= value <= 2.5, (
             f"_CEILING_FILTER_HEIGHT={value} is outside reasonable indoor range [1.0, 2.5]"
         )
@@ -137,12 +183,23 @@ class TestPublishPointcloudCeilingFilter:
         )
 
     def test_ceiling_filter_has_continue_or_skip(self):
-        """Filter must skip ceiling points (continue statement in loop)."""
+        """Filter must skip ceiling points (continue statement in loop).
+
+        The _publish_pointcloud docstring also contains _CEILING_FILTER_HEIGHT,
+        so we search for the SECOND occurrence (the actual comparison) and look
+        for 'continue' within 200 chars of that.
+        """
         src = _read_bridge()
         body = _get_publish_pointcloud_src(src)
-        # Find the region around the ceiling filter
-        filter_pos = body.find("_CEILING_FILTER_HEIGHT")
-        # Look for 'continue' within 200 chars after the filter condition
+        # Find the second occurrence: docstring has it first, comparison is second
+        first = body.find("_CEILING_FILTER_HEIGHT")
+        assert first != -1, "_CEILING_FILTER_HEIGHT not in _publish_pointcloud"
+        second = body.find("_CEILING_FILTER_HEIGHT", first + 1)
+        if second == -1:
+            # Only one occurrence — use it (future-proof if docstring is removed)
+            filter_pos = first
+        else:
+            filter_pos = second
         snippet = body[filter_pos: filter_pos + 200]
         assert "continue" in snippet, (
             "Ceiling filter must use 'continue' to skip ceiling points"
@@ -267,14 +324,7 @@ class TestConceptualRanges:
 
     def test_ceiling_filter_above_max_wall_height(self):
         """Filter threshold must be above typical max wall feature height (1.5m)."""
-        src = _read_bridge()
-        m = re.search(
-            r"^_CEILING_FILTER_HEIGHT\s*(?::\s*float\s*)?=\s*([0-9]+(?:\.[0-9]*)?)",
-            src,
-            re.MULTILINE,
-        )
-        assert m is not None
-        value = float(m.group(1))
+        value = _get_ceiling_filter_height()
         assert value > 1.5, (
             f"_CEILING_FILTER_HEIGHT={value} would filter wall features up to 1.5m — "
             "threshold must be above 1.5m"
@@ -282,32 +332,19 @@ class TestConceptualRanges:
 
     def test_ceiling_filter_below_typical_ceiling(self):
         """Filter threshold must be below typical indoor ceiling height (2.4m)."""
-        src = _read_bridge()
-        m = re.search(
-            r"^_CEILING_FILTER_HEIGHT\s*(?::\s*float\s*)?=\s*([0-9]+(?:\.[0-9]*)?)",
-            src,
-            re.MULTILINE,
-        )
-        assert m is not None
-        value = float(m.group(1))
+        value = _get_ceiling_filter_height()
         assert value < 2.4, (
             f"_CEILING_FILTER_HEIGHT={value} is >= typical ceiling height (2.4m); "
             "ceiling points would not be filtered"
         )
 
     def test_ceiling_filter_preserves_door_tops(self):
-        """Filter threshold must be above door top height (2.0m)."""
-        src = _read_bridge()
-        m = re.search(
-            r"^_CEILING_FILTER_HEIGHT\s*(?::\s*float\s*)?=\s*([0-9]+(?:\.[0-9]*)?)",
-            src,
-            re.MULTILINE,
-        )
-        # Note: this checks the constant exists; if value >= 2.0 doors are preserved
-        # If value < 2.0, door tops would be lost — warn but pass conservatively at 1.8
-        # Per spec: 1.8 is the chosen threshold (walls < 1.8m for Go2 navigation)
-        assert m is not None
-        value = float(m.group(1))
+        """Filter threshold must be >= 1.5m to preserve navigation features.
+
+        Per spec: 1.8m is the chosen threshold (walls < 1.8m for Go2 navigation).
+        Tall doors are 2.0m but Go2 cannot traverse them anyway.
+        """
+        value = _get_ceiling_filter_height()
         # 1.8m is acceptable — tall doors are 2.0m but Go2 cannot traverse them anyway
         assert value >= 1.5, (
             f"_CEILING_FILTER_HEIGHT={value} too low — would filter important navigation features"

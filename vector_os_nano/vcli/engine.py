@@ -405,6 +405,15 @@ class VectorEngine:
 
         Returns None when VGG is not ready (no agent/base connected).
         """
+        # Clear abort flag at the start of every new VGG task.
+        # Without this, a prior "stop" command leaves the flag set and
+        # all subsequent VGG tasks are immediately aborted.
+        try:
+            from vector_os_nano.vcli.cognitive.abort import clear_abort
+            clear_abort()
+        except ImportError:
+            pass
+
         if not self._vgg_enabled:
             return None
         if self._intent_router is None:
@@ -448,8 +457,17 @@ class VectorEngine:
         skill_name = match.skill_name
         extracted = match.extracted_arg or ""
 
-        # Build verify expression based on skill type
-        verify = self._verify_for_skill(skill_name, extracted)
+        # Resolve room alias to canonical ID (e.g. "客房" → "guest_bedroom")
+        # so verify expressions and params use the same IDs as SceneGraph.
+        resolved_room = ""
+        if skill_name == "navigate" and extracted:
+            resolved_room = self._resolve_room_alias(extracted)
+            if not resolved_room:
+                return None  # unknown room — let LLM handle
+
+        # Build verify expression using resolved canonical ID
+        verify_arg = resolved_room if resolved_room else extracted
+        verify = self._verify_for_skill(skill_name, verify_arg)
 
         # Build strategy params — extract from user message text
         params: dict = {}
@@ -468,7 +486,9 @@ class VectorEngine:
             if speed > 0:
                 params["speed"] = speed
         if "room" in skill_params:
-            if extracted:
+            if skill_name == "navigate" and resolved_room:
+                params["room"] = resolved_room
+            elif extracted:
                 params["room"] = extracted
             elif skill_name == "navigate":
                 # Navigate without room → skip fast path, let LLM handle
@@ -507,8 +527,29 @@ class VectorEngine:
         template = _VERIFY_MAP.get(skill_name, "True")
         return template.replace("{arg}", arg) if "{arg}" in template else template
 
+    def _resolve_room_alias(self, room_input: str) -> str:
+        """Resolve a room name/alias to canonical SceneGraph ID.
+
+        Uses NavigateSkill's alias table + SceneGraph fuzzy match.
+        Returns empty string if unresolvable.
+        """
+        try:
+            from vector_os_nano.skills.navigate import _resolve_room
+        except ImportError:
+            return ""
+        agent = getattr(self, "_vgg_agent", None)
+        sg = getattr(agent, "_spatial_memory", None) if agent else None
+        return _resolve_room(room_input, sg=sg) or ""
+
     def vgg_execute(self, goal_tree: "GoalTree") -> "ExecutionTrace":
         """Execute GoalTree with feedback harness (retry + re-plan on failure)."""
+        # Clear abort flag before every execute. Direct callers (e.g. tests) that
+        # skip vgg_decompose() would otherwise inherit a stale abort from a prior stop.
+        try:
+            from vector_os_nano.vcli.cognitive.abort import clear_abort
+            clear_abort()
+        except ImportError:
+            pass
         if hasattr(self, "_vgg_harness") and self._vgg_harness is not None:
             world_context = self._build_world_context()
             return self._vgg_harness.run(
@@ -526,6 +567,9 @@ class VectorEngine:
     ) -> None:
         """Execute GoalTree in background thread. CLI remains responsive.
 
+        Uses VGGHarness (with retry logic) when available, otherwise falls
+        back to raw GoalExecutor.
+
         Args:
             goal_tree: The goal tree to execute.
             on_complete: Called when execution finishes (in background thread).
@@ -536,9 +580,7 @@ class VectorEngine:
 
         def _run() -> None:
             try:
-                trace = self._goal_executor.execute(
-                    goal_tree, on_step=self._on_vgg_step,
-                )
+                trace = self.vgg_execute(goal_tree)
                 if on_complete:
                     on_complete(trace)
             except Exception as exc:  # noqa: BLE001

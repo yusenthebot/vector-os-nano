@@ -99,7 +99,7 @@ class GoalExecutor:
             try:
                 from vector_os_nano.vcli.cognitive.abort import is_abort_requested
                 if is_abort_requested():
-                    steps.append(StepRecord(
+                    abort_step = StepRecord(
                         sub_goal_name=sub_goal.name,
                         strategy="",
                         success=False,
@@ -107,7 +107,13 @@ class GoalExecutor:
                         duration_sec=0.0,
                         error="aborted",
                         fallback_used=False,
-                    ))
+                    )
+                    steps.append(abort_step)
+                    if on_step is not None:
+                        try:
+                            on_step(abort_step)
+                        except Exception:
+                            pass
                     overall_success = False
                     break
             except ImportError:
