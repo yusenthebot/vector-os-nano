@@ -507,7 +507,10 @@ class Go2VNavBridge(Node):
     def _cmd_vel_cb(self, msg: Twist) -> None:
         self._go2.set_velocity(msg.linear.x, msg.linear.y, msg.angular.z)
         self._last_cmd_time = time.time()
+        # Skill-level velocity command — protect from path-follower override
+        # for 0.5s. Go2ROS2Proxy.walk() republishes at 4Hz to keep this fresh.
         self._teleop_until = time.time() + 0.5
+        # Clear any stale path so follow_path doesn't resume after teleop
         self._current_path = []
 
     def _publish_odom(self) -> None:
@@ -923,6 +926,12 @@ class Go2VNavBridge(Node):
         4. Applies reactive wall avoidance overlay from cached pointcloud
         """
         if time.time() < self._teleop_until:
+            return
+        # Skill-level override: walk/turn/etc. acquires exclusive control via
+        # go2._skill_ctrl_until so our 20 Hz loop doesn't clobber its
+        # set_velocity call. Poll each tick and yield while active.
+        _skill_until = getattr(self._go2, "_skill_ctrl_until", 0.0)
+        if time.time() < _skill_until:
             return
 
         # --- Wall escape mode: reactive, direction-aware ---

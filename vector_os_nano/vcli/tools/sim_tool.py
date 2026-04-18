@@ -58,6 +58,18 @@ class SimStartTool:
                     "'gazebo' (Gz Sim Harmonic), or 'isaac' (Docker, archived)"
                 ),
             },
+            "with_arm": {
+                "type": "boolean",
+                "description": (
+                    "ONLY for sim_type='go2'. True = mount Piper 6-DoF arm on "
+                    "Go2's back (enables pick/place; forces sinusoidal gait "
+                    "because convex_mpc is 12-DoF-only). False = pure Go2 "
+                    "(smoother MPC gait, no manipulation). BEFORE calling this "
+                    "tool, ASK the user which mode they want — both have real "
+                    "tradeoffs. If the user gives an ambiguous command like "
+                    "'go2sim' or '启动仿真', ask before calling."
+                ),
+            },
         },
         "required": ["sim_type"],
     }
@@ -66,6 +78,7 @@ class SimStartTool:
         sim_type: str = params["sim_type"]
         gui: bool = params.get("gui", True)
         backend: str = params.get("backend", "mujoco")
+        with_arm: bool = bool(params.get("with_arm", False))
         app = context.app_state
         if app is None:
             return ToolResult(content="No app state available", is_error=True)
@@ -101,7 +114,7 @@ class SimStartTool:
                 if sim_type == "arm":
                     agent = self._start_arm(gui=gui)
                 elif sim_type == "go2":
-                    agent = self._start_go2(gui=gui)
+                    agent = self._start_go2(gui=gui, with_arm=with_arm)
                 else:
                     return ToolResult(content=f"Unknown sim type: {sim_type}", is_error=True)
         except Exception as exc:
@@ -148,6 +161,54 @@ class SimStartTool:
         )
 
     @staticmethod
+    def _shutdown_agent(agent: Any) -> str:
+        """Tear down a running sim agent: kill subprocesses, disconnect hardware.
+
+        Returns a short human-readable summary of what was stopped.
+        """
+        import os
+        import signal
+        parts: list[str] = []
+        base = getattr(agent, "_base", None)
+        arm = getattr(agent, "_arm", None)
+
+        # Go2: kill launched subprocess group (nav stack + bridge + MuJoCo)
+        if base is not None:
+            proc = getattr(base, "_sim_subprocess", None)
+            if proc is not None and proc.poll() is None:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                    proc.wait(timeout=5)
+                    parts.append("sim subprocess stopped")
+                except Exception:
+                    try:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                        parts.append("sim subprocess force-killed")
+                    except Exception as exc:
+                        parts.append(f"subprocess kill failed: {exc}")
+            log_fh = getattr(base, "_sim_log_fh", None)
+            if log_fh is not None:
+                try:
+                    log_fh.close()
+                except Exception:
+                    pass
+            try:
+                base.disconnect()
+                parts.append(f"{type(base).__name__} disconnected")
+            except Exception:
+                pass
+
+        # Arm-only sims have no subprocess, just disconnect
+        if arm is not None:
+            try:
+                arm.disconnect()
+                parts.append(f"{type(arm).__name__} disconnected")
+            except Exception:
+                pass
+
+        return "; ".join(parts) or "nothing to stop"
+
+    @staticmethod
     def _start_arm(gui: bool = True) -> Any:
         from vector_os_nano.core.agent import Agent  # type: ignore[import]
         from vector_os_nano.hardware.sim.mujoco_arm import MuJoCoArm  # type: ignore[import]
@@ -156,7 +217,7 @@ class SimStartTool:
         return Agent(arm=arm)
 
     @staticmethod
-    def _start_go2(gui: bool = True) -> Any:
+    def _start_go2(gui: bool = True, with_arm: bool = False) -> Any:
         import os
         import signal
         import subprocess
@@ -177,11 +238,18 @@ class SimStartTool:
         vnav_script = os.path.join(repo, "scripts", "launch_explore.sh")
         gui_flag = [] if gui else ["--no-gui"]
 
+        # Propagate mode to the sim subprocess via environment variable.
+        # MuJoCoGo2._build_room_scene_xml reads VECTOR_SIM_WITH_ARM to pick
+        # the scene (go2_piper vs bare go2). Subprocess inherits os.environ.
+        child_env = os.environ.copy()
+        child_env["VECTOR_SIM_WITH_ARM"] = "1" if with_arm else "0"
+
         log_fh = open("/tmp/vector_vnav.log", "w")
         vnav_proc = subprocess.Popen(
             ["bash", vnav_script] + gui_flag,
             stdout=log_fh, stderr=subprocess.STDOUT,
             preexec_fn=os.setsid,
+            env=child_env,
         )
 
         def _cleanup():
@@ -204,6 +272,10 @@ class SimStartTool:
         from vector_os_nano.hardware.sim.go2_ros2_proxy import Go2ROS2Proxy
         base = Go2ROS2Proxy()
         base.connect()
+        # Stash subprocess handles on the base so SimStopTool can clean up
+        # mid-session without waiting for atexit.
+        base._sim_subprocess = vnav_proc  # type: ignore[attr-defined]
+        base._sim_log_fh = log_fh         # type: ignore[attr-defined]
 
         pos = base.get_position()
         if pos == (0.0, 0.0, 0.28):
@@ -413,3 +485,71 @@ class SimStartTool:
         self, params: dict[str, Any], context: ToolContext
     ) -> PermissionResult:
         return PermissionResult(behavior="allow", reason="Simulation startup")
+
+
+@tool(
+    name="stop_simulation",
+    description=(
+        "Stop a currently running robot simulation. Kills the MuJoCo + ROS2 "
+        "bridge + nav stack subprocess, disconnects hardware, unregisters Go2 "
+        "skills from the tool set. Call this when the user says '关闭仿真' / "
+        "'stop sim' / 'shutdown simulation' etc."
+    ),
+    read_only=False,
+    permission="ask",
+)
+class SimStopTool:
+    """Stop the running simulation and clear the agent's hardware."""
+
+    input_schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {},
+    }
+
+    def execute(self, params: dict[str, Any], context: ToolContext) -> ToolResult:
+        app = context.app_state
+        if app is None:
+            return ToolResult(content="No app state available", is_error=True)
+
+        agent = app.get("agent")
+        if agent is None:
+            return ToolResult(content="No simulation is running.")
+
+        # Tear down hardware and subprocesses
+        summary = SimStartTool._shutdown_agent(agent)
+
+        # Unregister all go2/arm skill tools so the LLM stops offering them
+        registry = app.get("registry")
+        skills_dropped = 0
+        if registry is not None and hasattr(registry, "list_tools"):
+            for tool_name in list(registry.list_tools()):
+                t = registry.get(tool_name)
+                if t is not None and getattr(t, "_is_skill_wrapper", False):
+                    try:
+                        registry.unregister(tool_name)
+                        skills_dropped += 1
+                    except Exception:
+                        pass
+
+        # Clear app state references
+        app["agent"] = None
+        app["scene_graph"] = None
+        app["skill_registry"] = None
+
+        # Rebuild system prompt without hardware context
+        engine = app.get("engine")
+        if engine is not None:
+            try:
+                from vector_os_nano.vcli.prompt import build_system_prompt
+                engine._system_prompt = build_system_prompt(agent=None, cwd=context.cwd)
+            except Exception:
+                pass
+
+        return ToolResult(
+            content=f"Simulation stopped. {summary}. Dropped {skills_dropped} skill tools."
+        )
+
+    def check_permissions(
+        self, params: dict[str, Any], context: ToolContext
+    ) -> PermissionResult:
+        return PermissionResult(behavior="allow", reason="Simulation shutdown")

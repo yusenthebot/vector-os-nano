@@ -55,6 +55,7 @@ def _get_mujoco() -> Any:
 
 _MJCF_DIR: Path = Path(__file__).parent / "mjcf" / "go2"
 _ROOM_XML: Path = Path(__file__).parent / "go2_room.xml"
+_GO2_PIPER_XML: Path = Path(__file__).parent / "mjcf" / "go2_piper" / "go2_piper.xml"
 
 # ---------------------------------------------------------------------------
 # Constants — postures
@@ -63,6 +64,16 @@ _ROOM_XML: Path = Path(__file__).parent / "go2_room.xml"
 _STAND_JOINTS: list[float] = [0.0, 0.9, -1.8] * 4
 _SIT_JOINTS: list[float] = [0.0, 1.5, -2.5] * 4
 _LIE_DOWN_JOINTS: list[float] = [0.0, 2.0, -2.7] * 4
+
+# Piper stow pose — URDF zero configuration (all joints at 0).
+# joint2 range=(0, 3.14) and joint3 range=(-2.697, 0) both sit at a limit,
+# which is intentional: the URDF was designed so all-zeros is the canonical
+# "initial" / "calibration" pose. Position actuators (kp=80, kv=5) with
+# gravcomp=1 hold it to <0.3 deg drift per 2s — verified headless.
+# Ordering: joint1..joint6 then finger joint7 (joint8 coupled via equality).
+# Only applied when the loaded model has the Piper arm (nq >= 27).
+_PIPER_STOW_QPOS: list[float] = [0.0] * 8
+_PIPER_STOW_CTRL: list[float] = [0.0] * 7
 
 # ---------------------------------------------------------------------------
 # Constants — PD control
@@ -225,20 +236,37 @@ def _build_flat_scene_xml() -> Path:
     return out
 
 
-def _build_room_scene_xml() -> Path:
+def _build_room_scene_xml(with_arm: bool | None = None) -> Path:
     """Build composite room scene using local MJCF files.
 
-    Resolves the go2_room.xml template with paths to the local go2.xml
-    and assets directory (no convex_mpc dependency).
+    Resolves the go2_room.xml template with paths to the Go2 model (with
+    optional Piper arm mounted on the back) and assets directory.
+
+    Args:
+        with_arm: True = Go2 + Piper arm. False = bare Go2 (no
+            manipulation). Both modes run the MPC gait — _mj_update_pin
+            slices legs out of the extended qpos so PinGo2Model stays
+            happy with its fixed 12-DoF Pinocchio URDF.
+            None (default) = read VECTOR_SIM_WITH_ARM env var ("1" → True,
+            otherwise False). Lets sim_tool pass the user's choice into
+            the MuJoCo subprocess without editing launch_explore.sh.
     """
-    go2_xml = _MJCF_DIR / "go2.xml"
+    import os
+    if with_arm is None:
+        with_arm = os.environ.get("VECTOR_SIM_WITH_ARM", "0") == "1"
+    if with_arm and _GO2_PIPER_XML.exists():
+        go2_xml = _GO2_PIPER_XML
+        scene_name = "scene_room_piper.xml"
+    else:
+        go2_xml = _MJCF_DIR / "go2.xml"
+        scene_name = "scene_room.xml"
     assets_dir = _MJCF_DIR / "assets"
 
     template = _ROOM_XML.read_text()
     xml = template.replace("GO2_MODEL_PATH", str(go2_xml))
     xml = xml.replace("GO2_ASSETS_DIR", str(assets_dir))
 
-    out = _MJCF_DIR / "scene_room.xml"
+    out = _MJCF_DIR / scene_name
     out.write_text(xml)
     return out
 
@@ -356,6 +384,17 @@ class MuJoCoGo2:
         self._last_pointcloud: list = []
         self._scan_counter: int = 0
 
+        # Skill-level exclusive control gate. walk()/turn() set this
+        # to acquire control for the duration of a motion. During that
+        # window, set_velocity() rejects writes from any thread OTHER
+        # than the one holding the token — which blocks the 20 Hz bridge
+        # path-follower loop (running on the rclpy spin thread) from
+        # clobbering skill commands. The skill's own set_velocity() calls
+        # pass through because they run on the same thread that acquired
+        # the token (tid match).
+        self._skill_ctrl_until: float = 0.0
+        self._skill_ctrl_tid: int = 0
+
     # ------------------------------------------------------------------
     # Capability properties (BaseProtocol)
     # ------------------------------------------------------------------
@@ -392,6 +431,13 @@ class MuJoCoGo2:
             data.qpos[2] = 0.35
             # Set standing joint angles
             data.qpos[7:19] = _STAND_JOINTS
+            # If Piper arm is mounted (nq=27 vs 19), stow it folded upright;
+            # otherwise joint2 defaults to 0 and the arm extends horizontally,
+            # shifting 1.2kg of link6+ mass forward and tipping the dog.
+            if model.nq >= 27:
+                data.qpos[19:27] = _PIPER_STOW_QPOS
+            if model.nu >= 19:
+                data.ctrl[12:19] = _PIPER_STOW_CTRL
         else:
             scene_path = _build_flat_scene_xml()
             model = mj.MjModel.from_xml_path(str(scene_path))
@@ -510,13 +556,25 @@ class MuJoCoGo2:
     # ------------------------------------------------------------------
 
     def _init_mpc_stack(self) -> None:
-        """Initialize convex_mpc control stack. Raises ImportError if unavailable."""
+        """Initialize convex_mpc control stack. Raises ImportError if unavailable.
+
+        Pinocchio is allowed to have *fewer* DoFs than MuJoCo — when an arm
+        is mounted (Go2+Piper, MuJoCo nq=27 vs PinGo2 nq=19), _mj_update_pin
+        slices the leg portion out of qpos/qvel. Only the reverse is an
+        unrecoverable mismatch.
+        """
         from convex_mpc.go2_robot_data import PinGo2Model  # noqa: PLC0415
         from convex_mpc.gait import Gait                   # noqa: PLC0415
         from convex_mpc.com_trajectory import ComTraj       # noqa: PLC0415
         from convex_mpc.leg_controller import LegController # noqa: PLC0415
 
         self._pin = PinGo2Model()
+        if self._pin.model.nq > self._mj.model.nq:
+            raise RuntimeError(
+                f"MPC backend incompatible with scene: "
+                f"Pinocchio nq={self._pin.model.nq} > MuJoCo nq={self._mj.model.nq}. "
+                f"Loaded MJCF is missing DoFs the Pinocchio model requires."
+            )
         self._gait = Gait(_MPC_GAIT_HZ, _MPC_GAIT_DUTY)
         self._traj = ComTraj(self._pin)
         self._mpc = None  # lazy — first locomotion call
@@ -694,6 +752,11 @@ class MuJoCoGo2:
         Converts MuJoCo (wxyz quaternion, world-frame linear vel) to
         Pinocchio (xyzw quaternion, body-frame linear vel) and runs
         the full set of Pinocchio computations the MPC solver needs.
+
+        When MuJoCo carries extra DoFs beyond the PinGo2 model (e.g. a
+        mounted Piper arm adds 8 DoFs), the leg segment is sliced out —
+        MuJoCo qpos layout is [base(7), legs(12), arm(...)], which matches
+        the Pinocchio URDF exactly for the first 19 entries.
         """
         mujoco_q = np.asarray(self._mj.data.qpos, dtype=float).reshape(-1)
         mujoco_dq = np.asarray(self._mj.data.qvel, dtype=float).reshape(-1)
@@ -705,8 +768,10 @@ class MuJoCoGo2:
         v_body = R.T @ mujoco_dq[0:3]
         w_body = mujoco_dq[3:6]
 
-        q_pin = np.concatenate([mujoco_q[0:3], [qx, qy, qz, qw], mujoco_q[7:]])
-        dq_pin = np.concatenate([v_body, w_body, mujoco_dq[6:]])
+        n_leg_q = self._pin.model.nq - 7   # legs-only qpos count (12 for Go2)
+        n_leg_v = self._pin.model.nv - 6   # legs-only qvel count (12 for Go2)
+        q_pin = np.concatenate([mujoco_q[0:3], [qx, qy, qz, qw], mujoco_q[7:7 + n_leg_q]])
+        dq_pin = np.concatenate([v_body, w_body, mujoco_dq[6:6 + n_leg_v]])
 
         self._pin.update_model(q_pin, dq_pin)
 
@@ -715,8 +780,18 @@ class MuJoCoGo2:
     # ------------------------------------------------------------------
 
     def set_velocity(self, vx: float, vy: float, vyaw: float) -> None:
-        """Set target body velocity. Non-blocking."""
+        """Set target body velocity. Non-blocking.
+
+        Skill-exclusive gate: if a skill holds the control token
+        (self._skill_ctrl_until in the future), calls from OTHER threads
+        are silently ignored — this blocks the bridge path-follower /
+        /cmd_vel_nav callback / safety-check from overriding a walk()
+        or turn() in progress. The token holder (same thread) passes.
+        """
         self._require_connection()
+        if (time.time() < self._skill_ctrl_until
+                and threading.get_ident() != self._skill_ctrl_tid):
+            return
         with self._cmd_lock:
             self._cmd_vel = (
                 float(np.clip(vx, -_VX_MAX, _VX_MAX)),
@@ -745,8 +820,14 @@ class MuJoCoGo2:
         data.qpos[2] = 0.35                    # standing height
         data.qpos[3:7] = [1, 0, 0, 0]          # upright quaternion (w,x,y,z)
         data.qpos[7:19] = _STAND_JOINTS         # standing joint angles
+        # If Piper arm is mounted, set it to the stow pose too (nq=27 vs 19)
+        if self._mj.model.nq >= 27:
+            data.qpos[19:27] = _PIPER_STOW_QPOS
         data.qvel[:] = 0                         # zero all velocities
         data.ctrl[:] = 0                         # zero all actuators
+        # Likewise drive Piper position actuators to stow (nu=19 vs 12)
+        if self._mj.model.nu >= 19:
+            data.ctrl[12:19] = _PIPER_STOW_CTRL
         mj.mj_forward(self._mj.model, data)
 
     def get_position(self) -> list[float]:
@@ -1108,13 +1189,22 @@ class MuJoCoGo2:
 
         The robot should be standing before calling (call stand() first).
 
+        Acquires skill-level control authority for `duration + 0.3s` so a
+        concurrently running bridge path-follower yields. Released on exit.
+
         Returns:
             True if completed without falling over.
         """
         self._require_connection()
-        self.set_velocity(vx, vy, vyaw)
-        time.sleep(duration)
-        self.set_velocity(0.0, 0.0, 0.0)
-        time.sleep(0.2)  # settle
-        pos = self.get_position()
-        return bool(pos[2] > 0.15)
+        self._skill_ctrl_tid = threading.get_ident()
+        self._skill_ctrl_until = time.time() + duration + 0.3
+        try:
+            self.set_velocity(vx, vy, vyaw)
+            time.sleep(duration)
+            self.set_velocity(0.0, 0.0, 0.0)
+            time.sleep(0.2)  # settle
+            pos = self.get_position()
+            return bool(pos[2] > 0.15)
+        finally:
+            self._skill_ctrl_until = 0.0
+            self._skill_ctrl_tid = 0

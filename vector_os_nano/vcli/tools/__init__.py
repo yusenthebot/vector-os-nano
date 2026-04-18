@@ -34,7 +34,7 @@ def discover_all_tools() -> list:
     from vector_os_nano.vcli.tools.file_tools import FileEditTool, FileReadTool, FileWriteTool
     from vector_os_nano.vcli.tools.robot import RobotStatusTool, WorldQueryTool
     from vector_os_nano.vcli.tools.search_tools import GlobTool, GrepTool
-    from vector_os_nano.vcli.tools.sim_tool import SimStartTool
+    from vector_os_nano.vcli.tools.sim_tool import SimStartTool, SimStopTool
     from vector_os_nano.vcli.tools.web_tool import WebFetchTool
     from vector_os_nano.vcli.tools.scene_graph_tool import SceneGraphQueryTool
     from vector_os_nano.vcli.tools.ros2_tools import Ros2TopicsTool, Ros2NodesTool, Ros2LogTool
@@ -53,6 +53,7 @@ def discover_all_tools() -> list:
         WorldQueryTool(),
         RobotStatusTool(),
         SimStartTool(),
+        SimStopTool(),
         WebFetchTool(),
         # New Wave 1-2 tools
         SceneGraphQueryTool(),
@@ -71,7 +72,7 @@ _TOOL_CATEGORIES: dict[str, list[str]] = {
     "code": ["file_read", "file_write", "file_edit", "bash", "glob", "grep"],
     "robot": ["world_query", "scene_graph_query"],
     "diag": ["ros2_topics", "ros2_nodes", "ros2_log", "nav_state", "terrain_status"],
-    "system": ["robot_status", "start_simulation", "web_fetch", "skill_reload", "open_foxglove"],
+    "system": ["robot_status", "start_simulation", "stop_simulation", "web_fetch", "skill_reload", "open_foxglove"],
 }
 
 

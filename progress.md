@@ -1,8 +1,63 @@
 # Vector OS Nano SDK — Progress
 
-**Last updated:** 2026-04-16
+**Last updated:** 2026-04-17
 **Version:** v2.0-dev (branch: feat/v2.0-vectorengine-unification)
 **Base:** v1.8.0
+
+## v2.1 Phase A —— Piper 手臂挂载 + 双模式仿真 (2026-04-17)
+
+### 目标
+把 AgileX Piper 6-DoF 机械臂装到 Go2 背上（仿真），为后续 manipulation 准备基础。
+
+### 资产
+- 资产来源：MuJoCo Menagerie 官方 `agilex_piper` (MJCF + meshes + LICENSE)
+- 拷贝到 `vector_os_nano/hardware/sim/mjcf/piper/`
+- 合成工具：`mjcf/go2_piper/build_go2_piper.py` 用 MuJoCo 3.6 `MjSpec.attach()`
+- 挂载位置：`pos=(-0.02, 0, 0.06)` — Go2 trunk 顶面居中，雷达后方 15cm
+- Piper body 全部加前缀 `piper_` 避免和 Go2 命名冲突
+- Default class 自动 scope 到 `piper_main / piper_visual / piper_collision`
+- 生成的合成 model：`go2_piper.xml`，29 bodies / 21 joints / 19 actuators
+
+### 双模式（用户启动时选择）
+- **no-arm** (默认): `scene_room.xml`, nq=19, convex_mpc gait （更流畅）
+- **with-arm**: `scene_room_piper.xml`, nq=27, sinusoidal gait（convex_mpc PinGo2Model 是 12-DoF 固定，不兼容 nq=27）
+- `sim_tool` input_schema 加 `with_arm` 参数，description 要求 LLM 启动前询问用户
+- `VECTOR_SIM_WITH_ARM` 环境变量从 vector-cli 传到 subprocess
+- `_build_room_scene_xml(with_arm=None)` 自动读 env var
+
+### Debug 过程 (`.sdd/DEBUG.md`)
+按 Hypothesis Loop 四轮：
+1. **H1 假设：bridge `_cmd_vel_cb` 不刷新 `_teleop_until`** → 看 git diff 发现本来就有，否证
+2. **H2 假设：bridge `_follow_path` 20Hz override set_velocity** → 加 thread-ID gate，独立测试通过，但 Yusen 真机仍不走
+3. **H3 盲点：Yusen 用 `go2sim` (sim_tool, Go2ROS2Proxy path) 不是 `--sim-go2` (MuJoCoGo2 path)** → 我改的 MuJoCoGo2 thread gate 在正确位置，但核心 bug 不在此
+4. **H4 真因：convex_mpc 的 PinGo2Model 是 12-DoF 专用，MuJoCo nq=27 导致 `pin.forwardKinematics` 每 tick 抛 `ValueError: expected 19, got 27`，physics 线程崩溃** — 狗永远不动
+
+### Root Cause + Fix
+`_init_mpc_stack` 加维度守卫：
+```python
+if self._pin.model.nq != self._mj.model.nq:
+    raise RuntimeError(...)  # caller fallback to sinusoidal
+```
+物理线程不再崩 → sinusoidal gait 接管 → 狗能走 (with-arm 模式)
+
+### SimStopTool 新增
+之前说"关闭仿真"被 VGG fast-path 误匹配到 `gripper_close_skill`。加了 `stop_simulation` tool，tool_use 优先级高于 skill fast-path：
+- `SimStartTool._shutdown_agent()` 复用的 teardown 工具
+- `_start_go2` 存 `vnav_proc` 到 `base._sim_subprocess`
+- `SimStopTool.execute` 调 killpg + disconnect + unregister go2 skill tools
+
+### 测试状态
+- Python 独立测试：no-arm (MPC) / with-arm (sinusoidal) 两模式都通过
+- Yusen 机器：`go2sim` → 选模式 → 启动 OK；`走两米` 在 with-arm 模式下能走（步态粗糙是 sinusoidal 本身的限制）
+- `关闭仿真` 待 Yusen 下 session 验证
+
+### 遗留
+- with-arm 模式下 Piper 的 home pose (joint2=1.57, joint3=-1.3485) 从某些角度看像"展开"，实际是 Piper URDF 原厂 home keyframe。可以后续自定义 `_PIPER_STOW_QPOS` 让 arm 贴 trunk 更紧凑
+- with-arm 模式真要上 MPC gait 需要在 Pinocchio 里 rebuild 含 Piper 的 URDF + retrain 模型 (scope 大，Phase D+)
+- Phase B: `MuJoCoPiper` 类实现 `ArmProtocol`（joint/FK/IK/gripper），让 arm 能被 skill 调用
+- Phase C: 扩展 PickSkill 支持 6-DoF Piper，E2E "去厨房拿杯子"
+
+---
 
 ## v2.0.1 V-Graph 跨房间修复 — 完成 (2026-04-16)
 
