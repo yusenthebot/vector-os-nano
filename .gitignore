@@ -43,3 +43,4 @@ oauth_credentials.json
 CLAUDE.md
 lib/
 MUJOCO_LOG.TXT
+.coverage

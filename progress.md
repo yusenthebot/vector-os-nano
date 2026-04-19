@@ -4,6 +4,98 @@
 **Version:** v2.1-dev (branch: feat/v2.0-vectorengine-unification)
 **Base:** v1.8.0
 
+## v2.2 Loco Manipulation Infrastructure — baseline ready (2026-04-19)
+
+### Status
+Infrastructure landed + perception-bypass shortcut design **removed**. Baseline is
+"world_model starts empty, errors cleanly when perception not yet available."
+Next step: v2.3 SDD for SO-101-style Go2 perception pipeline.
+
+### Delivered (infrastructure, kept)
+- **Ros2Runtime singleton** — one `MultiThreadedExecutor` shared across Go2 +
+  Piper + PiperGripper proxies; fixes live-REPL `Executor is already spinning`
+  error. Rollback flag `VECTOR_SHARED_EXECUTOR=0` kept for emergencies.
+- **3 new skills**, registered when `with_arm=True`:
+  - `PlaceTopDownSkill` — top-down drop at `target_xyz` or `receptacle_id`
+  - `MobilePickSkill` — compose approach_pose → navigate → wait_stable → pick
+  - `MobilePlaceSkill` — compose approach_pose → navigate → wait_stable → place
+- **2 new utilities**:
+  - `compute_approach_pose(object, dog_pose, clearance) → (x, y, yaw)`
+  - `_normalise_color_keyword(label)` — CN color → EN (UX, perception-agnostic)
+- **Input validation** — `invalid_target_xyz` diagnosis for malformed / NaN xyz
+  inputs across pick / place / mobile_place resolvers.
+- **Error-message enrichment** — `object_not_found` error text lists known
+  pickable labels inline so a re-planning LLM can retry with a valid label.
+- **E2E harness** `scripts/verify_loco_pick_place.py` (--repeat N
+  --mode pick_only|pick_and_place --dry-run).
+- **Live REPL checklist** `docs/v2.2_live_repl_checklist.md`.
+
+### Removed (shortcut design that bypassed perception)
+- `SimStartTool._populate_pickables_from_mjcf()` **default call** is gone —
+  world_model starts empty. The function stays behind
+  `VECTOR_SIM_DEMO_GROUND_TRUTH=1` env flag as a debug-only escape hatch.
+- `goal_decomposer._skill_is_world_model_only` helper + `(source: world_model)`
+  catalog tag + prompt rule #9 — deleted. The decomposer no longer instructs
+  the LLM to skip `detect_*` / perception steps.
+- `pick_top_down._resolve_target` step-5 single-candidate fallback + step-6
+  generic-query fallback + `_GENERIC_OBJECT_TOKENS` + `_is_generic_query` —
+  all removed. Unmatched labels now return `None` → `object_not_found` with
+  the known-labels list, forcing the proper perception loop.
+
+### Additional fixes
+- `skills/go2/look.py` — `DetectedObject.lower()` crash fixed (was passing
+  `list[DetectedObject]` where `list[str]` expected by
+  `SceneGraph.observe_with_viewpoint`). Result payload now returns plain
+  dicts instead of frozen dataclass instances so YAML persistence + tool-use
+  responses round-trip cleanly.
+- `~/.vector_os_nano/scene_graph.yaml` archived (stale DetectedObject
+  serialisation blocked YAML load).
+
+### Tests
+- 99 unit tests + 3 rclpy integration — all green post-cleanup
+- Coverage: Ros2Runtime 95% · mobile_pick 98% · mobile_place 98% ·
+  place_top_down 96% · approach_pose 100%
+- Ruff clean across all touched files
+
+### Baseline behaviour (what `go2sim with_arm=1` now does)
+1. Launch bridge + nav stack + rviz — no "already spinning" errors
+2. world_model **empty** (MJCF populate disabled)
+3. `抓个东西` → `pick_top_down` resolver returns None → clean error:
+   `"Cannot locate target object. Known pickable objects: []. Retry with…"`
+4. VGG may re-plan to `look` (works, VLM describes scene) or `detect`
+   (returns `no_perception` — `agent._perception` is intentionally unset
+   pending v2.3)
+5. Task fails cleanly; no crashes, no `.lower()` AttributeError
+
+This is the **correct** baseline to build perception on top of.
+
+### De-sloppify
+- Pre-existing F401 in `pick_top_down.py` cleaned
+- Pre-existing E702 (2x) in `piper_ros2_proxy.py` cleaned
+- Post-review MAJOR fixes: `invalid_target_xyz` diagnosis + NaN/inf guard in pick/place/mobile_place resolvers; `arm_unsupported` added to PlaceTopDownSkill.failure_modes
+- NITs cleaned: dedupe color values iteration; dead `TYPE_CHECKING: pass` removed
+- Deferred NITs (for v2.3): extract duplicate `_wait_stable` to `skills/utils/mobile_helpers.py`; legacy per-proxy spin path (only triggers on `VECTOR_SHARED_EXECUTOR=0` rollback) has thread-leak on disconnect
+
+### Known remaining assumption debt
+- Mobile pick/place bypass collision check against dog body / furniture
+- No perception-driven grasp (object pose from world_model only)
+- `compute_approach_pose` uses `from_dog` direction only; `from_normal` reserved for v2.3
+- No MPC gait in with_arm=1 mode (still sinusoidal — needs Pinocchio URDF rebuild)
+- Place skill does not track post-drop object pose in world_model
+
+### Code-review verdict
+PASS-WITH-NITS — 0 critical / 0 high / 1 MAJOR fixed (target_xyz validation) + 1 MAJOR deferred (legacy rollback path thread leak, low risk in production)
+
+### Security-review verdict
+PASS-WITH-LOW — 0 critical/high/medium; 3 LOW notes (NaN guards — all addressed in de-sloppify for production paths; harness log symlink risk documented as dev-only)
+
+### Pending
+- Yusen live REPL smoke (follow `docs/v2.2_live_repl_checklist.md`)
+- Full E2E `verify_loco_pick_place.py --repeat 3` with live sim
+- Commit + push (currently 5 commits ahead of origin from v2.1 + uncommitted v2.2 work)
+
+---
+
 ## 🔴 OPEN BUGS — next session (2026-04-19 live REPL)
 
 After `e0a7e33` (VGG context fix), Yusen's `vector-cli go2sim with_arm=1`

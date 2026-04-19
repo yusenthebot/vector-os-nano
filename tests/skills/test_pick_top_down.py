@@ -255,3 +255,143 @@ def test_skill_aliases_registered_for_chinese_and_english():
     assert "抓" in aliases
     assert "grab" in aliases
     assert "pick" in aliases
+
+
+# ---------------------------------------------------------------------------
+# _normalise_color_keyword — Chinese color token normaliser (T3)
+# ---------------------------------------------------------------------------
+
+from vector_os_nano.skills.pick_top_down import _normalise_color_keyword  # noqa: E402
+
+
+def test_normalise_color_keyword_chinese_suffix():
+    result = _normalise_color_keyword("绿色")
+    assert result is not None
+    assert "green" in result
+    assert "绿" not in result
+    assert "色" not in result
+
+
+def test_normalise_color_keyword_single_char():
+    result = _normalise_color_keyword("红")
+    assert result is not None
+    assert "red" in result
+    assert "红" not in result
+
+
+def test_normalise_color_keyword_returns_none_if_no_match():
+    assert _normalise_color_keyword("bottle") is None
+    assert _normalise_color_keyword("紫色") is None
+
+
+@pytest.mark.parametrize("cn,en", [
+    ("红色", "red"),
+    ("绿色", "green"),
+    ("蓝色", "blue"),
+    ("黄色", "yellow"),
+    ("白色", "white"),
+    ("黑色", "black"),
+])
+def test_normalise_color_keyword_all_six_colors(cn: str, en: str):
+    result = _normalise_color_keyword(cn)
+    assert result is not None
+    assert en in result
+
+
+def test_normalise_color_keyword_mixed_input_preserves_other_chars():
+    result = _normalise_color_keyword("抓前面绿色瓶子")
+    assert result is not None
+    assert "green" in result
+    assert "抓前面" in result
+    assert "瓶子" in result
+    assert "绿" not in result
+
+
+# ---------------------------------------------------------------------------
+# _resolve_target — new fallback passes (T7)
+# ---------------------------------------------------------------------------
+
+import logging  # noqa: E402
+
+
+def test_resolve_target_matches_chinese_color_after_normalise():
+    """Chinese color label normalises to English and matches a stored object."""
+    wm = _mkworld(
+        ObjectState(object_id="pickable_bottle_green", label="green bottle",
+                    x=11.0, y=3.0, z=0.2),
+        ObjectState(object_id="pickable_bottle_blue", label="blue bottle",
+                    x=11.0, y=2.85, z=0.2),
+    )
+    skill = PickTopDownSkill()
+    result = skill._resolve_target({"object_label": "抓前面绿色"}, wm)
+    assert result is not None
+    obj_id, _xyz = result
+    assert obj_id == "pickable_bottle_green"
+
+
+def test_resolve_target_returns_none_when_label_unmatched():
+    """Unmatched label returns None — no silent substitution (perception must
+    populate the world model via detect_*, not be bypassed)."""
+    wm = _mkworld(
+        ObjectState(object_id="pickable_can_red", label="red can",
+                    x=11, y=3.15, z=0.2),
+    )
+    skill = PickTopDownSkill()
+    result = skill._resolve_target({"object_label": "紫色"}, wm)
+    assert result is None
+
+
+def test_resolve_target_returns_none_when_multiple_pickables_and_unmatched():
+    """Multiple pickables + no exact/normalised match → None."""
+    wm = _mkworld(
+        ObjectState(object_id="pickable_a", label="red can", x=11, y=3, z=0.2),
+        ObjectState(object_id="pickable_b", label="blue bottle", x=11, y=2.85, z=0.2),
+        ObjectState(object_id="pickable_c", label="green cup", x=11, y=3.15, z=0.2),
+    )
+    skill = PickTopDownSkill()
+    result = skill._resolve_target({"object_label": "紫色"}, wm)
+    assert result is None
+
+
+def test_resolve_target_prefers_explicit_label_match_over_color_normalise(caplog):
+    """Direct English label match (step 3) must resolve before normaliser (step 4).
+    Verified via caplog — no colour-normalisation log line should appear."""
+    wm = _mkworld(
+        ObjectState(object_id="pickable_bottle_green", label="green bottle",
+                    x=5.0, y=1.0, z=0.3),
+    )
+    skill = PickTopDownSkill()
+    with caplog.at_level(logging.INFO, logger="vector_os_nano.skills.pick_top_down"):
+        result = skill._resolve_target({"object_label": "green bottle"}, wm)
+    assert result is not None
+    assert result[0] == "pickable_bottle_green"
+    assert "colour-normalisation" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Error-message enrichment (helps VGG re-plan retry with a valid label)
+# ---------------------------------------------------------------------------
+
+
+def test_execute_object_not_found_error_message_lists_known_objects():
+    """error_message must include the known-object labels so the VGG re-plan
+    LLM can retry with a valid label rather than injecting detect_*."""
+    arm = _MockArm()
+    gripper = _MockGripper()
+    # Use specific color label that doesn't match — triggers object_not_found
+    wm = _mkworld(
+        ObjectState(object_id="pickable_bottle_blue", label="blue bottle",
+                    x=11, y=2.85, z=0.25),
+        ObjectState(object_id="pickable_can_red", label="red can",
+                    x=11, y=3.15, z=0.25),
+    )
+    ctx = _mkctx(arm, gripper, wm)
+    skill = PickTopDownSkill()
+    result = skill.execute({"object_label": "橙色"}, ctx)
+    assert result.success is False
+    assert result.result_data["diagnosis"] == "object_not_found"
+    # error_message should contain the known labels inline
+    assert "blue bottle" in result.error_message
+    assert "red can" in result.error_message
+    # result_data keeps the structured copy too
+    assert "blue bottle" in result.result_data["known_objects"]

@@ -29,8 +29,9 @@ No ROS2 imports. No perception imports.
 from __future__ import annotations
 
 import logging
+import math
 import time
-from typing import Any, Optional
+from typing import Optional
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
@@ -68,6 +69,46 @@ _HOME_DURATION: float = 4.0
 # Home joints = Piper URDF zero configuration (matches the stow pose set by
 # MuJoCoGo2 on connect/stand).
 _HOME_JOINTS: list[float] = [0.0] * 6
+
+
+# ---------------------------------------------------------------------------
+# Chinese color-keyword normaliser (used by T7 inside _resolve_target)
+# ---------------------------------------------------------------------------
+
+_CN_COLOR_MAP: dict[str, str] = {
+    "红": "red",   "红色": "red",
+    "绿": "green", "绿色": "green",
+    "蓝": "blue",  "蓝色": "blue",
+    "黄": "yellow","黄色": "yellow",
+    "白": "white", "白色": "white",
+    "黑": "black", "黑色": "black",
+}
+
+# Keys sorted longest-first so "红色" matches before "红".
+_CN_COLOR_KEYS: list[str] = sorted(_CN_COLOR_MAP, key=len, reverse=True)
+
+
+def _normalise_color_keyword(label: str) -> str | None:
+    """Replace Chinese color tokens in *label* with English equivalents.
+
+    Rules:
+    - Longest-match first ("红色" before "红") to avoid partial replacements.
+    - Replaces ALL occurrences.
+    - Returns the modified string, or ``None`` if no Chinese color token was found.
+
+    Examples::
+
+        _normalise_color_keyword("抓前面绿色瓶子")  # "抓前面green瓶子"
+        _normalise_color_keyword("bottle")          # None
+        _normalise_color_keyword("紫色")            # None  (not in map)
+    """
+    modified = label
+    matched = False
+    for cn in _CN_COLOR_KEYS:
+        if cn in modified:
+            modified = modified.replace(cn, _CN_COLOR_MAP[cn])
+            matched = True
+    return modified if matched else None
 
 
 # ---------------------------------------------------------------------------
@@ -160,13 +201,22 @@ class PickTopDownSkill:
         # Resolve target
         target = self._resolve_target(params, wm)
         if target is None:
+            query = params.get("object_label") or params.get("object_id") or ""
+            known_labels = [
+                o.label for o in wm.get_objects()
+                if o.object_id.startswith("pickable_")
+            ]
             return SkillResult(
                 success=False,
-                error_message="Cannot locate target object",
+                error_message=(
+                    f"Cannot locate target object (query={query!r}). "
+                    f"Known pickable objects in world model: {known_labels}. "
+                    f"Retry with one of these labels (e.g. object_label=\"{known_labels[0] if known_labels else '...'}\")."
+                ),
                 result_data={
                     "diagnosis": "object_not_found",
-                    "query": params.get("object_label") or params.get("object_id") or "",
-                    "known_objects": [o.label for o in wm.get_objects()],
+                    "query": query,
+                    "known_objects": known_labels,
                 },
             )
         obj_id, obj_xyz = target
@@ -264,18 +314,25 @@ class PickTopDownSkill:
         wm: WorldModel,
     ) -> Optional[tuple[str, tuple[float, float, float]]]:
         """Return (object_id, world_xyz) or None if not resolvable."""
-        # Explicit xyz overrides everything (useful for testing / debug)
+        # 1. Explicit xyz overrides everything (useful for testing / debug).
+        # Invalid shape / NaN / inf returns None, letting step 2+ try other
+        # resolution paths. Caller sees `object_not_found` in the failure mode.
         if "target_xyz" in params:
-            xyz = tuple(float(v) for v in params["target_xyz"])  # type: ignore[assignment]
-            if len(xyz) == 3:
+            try:
+                xyz = tuple(float(v) for v in params["target_xyz"])  # type: ignore[assignment]
+            except (TypeError, ValueError):
+                xyz = ()
+            if len(xyz) == 3 and all(math.isfinite(v) for v in xyz):
                 return (params.get("object_id") or "xyz_target", xyz)  # type: ignore[return-value]
 
+        # 2. Exact object_id
         obj_id = params.get("object_id")
         if obj_id:
             obj = wm.get_object(obj_id)
             if obj is not None:
                 return (obj.object_id, _xyz_of(obj))
 
+        # 3. Exact label match
         label = params.get("object_label")
         if label:
             matches = wm.get_objects_by_label(label)
@@ -283,6 +340,27 @@ class PickTopDownSkill:
                 obj = matches[0]
                 return (obj.object_id, _xyz_of(obj))
 
+        # 4. Chinese color normaliser pass — extract English color tokens and
+        # retry lookup against each English color keyword found in the label.
+        if label:
+            normalised = _normalise_color_keyword(label)
+            if normalised is not None:
+                # Try each unique English color value that appears in the normalised string.
+                for en_color in dict.fromkeys(_CN_COLOR_MAP.values()):
+                    if en_color in normalised:
+                        norm_matches = wm.get_objects_by_label(en_color)
+                        if norm_matches:
+                            obj = norm_matches[0]
+                            logger.info(
+                                "[PICK-TD] resolved %r via colour-normalisation → %r (%s)",
+                                label, en_color, obj.object_id,
+                            )
+                            return (obj.object_id, _xyz_of(obj))
+
+        # No match. Caller sees object_not_found with the known-objects list;
+        # the decomposer is expected to retry with a detect/look step to
+        # populate the world model via perception (SO-101 pattern), not to
+        # silently substitute a nearby pickable.
         return None
 
 

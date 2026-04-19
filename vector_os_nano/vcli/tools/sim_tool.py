@@ -368,25 +368,40 @@ class SimStartTool:
         agent = Agent(base=base, arm=piper_arm, gripper=piper_gripper,
                       llm_api_key=api_key, config=cfg)
 
-        # Populate world_model with pickable_* scene objects (MJCF scan in
-        # main process — independent of the bridge subprocess's MuJoCo).
-        if with_arm:
+        # World model starts empty by design — objects are populated by the
+        # perception pipeline at runtime (DetectSkill / LookSkill), NOT by
+        # reading ground truth from the MJCF. This matches the SO-101 pattern:
+        # camera -> VLM/tracker -> 3D pose -> world_model.
+        #
+        # Escape hatch for offline demos only: set VECTOR_SIM_DEMO_GROUND_TRUTH=1
+        # to pre-populate from MJCF body names (treats sim as cheat knowledge).
+        if with_arm and os.environ.get("VECTOR_SIM_DEMO_GROUND_TRUTH") == "1":
             try:
                 from vector_os_nano.hardware.sim.mujoco_go2 import _build_room_scene_xml
                 scene_xml = str(_build_room_scene_xml(with_arm=True))
                 n = SimStartTool._populate_pickables_from_mjcf(agent._world_model, scene_xml)
-                logger.info("[sim_tool] registered %d pickable objects", n)
+                logger.warning(
+                    "[sim_tool] DEMO ground-truth populate: %d pickable objects "
+                    "registered from MJCF (VECTOR_SIM_DEMO_GROUND_TRUTH=1). "
+                    "This bypasses perception — use only for no-perception demos.", n,
+                )
             except Exception as exc:
-                logger.warning("[sim_tool] pickable scan failed: %s", exc)
+                logger.warning("[sim_tool] demo-populate failed: %s", exc)
 
         # Go2 skills
         from vector_os_nano.skills.go2 import get_go2_skills  # type: ignore[import]
         for skill in get_go2_skills():
             agent._skill_registry.register(skill)
-        # Piper manipulation skill — only useful when arm proxy connected
+        # Piper manipulation skills — only useful when arm proxy connected
         if piper_arm is not None:
             from vector_os_nano.skills.pick_top_down import PickTopDownSkill
+            from vector_os_nano.skills.place_top_down import PlaceTopDownSkill
+            from vector_os_nano.skills.mobile_pick import MobilePickSkill
+            from vector_os_nano.skills.mobile_place import MobilePlaceSkill
             agent._skill_registry.register(PickTopDownSkill())
+            agent._skill_registry.register(PlaceTopDownSkill())
+            agent._skill_registry.register(MobilePickSkill())
+            agent._skill_registry.register(MobilePlaceSkill())
 
         # VLM perception (GPT-4o via OpenRouter)
         if api_key:

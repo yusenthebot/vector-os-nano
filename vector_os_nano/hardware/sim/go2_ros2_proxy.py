@@ -77,6 +77,7 @@ class Go2ROS2Proxy:
         # Used by navigate_to() FAR probe phase to detect whether FAR has a
         # routing graph. Value 0.0 means no_path_received yet.
         self._last_path_time: float = 0.0
+        self._shared_runtime_used: bool = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -147,11 +148,19 @@ class Go2ROS2Proxy:
             except ImportError:
                 self._marker_pub = None
 
-            # Spin in a background daemon thread so the caller is not blocked.
-            self._spin_thread = threading.Thread(
-                target=lambda: rclpy.spin(self._node), daemon=True
-            )
-            self._spin_thread.start()
+            # Route to shared executor or legacy per-proxy spin.
+            import os as _os
+            if _os.environ.get("VECTOR_SHARED_EXECUTOR", "1") == "1":
+                from vector_os_nano.hardware.ros2.runtime import get_ros2_runtime
+                get_ros2_runtime().add_node(self._node)
+                self._shared_runtime_used = True
+            else:
+                # Legacy per-proxy spin (rollback: VECTOR_SHARED_EXECUTOR=0)
+                self._spin_thread = threading.Thread(
+                    target=lambda: rclpy.spin(self._node), daemon=True
+                )
+                self._spin_thread.start()
+                self._shared_runtime_used = False
             self._connected = True
 
             # Wait up to 5 s for the first odometry message.
@@ -167,6 +176,13 @@ class Go2ROS2Proxy:
 
     def disconnect(self) -> None:
         """Destroy the rclpy node and mark proxy as disconnected."""
+        if self._shared_runtime_used and self._node is not None:
+            try:
+                from vector_os_nano.hardware.ros2.runtime import get_ros2_runtime
+                get_ros2_runtime().remove_node(self._node)
+            except Exception:
+                pass  # best effort — don't block teardown
+        self._shared_runtime_used = False
         if self._node is not None:
             try:
                 self._node.destroy_node()

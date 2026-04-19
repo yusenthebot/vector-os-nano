@@ -103,4 +103,5 @@ markers = [
     "level2: Level 2 — Open-loop locomotion / walking",
     "level3: Level 3 — Velocity tracking via set_velocity()",
     "level4: Level 4 — Navigation to waypoint (P-controller placeholder)",
+    "ros2: requires rclpy installed and a live DDS context",
 ]

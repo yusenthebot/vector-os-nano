@@ -1,50 +1,69 @@
 # Agent Status
 
-**Updated:** 2026-04-17
+**Updated:** 2026-04-19 end-of-day
+**Branch:** `feat/v2.0-vectorengine-unification`
 
-## Current: v2.1 Phase A — Piper 挂载 + 双模式仿真
+## Current state
 
-Branch: `feat/v2.0-vectorengine-unification` (uncommitted on top of c83e96d)
+**v2.2 Loco Manipulation Infrastructure — BASELINE READY**
 
-### Delivered this session
-- **Piper 资产**: MuJoCo Menagerie 官方 `agilex_piper` → `mjcf/piper/`
-- **Go2+Piper 合成 MJCF**: `mjcf/go2_piper/go2_piper.xml` (via `MjSpec.attach`, 29 bodies / 21 joints / 19 actuators)
-- **挂载位置**: trunk 顶面居中，雷达后方 15cm，Z-up X-forward (4 视角 render 验证无穿模)
-- **双模式**: `sim_tool` 加 `with_arm` 参数 + `VECTOR_SIM_WITH_ARM` env var；`_build_room_scene_xml` 自动读
-- **MPC 维度守卫**: `_init_mpc_stack` 检测 Pinocchio nq ≠ MuJoCo nq → 抛出 → 外层 fallback sinusoidal (修复了 physics 线程崩溃)
-- **SimStopTool**: `stop_simulation` tool，killpg subprocess + 卸载 skill tools + rebuild prompt
+Shortcut design (MJCF populate, VGG source-hint skipping detect_*, pick
+single-candidate / generic fallback) has been removed. World model now
+starts empty by design; skills must be driven by real perception. This
+is the correct platform for the next cycle.
 
-### 关键调试 (4 轮 Hypothesis Loop)
-真正根因：用户有 convex_mpc，Pinocchio 模型 nq=19，MuJoCo 加 Piper 后 nq=27，`pin.forwardKinematics` 每次 MPC tick 抛 `ValueError: expected 19, got 27` → `mujoco_go2_physics` 线程挂掉 → cmd_vel 写入但无消费者 → 狗永远不动
+## Next session — v2.3 Perception Pipeline (SO-101 style, for Go2)
 
-详细四轮过程见 `progress.md` v2.1 段。
+Goal: mirror the SO-101 perception pattern so `抓个东西` walks the full
+pipeline `look → detect (VLM + depth → 3D) → mobile_pick → place`.
 
-### 未 commit 的改动
+### Scope sketch
+
+1. **`Go2Perception`** class under `vector_os_nano/perception/go2_perception.py`
+   - `.detect(query: str) -> list[Detection]` — VLM with normalized bboxes
+   - `.track(detections) -> list[TrackedObject]` — depth-based 3D centroid
+   - Integrates existing `Go2VLMPerception.find_objects` + `/camera/depth`
+2. **`Go2Calibration`** class — camera intrinsics + head→base TF from
+   MJCF/URDF; base→world from odometry
+3. **`sim_tool._start_go2`** wires `agent._perception = Go2Perception(...)`
+   + `agent._calibration = Go2Calibration(...)` when `with_arm=True`
+4. **`DetectSkill`** now alive on Go2 (was dead — no `context.perception`)
+5. **`MobilePickSkill._resolve_target`** — world_model miss → auto invoke
+   `context.perception.detect(query)` → retry; on success world_model
+   gets a fresh `ObjectState` with perception-derived `(x, y, z)`
+6. **E2E harness** — extend `verify_loco_pick_place.py` to exercise
+   "perception → pick" path (no MJCF pre-populate)
+
+### Known non-goals for v2.3
+- SAM3D per-pixel masks (v2.4+)
+- Multi-view fusion
+- Real Piper hardware driver
+- Arm-base coordinated motion
+
+### Open debt carried in
+- Legacy rollback spin thread (`VECTOR_SHARED_EXECUTOR=0`) leaks on
+  disconnect — only if the flag is set. Cleanup in v2.3.
+- Divergent `_wait_stable` impls in mobile_pick vs mobile_place —
+  extract to `skills/utils/mobile_helpers.py`.
+- LLM-generated sub_goal names not matching any strategy ("approach_object"
+  / "grasp_object") → `"No strategy for: unmatched"`. Decomposer needs
+  to constrain strategy field to registered skill names.
+
+## Reference
+
+- Spec: `.sdd/spec.md` (v2.2)
+- Plan: `.sdd/plan.md`
+- Tasks: `.sdd/task.md` (13/13 done)
+- Debug: `.sdd/DEBUG.md` (hypothesis loop for "抓个东西" failure + hotfix)
+- Summaries: `.sdd/summaries/wave-{1..4}.md`, `hotfix-generic-query.md`
+- Executive brief: `.sdd/executive-briefs/completion-report.md`
+- Live REPL checklist: `docs/v2.2_live_repl_checklist.md`
+
+## Session starter for next time
+
 ```
-M scripts/go2_vnav_bridge.py          (debug log + 注释清理)
-M vector_os_nano/hardware/sim/go2_ros2_proxy.py  (walk() 加 logger)
-M vector_os_nano/hardware/sim/mujoco_go2.py  (MPC guard + thread-ID gate + Piper stow)
-M vector_os_nano/vcli/tools/__init__.py  (SimStopTool 注册)
-M vector_os_nano/vcli/tools/sim_tool.py  (with_arm + SimStopTool + _shutdown_agent)
-?? vector_os_nano/hardware/sim/mjcf/go2/scene_room_piper.xml
-?? vector_os_nano/hardware/sim/mjcf/go2_piper/
-?? vector_os_nano/hardware/sim/mjcf/piper/  (Menagerie LICENSE 已带)
+cd ~/Desktop/vector_os_nano
+cat agents/devlog/status.md           # this file
+cat progress.md | head -80            # v2.2 state
+/sdd init                             # kick off v2.3 perception SDD
 ```
-
-### 测试状态
-| 场景 | 状态 |
-|---|---|
-| Python 独立 walk (no-arm, MPC) | ✓ 走 0.9m/3s |
-| Python 独立 walk (with-arm, sinusoidal) | ✓ 走 0.75m/3s |
-| Yusen 机器 go2sim → 询问模式 → no-arm | ✓ 启动 OK |
-| Yusen 机器 走两米 (with-arm) | ✓ 能走，步态粗糙（sinusoidal 本身的限制） |
-| 关闭仿真 tool | ⏸ 已实现，待下 session 验证 |
-
----
-
-## 历史：v2.0.1 V-Graph 跨房间修复 — 完成 (2026-04-16)
-
-Branch: `feat/v2.0-vectorengine-unification`
-Commit: c83e96d pushed. FAR V-Graph 75 vertices + 131 edges verified.
-
-详细见 progress.md 的 v2.0.1 段。

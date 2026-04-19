@@ -118,6 +118,7 @@ class PiperROS2Proxy:
         self._ik_ee_site_id: int = -1
 
         self._spin_thread: Any = None
+        self._shared_runtime_used: bool = False
 
     # ------------------------------------------------------------------
     # ArmProtocol surface
@@ -182,10 +183,19 @@ class PiperROS2Proxy:
         if self._ik_ee_site_id < 0:
             raise RuntimeError(f"PiperROS2Proxy: {_EE_SITE_NAME!r} missing from MJCF")
 
-        self._spin_thread = threading.Thread(
-            target=lambda: rclpy.spin(self._node), daemon=True,
-        )
-        self._spin_thread.start()
+        # Route to shared executor or legacy per-proxy spin.
+        import os as _os
+        if _os.environ.get("VECTOR_SHARED_EXECUTOR", "1") == "1":
+            from vector_os_nano.hardware.ros2.runtime import get_ros2_runtime
+            get_ros2_runtime().add_node(self._node)
+            self._shared_runtime_used = True
+        else:
+            # Legacy per-proxy spin (rollback: VECTOR_SHARED_EXECUTOR=0)
+            self._spin_thread = threading.Thread(
+                target=lambda: rclpy.spin(self._node), daemon=True,
+            )
+            self._spin_thread.start()
+            self._shared_runtime_used = False
 
         # Wait up to 3 s for first joint_state (bridge advertises at 20 Hz)
         for _ in range(60):
@@ -204,6 +214,13 @@ class PiperROS2Proxy:
     def disconnect(self) -> None:
         """Destroy the ROS2 node. Does not shut down rclpy (shared)."""
         self._connected = False
+        if self._shared_runtime_used and self._node is not None:
+            try:
+                from vector_os_nano.hardware.ros2.runtime import get_ros2_runtime
+                get_ros2_runtime().remove_node(self._node)
+            except Exception:
+                pass  # best effort — don't block teardown
+        self._shared_runtime_used = False
         if self._node is not None:
             try:
                 self._node.destroy_node()
@@ -460,6 +477,7 @@ class PiperGripperROS2Proxy:
         self._last_gripper_pos: float = 0.0
         self._last_gripper_cmd: float = _GRIPPER_OPEN_CMD
         self._state_lock = threading.Lock()
+        self._shared_runtime_used: bool = False
 
     def connect(self) -> None:
         import rclpy
@@ -476,16 +494,33 @@ class PiperGripperROS2Proxy:
         self._node.create_subscription(
             JointState, "/piper/joint_state", self._joint_state_cb, 10
         )
-        self._spin_thread = threading.Thread(
-            target=lambda: rclpy.spin(self._node), daemon=True,
-        )
-        self._spin_thread.start()
+
+        # Route to shared executor or legacy per-proxy spin.
+        import os as _os
+        if _os.environ.get("VECTOR_SHARED_EXECUTOR", "1") == "1":
+            from vector_os_nano.hardware.ros2.runtime import get_ros2_runtime
+            get_ros2_runtime().add_node(self._node)
+            self._shared_runtime_used = True
+        else:
+            # Legacy per-proxy spin (rollback: VECTOR_SHARED_EXECUTOR=0)
+            self._spin_thread = threading.Thread(
+                target=lambda: rclpy.spin(self._node), daemon=True,
+            )
+            self._spin_thread.start()
+            self._shared_runtime_used = False
 
         self._connected = True
         logger.info("PiperGripperROS2Proxy connected (%s)", self._node_name)
 
     def disconnect(self) -> None:
         self._connected = False
+        if self._shared_runtime_used and self._node is not None:
+            try:
+                from vector_os_nano.hardware.ros2.runtime import get_ros2_runtime
+                get_ros2_runtime().remove_node(self._node)
+            except Exception:
+                pass  # best effort — don't block teardown
+        self._shared_runtime_used = False
         if self._node is not None:
             try:
                 self._node.destroy_node()
@@ -506,7 +541,8 @@ class PiperGripperROS2Proxy:
             return False
         from std_msgs.msg import Float64
         self._last_gripper_cmd = _GRIPPER_OPEN_CMD
-        msg = Float64(); msg.data = _GRIPPER_OPEN_CMD
+        msg = Float64()
+        msg.data = _GRIPPER_OPEN_CMD
         self._cmd_pub.publish(msg)
         return True
 
@@ -515,7 +551,8 @@ class PiperGripperROS2Proxy:
             return False
         from std_msgs.msg import Float64
         self._last_gripper_cmd = _GRIPPER_CLOSED_CMD
-        msg = Float64(); msg.data = _GRIPPER_CLOSED_CMD
+        msg = Float64()
+        msg.data = _GRIPPER_CLOSED_CMD
         self._cmd_pub.publish(msg)
         return True
 
