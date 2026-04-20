@@ -82,25 +82,25 @@ class FakeBase:
         return self._depth.copy()
 
     def get_camera_pose(self):
-        """Dog at origin, camera mounted 0.3 m forward 0.05 m up, pitch -5 deg."""
+        """Dog at origin, MJCF-grounded mount (0.25 m fwd, 0.1 m up, -5 deg pitch).
+
+        Uses ``up = cross(forward, right)`` — matches Go2ROS2Proxy.get_camera_pose
+        after the v2.3 sign-convention fix.
+        """
         import numpy as np
 
         pitch = math.radians(-5.0)
         cos_p = math.cos(pitch)
         sin_p = math.sin(pitch)
 
-        pos = np.array([0.3, 0.0, 0.33])
+        # MJCF d435_camera pos="0.25 0 0.1" on trunk (dog base z ≈ 0.28) → cam z ≈ 0.38
+        pos = np.array([0.25, 0.0, 0.38])
 
-        # MuJoCo xmat: cols = [right, up, -forward]
-        # For dog facing +X, pitch -5 deg around Y:
-        # right  = [0, 1, 0]   (unchanged by Y-axis rotation)
-        # forward_dir = [cos_p, 0, sin_p]   (tilted down by pitch)
-        # up_dir = [-sin_p, 0, cos_p]
         right = np.array([0.0, 1.0, 0.0])
         fwd = np.array([cos_p, 0.0, sin_p])
-        up = np.array([-sin_p, 0.0, cos_p])
+        up = np.cross(fwd, right)  # points world +Z for level +X-facing camera
 
-        # xmat cols: right, up, -forward
+        # MuJoCo xmat: columns = [right, up, -forward]
         xmat = np.column_stack([right, up, -fwd])
 
         return pos, xmat

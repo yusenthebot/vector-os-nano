@@ -295,19 +295,30 @@ class Go2ROS2Proxy:
         return self.get_camera_frame(width, height), self.get_depth_frame(width, height)
 
     def get_camera_pose(self) -> tuple:
-        """Compute D435 camera world pose from robot odometry + mount config.
+        """Compute D435 camera world pose from robot odometry + MJCF mount config.
 
-        Returns (cam_xpos, cam_xmat) matching MuJoCoGo2.get_camera_pose().
-        Camera mounted at: 0.3m forward, 0.05m up, -5deg pitch on base_link.
+        Returns (cam_xpos, cam_xmat) matching MuJoCoGo2.get_camera_pose()
+        semantics (the live MuJoCo path reads data.cam_xmat directly).
+
+        Mount geometry sourced from MJCF go2_piper.xml::d435_camera body:
+            pos="0.25 0 0.1" quat="0.999054 0 0.0434863 0"
+        which is 0.25 m forward, 0.1 m up above base_link, pitched -5° down.
+
+        xmat cols convention: [camera_right, camera_up, -camera_forward].
+        For a level camera facing +X, camera_up must point to world +Z
+        (so that OpenCV y-down pixels project below the camera in world).
+        We therefore take ``up = cross(forward, right)`` — the opposite
+        order to a naive cross-product. Validated against
+        depth_projection.camera_to_world and the dry-run regression.
         """
         import numpy as np
 
         pos = self._position
         heading = self._heading
 
-        # Mount offset in body frame
-        mount_fwd, mount_up = 0.3, 0.05
-        pitch = math.radians(-5.0)  # -5 deg downward tilt
+        # MJCF-grounded mount offsets
+        mount_fwd, mount_up = 0.25, 0.1
+        pitch = math.radians(-5.0)
 
         cos_h = math.cos(heading)
         sin_h = math.sin(heading)
@@ -320,12 +331,12 @@ class Go2ROS2Proxy:
         cam_z = pos[2] + mount_up
         cam_xpos = np.array([cam_x, cam_y, cam_z])
 
-        # Camera rotation: MuJoCo convention columns = [right, up, -forward]
-        # Body frame: forward=(cos_h, sin_h, 0), right=(-sin_h, cos_h, 0)
-        # With pitch: forward rotated by pitch around right axis
+        # Body frame: forward = (cos_h·cos_p, sin_h·cos_p, sin_p),
+        #             right   = (-sin_h, cos_h, 0)
+        # up = cross(forward, right) → world +Z for a level, +X-facing camera.
         fwd = np.array([cos_h * cos_p, sin_h * cos_p, sin_p])
         right = np.array([-sin_h, cos_h, 0.0])
-        up = np.cross(right, fwd)  # ensure orthogonal
+        up = np.cross(fwd, right)
 
         # MuJoCo xmat: columns = [right, up, -forward]
         cam_xmat = np.column_stack([right, up, -fwd]).flatten()
