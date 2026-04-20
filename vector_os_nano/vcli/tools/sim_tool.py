@@ -402,6 +402,13 @@ class SimStartTool:
                 logger.warning("[sim_tool] Perception wire-up failed: %s", exc)
                 agent._perception = None
                 agent._calibration = None
+        elif with_arm:
+            logger.warning(
+                "[sim_tool] with_arm=True but no API key — auto-detect disabled. "
+                "Set OPENROUTER_API_KEY or config.llm.api_key to enable "
+                "Qwen VLM perception; MobilePick against empty world_model "
+                "will return object_not_found instead of auto-detecting."
+            )
 
         # Go2 skills
         from vector_os_nano.skills.go2 import get_go2_skills  # type: ignore[import]

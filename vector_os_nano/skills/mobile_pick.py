@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from typing import Any
 
 from vector_os_nano.core.skill import SkillContext, skill
 from vector_os_nano.core.types import SkillResult
@@ -159,6 +160,9 @@ class MobilePickSkill:
         from vector_os_nano.skills.pick_top_down import PickTopDownSkill
 
         self._pick = PickTopDownSkill()
+        # M3: DetectSkill is lazy-cached on first auto-detect call to avoid
+        # importing at module load; once built it is reused per skill instance.
+        self._detect: Any | None = None
 
     # ------------------------------------------------------------------
     # execute
@@ -196,7 +200,6 @@ class MobilePickSkill:
 
         # v2.3: perception-driven auto-detect retry on world_model miss
         if target is None and context.perception is not None and context.calibration is not None:
-            from vector_os_nano.skills.detect import DetectSkill
             from vector_os_nano.skills.utils import label_to_en_query
 
             query_raw = params.get("object_label") or params.get("object_id")
@@ -204,7 +207,10 @@ class MobilePickSkill:
             if en_query:
                 logger.info("[MOBILE-PICK] world_model miss; auto-detect query=%r", en_query)
                 try:
-                    det_result = DetectSkill().execute({"query": en_query}, context)
+                    if self._detect is None:
+                        from vector_os_nano.skills.detect import DetectSkill
+                        self._detect = DetectSkill()
+                    det_result = self._detect.execute({"query": en_query}, context)
                 except Exception as exc:
                     logger.warning("[MOBILE-PICK] auto-detect crashed: %s", exc)
                     det_result = None

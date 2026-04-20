@@ -583,3 +583,92 @@ def test_encode_frame_large_image_triggers_resize(
     assert len(result) > 0
     # resize() SHOULD have been called with (int(640*160/640), int(360*160/640))
     fake_img.resize.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# QA v2.3 security fixes: _scrub_bearer + VECTOR_VLM_URL validation + bbox
+# normalised guard (L1 / L2 / M1).
+# ---------------------------------------------------------------------------
+
+
+def test_scrub_bearer_replaces_token() -> None:
+    """_scrub_bearer: replaces 'Bearer <token>' with 'Bearer <redacted>'."""
+    from vector_os_nano.perception.vlm_qwen import _scrub_bearer
+
+    input_body = 'Error: invalid Bearer sk-or-v1-abc123xyz token'
+    out = _scrub_bearer(input_body)
+    assert "sk-or-v1-abc123xyz" not in out
+    assert "Bearer <redacted>" in out
+
+
+def test_scrub_bearer_case_insensitive() -> None:
+    """_scrub_bearer matches 'bearer' / 'BEARER' too."""
+    from vector_os_nano.perception.vlm_qwen import _scrub_bearer
+
+    for token_form in ("Bearer abc", "bearer abc", "BEARER abc"):
+        out = _scrub_bearer(f"start {token_form} end")
+        assert "abc" not in out
+
+
+def test_scrub_bearer_no_match_passthrough() -> None:
+    """_scrub_bearer: input without 'Bearer' is unchanged."""
+    from vector_os_nano.perception.vlm_qwen import _scrub_bearer
+
+    assert _scrub_bearer("plain text 404 error") == "plain text 404 error"
+
+
+def test_4xx_error_redacts_bearer_in_body(detector: QwenVLMDetector) -> None:
+    """4xx response body containing a Bearer token is redacted before echo."""
+    mock_response = MagicMock()
+    mock_response.status_code = 401
+    mock_response.text = 'Auth fail: Bearer sk-secret-xyz invalid'
+    mock_response.raise_for_status = MagicMock()
+    client_cm = _make_client_cm(mock_response)
+
+    with patch("httpx.Client", return_value=client_cm):
+        with pytest.raises(RuntimeError) as excinfo:
+            detector.detect(_make_frame(), "anything")
+
+    assert "sk-secret-xyz" not in str(excinfo.value)
+    assert "<redacted>" in str(excinfo.value)
+
+
+def test_local_url_requires_http_scheme(monkeypatch: pytest.MonkeyPatch) -> None:
+    """VECTOR_VLM_URL must be http(s); other schemes raise ValueError."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    for bad_url in ("file:///etc/passwd", "ftp://example.com", "not-a-url"):
+        monkeypatch.setenv("VECTOR_VLM_URL", bad_url)
+        with pytest.raises(ValueError, match="VECTOR_VLM_URL"):
+            QwenVLMDetector()
+
+
+def test_local_url_accepts_http_and_https(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Valid local URLs succeed."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    for good_url in ("http://localhost:11434/v1", "https://proxy.lan/api"):
+        monkeypatch.setenv("VECTOR_VLM_URL", good_url)
+        det = QwenVLMDetector()
+        assert det._base_url == good_url
+        assert det._local is True
+
+
+def test_bbox_not_rescaled_on_1x1_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    """M1: tiny W=1 or H=1 image does not trigger normalised rescaling path."""
+    from vector_os_nano.perception.vlm_qwen import _detection_from_raw
+
+    raw = {"label": "x", "bbox": [0.2, 0.3, 0.8, 0.9], "confidence": 0.5}
+    # 1-pixel image: rescale guard must kick in
+    out = _detection_from_raw(raw, img_w=1, img_h=1)
+    assert out is not None
+    # Coordinates preserved (not multiplied by 1x1)
+    assert out.bbox == (0.2, 0.3, 0.8, 0.9)
+
+
+def test_bbox_rescaled_on_normal_image() -> None:
+    """M1: regular image still rescales normalised bboxes."""
+    from vector_os_nano.perception.vlm_qwen import _detection_from_raw
+
+    raw = {"label": "x", "bbox": [0.1, 0.2, 0.5, 0.6], "confidence": 0.5}
+    out = _detection_from_raw(raw, img_w=320, img_h=240)
+    assert out is not None
+    assert out.bbox == (0.1 * 320, 0.2 * 240, 0.5 * 320, 0.6 * 240)

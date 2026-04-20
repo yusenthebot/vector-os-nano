@@ -22,10 +22,12 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import re
 import threading
 import time
 from io import BytesIO
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from PIL import Image
@@ -84,6 +86,13 @@ class QwenVLMDetector:
         local_url: str | None = os.environ.get("VECTOR_VLM_URL")
 
         if local_url:
+            # L2: validate scheme to prevent SSRF via stray env misconfig
+            parsed = urlparse(local_url)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                raise ValueError(
+                    f"QwenVLMDetector: VECTOR_VLM_URL must be http(s) with host, "
+                    f"got scheme={parsed.scheme!r}, netloc={parsed.netloc!r}"
+                )
             self._base_url: str = local_url
             self._api_key: str = ""  # not sent
             self._model: str = os.environ.get("VECTOR_VLM_MODEL") or _DEFAULT_MODEL
@@ -207,79 +216,81 @@ class QwenVLMDetector:
             headers["Authorization"] = f"Bearer {self._api_key}"
 
         last_exc: Exception | None = None
-        for attempt in range(1, _MAX_RETRIES + 1):
-            t_start = time.monotonic()
-            try:
-                with httpx.Client(timeout=self._timeout) as client:
+        # H2: reuse a single Client across retries to avoid per-attempt TLS handshake
+        with httpx.Client(timeout=self._timeout) as client:
+            for attempt in range(1, _MAX_RETRIES + 1):
+                t_start = time.monotonic()
+                try:
                     response = client.post(
                         f"{self._base_url}/chat/completions",
                         json=payload,
                         headers=headers,
                     )
 
-                elapsed = time.monotonic() - t_start
+                    elapsed = time.monotonic() - t_start
 
-                # 4xx — do not retry
-                if 400 <= response.status_code < 500:
-                    raise RuntimeError(
-                        f"Qwen VLM client error {response.status_code}: "
-                        f"{response.text}"
+                    # 4xx — do not retry; L1: scrub Bearer from echoed body
+                    if 400 <= response.status_code < 500:
+                        safe_body = _scrub_bearer(response.text)[:200]
+                        raise RuntimeError(
+                            f"Qwen VLM client error {response.status_code}: "
+                            f"{safe_body}"
+                        )
+
+                    response.raise_for_status()
+                    data = response.json()
+
+                    usage: dict[str, int] = data.get("usage") or {}
+                    input_tokens = int(usage.get("prompt_tokens", 0))
+                    output_tokens = int(usage.get("completion_tokens", 0))
+                    call_cost = (
+                        input_tokens * _COST_PER_INPUT_TOKEN
+                        + output_tokens * _COST_PER_OUTPUT_TOKEN
+                    )
+                    with self._cost_lock:
+                        self._cost_usd += call_cost
+
+                    logger.info(
+                        "[vlm_qwen] ok attempt=%d elapsed=%.2fs "
+                        "in=%d out=%d cost=$%.6f",
+                        attempt,
+                        elapsed,
+                        input_tokens,
+                        output_tokens,
+                        call_cost,
                     )
 
-                response.raise_for_status()
-                data = response.json()
+                    choices: list[dict[str, Any]] = data.get("choices") or []
+                    if not choices:
+                        last_exc = RuntimeError("Qwen VLM returned no choices.")
+                        continue
 
-                usage: dict[str, int] = data.get("usage") or {}
-                input_tokens = int(usage.get("prompt_tokens", 0))
-                output_tokens = int(usage.get("completion_tokens", 0))
-                call_cost = (
-                    input_tokens * _COST_PER_INPUT_TOKEN
-                    + output_tokens * _COST_PER_OUTPUT_TOKEN
-                )
-                with self._cost_lock:
-                    self._cost_usd += call_cost
+                    return str(choices[0].get("message", {}).get("content", ""))
 
-                logger.info(
-                    "[vlm_qwen] ok attempt=%d elapsed=%.2fs "
-                    "in=%d out=%d cost=$%.6f",
-                    attempt,
-                    elapsed,
-                    input_tokens,
-                    output_tokens,
-                    call_cost,
-                )
+                except (httpx.TransportError, httpx.TimeoutException) as exc:
+                    elapsed = time.monotonic() - t_start
+                    logger.warning(
+                        "[vlm_qwen] attempt %d/%d failed (%.2fs): %s",
+                        attempt,
+                        _MAX_RETRIES,
+                        elapsed,
+                        exc,
+                    )
+                    last_exc = exc
 
-                choices: list[dict[str, Any]] = data.get("choices") or []
-                if not choices:
-                    last_exc = RuntimeError("Qwen VLM returned no choices.")
-                    continue
+                except RuntimeError:
+                    raise
 
-                return str(choices[0].get("message", {}).get("content", ""))
-
-            except (httpx.TransportError, httpx.TimeoutException) as exc:
-                elapsed = time.monotonic() - t_start
-                logger.warning(
-                    "[vlm_qwen] attempt %d/%d failed (%.2fs): %s",
-                    attempt,
-                    _MAX_RETRIES,
-                    elapsed,
-                    exc,
-                )
-                last_exc = exc
-
-            except RuntimeError:
-                raise
-
-            except Exception as exc:
-                elapsed = time.monotonic() - t_start
-                logger.warning(
-                    "[vlm_qwen] unexpected error attempt %d/%d (%.2fs): %s",
-                    attempt,
-                    _MAX_RETRIES,
-                    elapsed,
-                    exc,
-                )
-                last_exc = exc
+                except Exception as exc:
+                    elapsed = time.monotonic() - t_start
+                    logger.warning(
+                        "[vlm_qwen] unexpected error attempt %d/%d (%.2fs): %s",
+                        attempt,
+                        _MAX_RETRIES,
+                        elapsed,
+                        exc,
+                    )
+                    last_exc = exc
 
         raise RuntimeError(
             f"Qwen VLM API failed after {_MAX_RETRIES} attempts. "
@@ -290,6 +301,19 @@ class QwenVLMDetector:
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
+
+
+_BEARER_PATTERN: re.Pattern[str] = re.compile(r"(?i)Bearer\s+\S+")
+
+
+def _scrub_bearer(text: str) -> str:
+    """Replace any ``Bearer <token>`` occurrence in *text* with ``Bearer <redacted>``.
+
+    Used before echoing upstream API error bodies into exception messages —
+    OpenRouter and similar providers sometimes reflect the presented token
+    in 401/403 responses. L1 in v2.3 security review.
+    """
+    return _BEARER_PATTERN.sub("Bearer <redacted>", text)
 
 
 def _parse_array_response(text: str) -> list[dict[str, Any]]:
@@ -367,8 +391,9 @@ def _detection_from_raw(
 
         x1, y1, x2, y2 = (float(v) for v in bbox_raw[:4])
 
-        # Normalised-coord detection: scale to pixels
-        if max(x1, y1, x2, y2) <= 1.0:
+        # M1: only rescale if we have a meaningful pixel space — guard against
+        # tiny 1x1 images or a real pixel bbox that happens to fit in [0, 1].
+        if img_w > 1 and img_h > 1 and max(x1, y1, x2, y2) <= 1.0:
             x1 *= img_w
             y1 *= img_h
             x2 *= img_w

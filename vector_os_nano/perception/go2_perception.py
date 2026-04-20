@@ -31,6 +31,9 @@ class Go2Perception:
 
     Implements PerceptionProtocol via structural subtyping.
 
+    Not thread-safe — callers should invoke ``detect()`` / ``track()``
+    from a single thread (skill executor is sequential by design).
+
     Args:
         camera: Any object exposing ``get_camera_frame() -> np.ndarray``
                 and ``get_depth_frame() -> np.ndarray``.
@@ -53,8 +56,8 @@ class Go2Perception:
             intrinsics if intrinsics is not None else mujoco_intrinsics(320, 240, 42.0)
         )
         self._depth_trunc = depth_trunc
-        self._last_detections: list[Detection] = []
-        self._last_tracked: list[TrackedObject] = []
+        # M2: no mutable frame cache — Go2Perception is not thread-safe by design.
+        # Callers that want per-call results should hold on to the returned lists.
 
     # ------------------------------------------------------------------
     # PerceptionProtocol — frame accessors
@@ -83,9 +86,7 @@ class Go2Perception:
         Caches the last detections internally.
         """
         rgb = self.get_color_frame()
-        detections = self._vlm.detect(rgb, query)
-        self._last_detections = detections
-        return detections
+        return self._vlm.detect(rgb, query)
 
     # ------------------------------------------------------------------
     # PerceptionProtocol — depth-based tracking
@@ -122,7 +123,6 @@ class Go2Perception:
                     mask=None,
                 )
             )
-        self._last_tracked = out
         return out
 
     # ------------------------------------------------------------------
