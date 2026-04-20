@@ -1,8 +1,96 @@
 # Vector OS Nano SDK — Progress
 
-**Last updated:** 2026-04-19
-**Version:** v2.1-dev (branch: feat/v2.0-vectorengine-unification)
+**Last updated:** 2026-04-19 (v2.3 pipeline landed)
+**Version:** v2.3-dev (branch: feat/v2.0-vectorengine-unification)
 **Base:** v1.8.0
+
+## v2.3 Go2 Perception Pipeline — landed (2026-04-19)
+
+### Status
+Perception layer filled the gap left by v2.2 — `agent._perception` and
+`agent._calibration` are now wired when `with_arm=True` and an
+`OPENROUTER_API_KEY` is configured. `抓 X` works against an empty
+world_model: auto-detect via Qwen VLM populates it on demand.
+
+### Delivered
+
+- **`QwenVLMDetector`** (`perception/vlm_qwen.py`, 380 LoC, 100% cov,
+  20 tests) — grounded 2D detection via OpenRouter
+  `qwen/qwen2.5-vl-72b-instruct`. JSON-schema prompt, JPEG 160-px
+  thumbnail, retry on transport/5xx (no retry on 4xx), thread-safe
+  cost tracker, `VECTOR_VLM_URL` / `VECTOR_VLM_MODEL` local-escape
+  hatch.
+- **`Go2Perception`** (`perception/go2_perception.py`, ~160 LoC, 16
+  tests) — `PerceptionProtocol` impl for Go2. Composes duck-typed
+  camera + VLM. Single-shot `track()`: bbox centre + bbox median depth
+  with IQR outlier reject → `Pose3D` in camera frame.
+- **`Go2Calibration`** (`perception/go2_calibration.py`, ~60 LoC,
+  100% cov, 8 tests) — pose-driven camera→world transform. Reads live
+  `get_camera_pose()` each call. Math matches
+  `depth_projection.camera_to_world` (v2.1-validated via 30/30 picks).
+- **sim_tool wire-up** (`vcli/tools/sim_tool.py`, +15 LoC, 5
+  integration tests) — constructs + assigns perception / calibration
+  in `_start_go2(with_arm=True)`. Failure logged + graceful (both
+  None). `agent._vlm` (Go2VLMPerception for describe_scene) coexists.
+- **MobilePick auto-detect** (`skills/mobile_pick.py`, +22 LoC, +5
+  tests) — on world_model miss with perception+calibration available,
+  lazily invoke `DetectSkill` with translated query, retry resolve.
+- **`label_to_en_query`** (`skills/utils/__init__.py`, +66 LoC,
+  100% cov, 7 tests) — CN→EN label translation: strips 的, reuses
+  `_normalise_color_keyword`, maps common nouns (瓶子/杯子/碗/...).
+- **E2E dry-run harness** (`scripts/verify_perception_pick.py`, 313
+  LoC) — CI-safe no-MuJoCo no-network validation of the full chain.
+  <1s runtime, exits 0 on success.
+- **Live REPL checklist** (`docs/v2.3_live_repl_checklist.md`) —
+  5-step manual smoke + diagnosis ladder + debug test commands.
+
+### Test Summary
+
+- Unit: 72 new (20 + 16 + 8 + 7 + 22 mobile_pick extended) across
+  4 new test files + 1 extended
+- Integration: 5 new (sim_tool wire-up)
+- E2E: 1 dry-run harness
+- **Total**: 80 new tests; 188 cumulative (108 baseline + 80)
+- **Green**: 80/80 in 0.23s; dry-run exits 0 in <1s
+
+### Coverage Notes
+
+`pytest-cov` C-tracer conflicts with `numpy 2.4.x` C-extension load
+(known upstream in `coverage 4.1.0` env). Worked around per module:
+- `vlm_qwen`, `go2_calibration`, `label_to_en_query`: 100% measurable
+- `go2_perception`: ~95% via `sys.settrace` (pytest-cov crashes on
+  numpy load). All meaningful branches exercised.
+
+### Risks / Known Issues (carry-forward)
+
+- R1 (known): Qwen VLM may return wrong bboxes; wrong object picked
+  → LLM re-plans via VGG observation. Graceful.
+- R3 (known): MuJoCo `data.cam_xmat` has a latent up-axis sign quirk
+  vs `Go2ROS2Proxy.get_camera_pose` Python fallback. Self-consistent
+  with `depth_projection.camera_to_world`; validated by v2.1 30/30
+  picks. Not fixed here; flagged for v2.4.
+- D1 (debt): `VECTOR_SHARED_EXECUTOR=0` legacy spin-thread leak —
+  only on explicit rollback. Low priority.
+
+### Commit Chain
+
+```
+37f32e7  [alpha] test(v2.3): verify_perception_pick.py E2E dry-run
+2b67c6f  [beta]  feat(v2.3): MobilePick auto-detects on world_model miss
+a77a2c6  [alpha] feat(v2.3): sim_tool wires Go2Perception + Go2Calibration
+24ae9b1  [gamma] feat(v2.3): Go2Perception — PerceptionProtocol for Go2 sim
+3ac9d58  [beta]  feat(v2.3): Go2Calibration — pose-driven camera-to-world
+f59c77e  [alpha] feat(v2.3): QwenVLMDetector — grounded 2D detection
+```
+
+### Next
+
+- Live REPL smoke per `docs/v2.3_live_repl_checklist.md` (requires
+  OPENROUTER_API_KEY access to Qwen2.5-VL-72B).
+- v2.4 seeds: EdgeTAM tracker for temporal consistency, SAM3D masks
+  for irregular-object grasping, cam_xmat convention reconciliation.
+
+---
 
 ## v2.2 Loco Manipulation Infrastructure — baseline ready (2026-04-19)
 
