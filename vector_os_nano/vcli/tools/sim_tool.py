@@ -388,6 +388,21 @@ class SimStartTool:
             except Exception as exc:
                 logger.warning("[sim_tool] demo-populate failed: %s", exc)
 
+        # v2.3: perception + calibration wire-up for Go2 with-arm mode
+        if with_arm and api_key:
+            try:
+                from vector_os_nano.perception.vlm_qwen import QwenVLMDetector
+                from vector_os_nano.perception.go2_perception import Go2Perception
+                from vector_os_nano.perception.go2_calibration import Go2Calibration
+                qwen = QwenVLMDetector(config={"api_key": api_key})
+                agent._perception = Go2Perception(camera=base, vlm=qwen)
+                agent._calibration = Go2Calibration(base_proxy=base)
+                logger.info("[sim_tool] Go2 perception + calibration wired (Qwen)")
+            except Exception as exc:
+                logger.warning("[sim_tool] Perception wire-up failed: %s", exc)
+                agent._perception = None
+                agent._calibration = None
+
         # Go2 skills
         from vector_os_nano.skills.go2 import get_go2_skills  # type: ignore[import]
         for skill in get_go2_skills():
