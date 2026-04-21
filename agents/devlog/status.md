@@ -1,69 +1,93 @@
 # Agent Status
 
-**Updated:** 2026-04-19 end-of-day
+**Updated:** 2026-04-19 (v2.3 implementation landed, QA pending)
 **Branch:** `feat/v2.0-vectorengine-unification`
 
 ## Current state
 
-**v2.2 Loco Manipulation Infrastructure — BASELINE READY**
+**v2.3 Go2 Perception Pipeline — IMPLEMENTATION DONE, QA PENDING**
 
-Shortcut design (MJCF populate, VGG source-hint skipping detect_*, pick
-single-candidate / generic fallback) has been removed. World model now
-starts empty by design; skills must be driven by real perception. This
-is the correct platform for the next cycle.
+All 6 code tasks + 1 docs task complete. 80 new tests green
+(188 cumulative). Full `抓 X` flow now runs against an empty
+world_model via Qwen VLM auto-detect. Ready for Wave 4 QA
+(code-review + security-review in parallel) and Yusen's
+live-REPL smoke.
 
-## Next session — v2.3 Perception Pipeline (SO-101 style, for Go2)
+## Wave summary
 
-Goal: mirror the SO-101 perception pattern so `抓个东西` walks the full
-pipeline `look → detect (VLM + depth → 3D) → mobile_pick → place`.
+| Wave | Tasks | Agents | Tests added | Gate |
+|------|-------|--------|-------------|------|
+| W1 | T1 Qwen · T2 Calibration · T3 Perception | Alpha · Beta · Gamma (serial after OOM lesson) | 44 | GREEN |
+| W2 | T4 sim_tool wire · T5 MobilePick + label helper | Alpha · Beta | 31 | GREEN |
+| W3 | T6 E2E dry-run harness | Alpha | 1 dry-run | GREEN |
+| W4 docs | T7 live REPL checklist + progress | Dispatcher (direct) | — | DONE |
+| W4 QA | code-review + security-review | subagents (pending) | — | PENDING |
 
-### Scope sketch
+## Commit chain (v2.3, feat/v2.0-vectorengine-unification)
 
-1. **`Go2Perception`** class under `vector_os_nano/perception/go2_perception.py`
-   - `.detect(query: str) -> list[Detection]` — VLM with normalized bboxes
-   - `.track(detections) -> list[TrackedObject]` — depth-based 3D centroid
-   - Integrates existing `Go2VLMPerception.find_objects` + `/camera/depth`
-2. **`Go2Calibration`** class — camera intrinsics + head→base TF from
-   MJCF/URDF; base→world from odometry
-3. **`sim_tool._start_go2`** wires `agent._perception = Go2Perception(...)`
-   + `agent._calibration = Go2Calibration(...)` when `with_arm=True`
-4. **`DetectSkill`** now alive on Go2 (was dead — no `context.perception`)
-5. **`MobilePickSkill._resolve_target`** — world_model miss → auto invoke
-   `context.perception.detect(query)` → retry; on success world_model
-   gets a fresh `ObjectState` with perception-derived `(x, y, z)`
-6. **E2E harness** — extend `verify_loco_pick_place.py` to exercise
-   "perception → pick" path (no MJCF pre-populate)
+```
+37f32e7  [alpha] test(v2.3): verify_perception_pick.py E2E dry-run
+2b67c6f  [beta]  feat(v2.3): MobilePick auto-detects on world_model miss
+a77a2c6  [alpha] feat(v2.3): sim_tool wires Go2Perception + Go2Calibration
+24ae9b1  [gamma] feat(v2.3): Go2Perception — PerceptionProtocol for Go2 sim
+3ac9d58  [beta]  feat(v2.3): Go2Calibration — pose-driven camera-to-world
+f59c77e  [alpha] feat(v2.3): QwenVLMDetector — grounded 2D detection
+```
 
-### Known non-goals for v2.3
-- SAM3D per-pixel masks (v2.4+)
-- Multi-view fusion
-- Real Piper hardware driver
-- Arm-base coordinated motion
+## Runtime safety notes
 
-### Open debt carried in
-- Legacy rollback spin thread (`VECTOR_SHARED_EXECUTOR=0`) leaks on
-  disconnect — only if the flag is set. Cleanup in v2.3.
-- Divergent `_wait_stable` impls in mobile_pick vs mobile_place —
-  extract to `skills/utils/mobile_helpers.py`.
-- LLM-generated sub_goal names not matching any strategy ("approach_object"
-  / "grasp_object") → `"No strategy for: unmatched"`. Decomposer needs
-  to constrain strategy field to registered skill names.
+First Wave 1 dispatch (3 parallel subagents) triggered OOM crash —
+each agent ran full `pytest tests/` which auto-loads MuJoCo from a
+cascade through `pipeline.py`. 3 concurrent MuJoCo contexts
+exhausted 64 GB RAM. Agents killed mid-flight, all files lost.
+
+Recovery strategy applied throughout v2.3:
+- Serial subagent dispatch (one at a time)
+- Subagents run only their own single test file, never full pytest
+- Dispatcher runs narrow-scope regressions at wave gates
+- Forbidden-import list in every subagent prompt
+  (pipeline, track_anything, mujoco, realsense, tracker)
+
+Memory `feedback_no_parallel_agents.md` updated with stricter rules.
+
+## Known issues / debt
+
+- `VECTOR_SHARED_EXECUTOR=0` legacy spin path leaks (rollback-only).
+- `pytest-cov` C-tracer conflicts with `numpy 2.4.x` — coverage
+  measured via `sys.settrace` for `go2_perception`.
+- Camera `xmat` up-axis convention — self-consistent between
+  `get_camera_pose` Python fallback and `camera_to_world`, but may
+  diverge from MuJoCo `data.cam_xmat` in live usage. Flag for v2.4
+  if live smoke shows lateral offset error.
+
+## Live REPL verification
+
+Checklist: `docs/v2.3_live_repl_checklist.md` (5 steps + diagnosis
+ladder). Requires real `OPENROUTER_API_KEY` with Qwen2.5-VL-72B
+access.
+
+## Next
+
+1. QA: code-reviewer + security-reviewer in parallel (Wave 4)
+2. Yusen final approval
+3. Live REPL smoke (Yusen)
+4. v2.4 seeds: EdgeTAM tracker, SAM3D masks, cam_xmat
+   reconciliation, mobile_helpers.py extraction
 
 ## Reference
 
-- Spec: `.sdd/spec.md` (v2.2)
-- Plan: `.sdd/plan.md`
-- Tasks: `.sdd/task.md` (13/13 done)
-- Debug: `.sdd/DEBUG.md` (hypothesis loop for "抓个东西" failure + hotfix)
-- Summaries: `.sdd/summaries/wave-{1..4}.md`, `hotfix-generic-query.md`
-- Executive brief: `.sdd/executive-briefs/completion-report.md`
-- Live REPL checklist: `docs/v2.2_live_repl_checklist.md`
+- Spec: `.sdd/spec.md` (v2.3)
+- Plan: `.sdd/plan.md` (v2.3)
+- Tasks: `.sdd/task.md` (7/7 done; 6 code + 1 docs)
+- Archive: `.sdd/archive-v2.2/` (previous cycle frozen)
+- E2E: `scripts/verify_perception_pick.py --dry-run`
+- Live checklist: `docs/v2.3_live_repl_checklist.md`
 
-## Session starter for next time
+## Session starter (next time)
 
 ```
 cd ~/Desktop/vector_os_nano
 cat agents/devlog/status.md           # this file
-cat progress.md | head -80            # v2.2 state
-/sdd init                             # kick off v2.3 perception SDD
+cat progress.md | head -100           # v2.3 change log
+python3 scripts/verify_perception_pick.py --dry-run  # 1s sanity
 ```

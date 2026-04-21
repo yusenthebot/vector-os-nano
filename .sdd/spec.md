@@ -1,421 +1,369 @@
-# Spec — v2.2 Loco Manipulation Readiness
+# v2.3 Go2 Perception Pipeline — Specification
 
-**Status**: DRAFT (awaiting CEO approval)
-**Version**: v2.2 (builds on v2.1 Phase A+B+C on branch `feat/v2.0-vectorengine-unification`)
-**Owner**: Architect (Opus)
-**Date**: 2026-04-19
+**Status**: DRAFT — awaiting CEO approval
+**Scope**: MuJoCo-sim only. Sim-to-real deferred to v2.4+.
+**Branch**: `feat/v2.0-vectorengine-unification` (same branch as v2.2)
 
----
+## 1. Overview
 
-## 1. Problem Statement
+Give the Go2+Piper sim the same `context.perception.detect() + track()`
+contract SO-101 already uses, so `DetectSkill` / `MobilePickSkill` work
+end-to-end on live Go2. Replaces the MJCF-populate shortcut (removed in
+v2.2) with a real perception loop driven by Qwen VLM and MuJoCo depth.
 
-v2.1 implemented **static pick** (PickTopDownSkill: dog stands still, Piper arm
-grasps a known object). Live REPL validation on 2026-04-19 found 3 blocking
-bugs preventing the skill from running in a real `go2sim with_arm=1` session.
-Separately, the system has **no place skill** for the Piper and **no
-composition** for "dog walks to object, then picks" — both required for
-loco manipulation.
+Target user flow after v2.3:
 
-Goal: unblock the live REPL path, add the missing primitives, and compose
-them into mobile pick/place so the next session can run an end-to-end
-"狗走到桌 A 抓蓝瓶 → 搬到桌 B 放下" demo.
+```
+go2sim with_arm=1            # launch stack, world_model empty
+抓个蓝色瓶子                   # LLM picks MobilePickSkill
+  └─ _resolve_target miss    # world_model has nothing
+      └─ auto-detect via context.perception  (NEW)
+          ├─ Qwen detect("blue bottle") → bbox
+          ├─ depth project bbox centre → 3D in camera frame
+          └─ calibration.camera_to_base → world xyz → upsert
+      └─ _resolve_target retry → hit
+  └─ approach_pose / navigate / wait_stable
+  └─ PickTopDownSkill (existing) → held=True
+```
 
----
+## 2. Background & Motivation
 
-## 2. In Scope
+v2.2 shipped the manipulation infrastructure (`MobilePickSkill`,
+`MobilePlaceSkill`, `PlaceTopDownSkill`, `Ros2Runtime`) and removed the
+MJCF-populate shortcut that pretended object positions were known a
+priori. The baseline is now clean — world_model starts empty — but
+`context.perception` remains `None` on Go2, so `DetectSkill` returns
+`no_perception` and the full pipeline breaks at the first step.
 
-1. **Bug 1 fix** — rclpy executor sharing: single `MultiThreadedExecutor`
-   shared by all ROS2 proxies in the main process.
-2. **Bug 2 fix** — object label matching: Chinese color keyword normaliser
-   + single-candidate fallback, so "抓绿色" resolves to "green bottle".
-3. **Bug 3 fix** — VGG `source` metadata honoured: skills declaring
-   `source: world_model.*` must NOT trigger `detect_*` fallback.
-4. **PlaceTopDownSkill** — drop-a-held-object skill, Piper-specific, mirror
-   of `pick_top_down` (pre-place → descend → open → lift).
-5. **compute_approach_pose utility** — shared (x, y, yaw) planner for
-   stopping the dog at a reachable distance facing the target.
-6. **MobilePickSkill** — compose navigate → wait_stable → pick_top_down.
-7. **MobilePlaceSkill** — compose navigate → wait_stable → place_top_down.
-8. **E2E harness** — `scripts/verify_loco_pick_place.py` executing the
-   full pick-and-place loop in fresh subprocesses.
+SO-101 already has this wired (`PerceptionPipeline(RealSense, Moondream,
+EdgeTAM)` → `context.perception`). Go2 has `Go2VLMPerception` but it
+returns `DetectedObject` (name + description, **no bboxes**), not the
+`list[Detection] + list[TrackedObject]` the `PerceptionProtocol`
+requires. That gap is the reason `抓个东西` doesn't work.
 
-## 3. Out of Scope
+Additional gap: `DetectSkill` expects `context.calibration.camera_to_base(cam_xyz)`
+to return a base-frame position. SO-101's calibration does this via
+hand-eye RBF fitted from training points. Go2 has no calibration points
+— it needs a pose-driven calibration computed from odometry + static
+mount geometry.
 
-- Perception-driven grasp (RealSense + SAM3D → pose) — future Phase E.
-- Real Piper hardware driver — future.
-- Angled/side grasps — top-down only for now.
-- Force feedback / torque-controlled grasp — position control only.
-- MPC gait for with-arm mode — still sinusoidal (v2.1 decision stands).
-- Multi-object clutter reasoning — single target only.
-- Receptacle detection / collision avoidance against furniture during place.
-- VGG auto-decomposition of "去厨房拿杯子" into nav+pick — VGG layer adds
-  it later; mobile_pick is a direct skill for determinism.
+## 3. Goals
 
-## 4. User Stories
+### MUST
+- **G1**: `Go2Perception` class implementing `PerceptionProtocol`
+  (`get_color_frame / get_depth_frame / get_intrinsics / detect / track`)
+  on top of `Go2ROS2Proxy` frames (`/camera/image`, `/camera/depth`).
+- **G2**: `Go2Calibration` class exposing `camera_to_base(cam_xyz)` that
+  returns **world-frame** coordinates (semantically: "the frame the
+  world_model uses"). Pose-driven — reads `Go2ROS2Proxy.get_camera_pose()`
+  per call.
+- **G3**: `QwenVLMDetector` class calling OpenRouter
+  `qwen/qwen2.5-vl-72b-instruct`, returning `list[Detection]` with
+  pixel-space bboxes.
+- **G4**: `sim_tool._start_go2(with_arm=True)` wires `agent._perception
+  = Go2Perception(camera=base, vlm=QwenVLMDetector(...))` and
+  `agent._calibration = Go2Calibration(base_proxy=base)`.
+- **G5**: `DetectSkill` works live on Go2 — `detect("blue bottle")`
+  populates `world_model` with at least one `ObjectState` with valid
+  world-frame xyz.
+- **G6**: `MobilePickSkill._resolve_target` — on world_model miss AND
+  `context.perception` available — auto-invokes `DetectSkill`, then
+  retries resolve. On miss without perception: existing
+  `object_not_found` error is preserved.
+- **G7**: Live-REPL end-to-end: `go2sim with_arm=1 → 抓个蓝色瓶子`
+  succeeds without pre-populating world_model.
 
-- **US-1** As Yusen, when I say `go2sim with_arm=1` and then "抓前面绿色",
-  the arm executes `pick_top_down` against the green bottle without
-  `Executor is already spinning` errors, `Cannot locate target object`
-  errors, or `No perception backend` fallbacks.
-- **US-2** As Yusen, after picking a bottle, when I say "放到前面" or
-  `place_top_down target_xyz=(11.0, 3.2, 0.25)`, the arm releases the
-  object at that location.
-- **US-3** As Yusen, from dog spawn (far from table), when I say
-  "mobile_pick object_label='blue bottle'", the dog walks to a reachable
-  approach pose, waits for stability, and picks the bottle — one command,
-  one skill.
-- **US-4** As Yusen, running `verify_loco_pick_place.py`, the full
-  navigate→pick→navigate→place loop succeeds 3/3 times in fresh
-  subprocesses.
+### SHOULD
+- **S1**: Unit coverage ≥95% on `vlm_qwen.py`, `go2_perception.py`,
+  `go2_calibration.py`.
+- **S2**: Qwen VLM call latency budget ≤ 4 s per detect call at
+  `_VLM_IMAGE_MAX_DIM=160` JPEG encoding (already used by `Go2VLMPerception`).
+- **S3**: Depth denoising: bbox-masked median depth with IQR outlier
+  rejection (same pattern as `PerceptionPipeline._remove_depth_outliers`).
+- **S4**: E2E harness `scripts/verify_perception_pick.py` with
+  `--dry-run` mode (mock Qwen response + synthetic depth) for CI.
+- **S5**: Local-VLM escape hatch: honour existing `VECTOR_VLM_URL` env
+  var to route Qwen calls to a local OpenAI-compatible endpoint
+  (e.g. vLLM on the RTX 5080) without code change.
 
-## 5. Non-Functional Requirements
+### MAY
+- **M1**: Cost / latency telemetry surfaced via
+  `engine._vgg_step_callback` so the REPL can show "VLM: 1.8s, $0.0012"
+  during perception.
+- **M2**: Per-call `Go2Perception` frame freshness check (warn if RGB/depth
+  drift > 500 ms).
 
-- **Reliability**: mobile_pick success rate ≥ 80% across 5 fresh runs
-  (same scene, dog spawned at origin).
-- **Latency**: Bug fixes must not regress static pick latency (<6 s from
-  IK call to grasped_heuristic).
-- **Determinism**: E2E harness must NOT rely on wall-clock `time.sleep()`
-  for synchronisation; use odom-based stability detection.
-- **Safety**: Dog must NOT collide with pick_table during approach
-  (nav stack safety radius handles this; mobile_pick merely stops ≥ 55 cm
-  away).
-- **Backward compat**: existing static pick (30 unit + 30 E2E) must pass
-  unchanged. Existing navigate / explore / walk skills unchanged.
+## 4. Non-Goals (explicitly out of scope)
 
-## 6. Tech Stack (no new entries)
+- **NG1**: SAM3D / per-pixel masks. We use bbox centroid + median depth
+  only.
+- **NG2**: EdgeTAM or any temporal tracker. `track()` is single-shot
+  per call (treat each VLM detect as independent; no persistence beyond
+  world_model upsert).
+- **NG3**: Multi-view fusion or active perception (move to see).
+- **NG4**: Real Piper / real Go2 hardware integration. MuJoCo sim only.
+- **NG5**: Sim-to-real: distortion coefficients, real-D435 depth scale
+  (0.001), real ROS2 topic names (`/camera/color/image_raw` etc.),
+  real TF tree via `tf2_ros`. All deferred to a later cycle.
+- **NG6**: Confidence-weighted merge / Kalman-filter tracking in
+  world_model. Upsert-by-id (current `WorldModel.add_object` behavior)
+  is sufficient.
+- **NG7**: Retraining / fine-tuning the VLM. Use Qwen2.5-VL-72B as-is.
 
-- MuJoCo 3.6+ (existing go2_piper MJCF)
-- ROS2 Jazzy (existing topics + one shared executor)
-- Pinocchio-free IK (existing damped-least-squares in PiperROS2Proxy)
-- pytest (unit) + subprocess harness (E2E)
+## 5. User Scenarios
 
-No new external dependencies.
+### Scenario 1: Fresh sim, VLM-driven grasp
+
+- **Actor**: Yusen at the vector-cli REPL.
+- **Trigger**: `go2sim with_arm=1` then `抓起蓝色瓶子`.
+- **Expected Behavior**:
+  1. Sim launches, world_model empty, `agent._perception ≠ None`.
+  2. LLM routes to `MobilePickSkill`.
+  3. Skill finds world_model empty → invokes `DetectSkill("blue bottle")`.
+  4. Qwen returns 1–3 bboxes; depth projection yields world-frame xyz.
+  5. `MobilePickSkill` retries resolve, gets target, navigates, picks.
+- **Success Criteria**: Pick succeeds with `held=True` and lift >2 cm;
+  no crashes; VLM call completes in <4 s.
+
+### Scenario 2: No perception configured
+
+- **Actor**: Engineer running unit tests.
+- **Trigger**: `MobilePickSkill` with `context.perception = None` and
+  empty world_model.
+- **Expected Behavior**: Returns `object_not_found` with
+  `"Known pickable objects: []"` message (unchanged v2.2 behavior).
+- **Success Criteria**: No AttributeError; `diagnosis = "object_not_found"`
+  (not `no_perception`).
+
+### Scenario 3: VLM API failure
+
+- **Actor**: Skill executor during sim run.
+- **Trigger**: OpenRouter returns 503 for 2 consecutive retries.
+- **Expected Behavior**: `DetectSkill` returns
+  `success=False, diagnosis="no_perception"` with error string
+  including retry count. `MobilePickSkill` bubbles up as
+  `object_not_found` (perception unreachable → treated as "no data").
+- **Success Criteria**: No hang >30 s; no infinite retry; clean error.
+
+### Scenario 4: VLM returns bbox for wrong object
+
+- **Actor**: Skill executor; VLM returned a `"bottle"` bbox over a coke
+  can.
+- **Expected Behavior**: `DetectSkill` writes the ObjectState under
+  the returned label. MobilePickSkill resolves on label → picks up the
+  coke can. User gets the wrong object, but no crash.
+- **Success Criteria**: Graceful failure / graceful wrong pick. LLM can
+  re-plan based on VGG observation of what was picked.
+
+## 6. Technical Constraints
+
+- **Runtime**: Ubuntu 24.04, ROS2 Jazzy (via `Ros2Runtime` shared
+  executor), Python 3.12.
+- **VLM**: OpenRouter `qwen/qwen2.5-vl-72b-instruct`. API key via
+  `OPENROUTER_API_KEY` env var or `config/user.yaml` (existing path).
+- **Camera source**: `Go2ROS2Proxy.get_rgbd_frame()` — 320×240, RGB8 +
+  float32 m depth, published at 5 Hz by `Go2VNavBridge` from the
+  MJCF-declared `d435_rgb` / `d435_depth` cameras.
+- **Intrinsics**: `mujoco_intrinsics(320, 240, vfov_deg=42.0)` (matches
+  MJCF `fovy=42`).
+- **Camera mount** (MJCF `go2_piper.xml` line 188):
+  `body d435_camera pos="0.25 0 0.1" quat="0.999054 0 0.0434863 0"`
+  (~5° downward pitch on trunk). `Go2ROS2Proxy.get_camera_pose()`
+  already produces world xmat from this geometry.
+- **Depth convention**: OpenCV (x=right, y=down, z=forward) — matches
+  `pixel_to_camera()` in `depth_projection.py`.
+- **No new ROS2 interfaces**: no new topic / service / action /
+  parameter declarations. All changes are Python-side.
+- **No changes to**: Piper / gripper proxies; pick / place skills;
+  MPC / MuJoCo scene; nav stack.
 
 ## 7. Interface Definitions
 
 ### 7.1 New Python modules
 
-| Module | Kind | Public symbols |
-|---|---|---|
-| `vector_os_nano/hardware/ros2/runtime.py` | singleton helper | `Ros2Runtime`, `get_ros2_runtime() -> Ros2Runtime`, `Ros2Runtime.add_node(node)`, `.remove_node(node)`, `.shutdown()` |
-| `vector_os_nano/skills/utils/approach_pose.py` | util | `compute_approach_pose(object_xyz, dog_pose, clearance=0.55, approach_direction=None) -> (x, y, yaw)` |
-| `vector_os_nano/skills/place_top_down.py` | skill | `PlaceTopDownSkill` (name `place_top_down`, aliases 放/放下/放到/put/drop) |
-| `vector_os_nano/skills/mobile_pick.py` | skill | `MobilePickSkill` (name `mobile_pick`, aliases 去拿/去抓/go-grab) |
-| `vector_os_nano/skills/mobile_place.py` | skill | `MobilePlaceSkill` (name `mobile_place`, aliases 拿去放/送到) |
+```
+vector_os_nano/perception/vlm_qwen.py
+    class QwenVLMDetector:
+        def __init__(self, config: dict | None = None) -> None: ...
+        def detect(self, image: np.ndarray, query: str) -> list[Detection]: ...
+        @property
+        def cumulative_cost_usd(self) -> float: ...
+
+vector_os_nano/perception/go2_perception.py
+    class Go2Perception:                # implements PerceptionProtocol
+        def __init__(self, camera: Go2ROS2Proxy, vlm: QwenVLMDetector,
+                     intrinsics: CameraIntrinsics | None = None) -> None: ...
+        def get_color_frame(self) -> np.ndarray: ...
+        def get_depth_frame(self) -> np.ndarray: ...
+        def get_intrinsics(self) -> CameraIntrinsics: ...
+        def detect(self, query: str) -> list[Detection]: ...
+        def track(self, detections: list[Detection]) -> list[TrackedObject]: ...
+        def get_point_cloud(self, mask: np.ndarray | None = None) -> np.ndarray: ...
+
+vector_os_nano/perception/go2_calibration.py
+    class Go2Calibration:
+        def __init__(self, base_proxy: Go2ROS2Proxy) -> None: ...
+        def camera_to_base(self, point_camera: np.ndarray) -> np.ndarray:
+            """Return WORLD-frame xyz. Naming 'base' keeps parity with
+            SO-101 Calibration where arm-base IS world. For Go2, world is
+            the coordinate system world_model and MobilePickSkill use."""
+```
 
 ### 7.2 Modified Python modules
 
-| Module | Change |
+| File | Change |
 |---|---|
-| `hardware/sim/go2_ros2_proxy.py` | Replace own `rclpy.spin()` thread with `Ros2Runtime.add_node(self._node)`. On `disconnect()`, `Ros2Runtime.remove_node`. |
-| `hardware/sim/piper_ros2_proxy.py` | Same replacement for `PiperROS2Proxy` + `PiperGripperROS2Proxy`. |
-| `skills/pick_top_down.py` | `_resolve_target` gains Chinese color normaliser + single-candidate fallback. |
-| `vcli/cognitive/harness.py` or `goal_decomposer.py` | Respect `parameters[*].source` metadata: if any param lists `world_model.*`, skip auto-injection of `detect_*` fallback step. |
-| `vcli/tools/sim_tool.py` | When `with_arm=True`, register `MobilePickSkill` + `MobilePlaceSkill` + `PlaceTopDownSkill` (like current PickTopDownSkill registration). |
+| `vcli/tools/sim_tool.py::_start_go2(with_arm=True)` | After Piper wiring: construct `QwenVLMDetector` (re-use `api_key`), `Go2Perception(camera=base, vlm=…)`, `Go2Calibration(base_proxy=base)`; assign to `agent._perception` / `agent._calibration`. Keep `agent._vlm = Go2VLMPerception` unchanged (caption / identify_room). |
+| `skills/mobile_pick.py::execute` | After first `_resolve_target` miss: if `context.perception` available AND `context.calibration` available → run `DetectSkill({"query": _label_to_en_query(params)})` → retry resolve. On perception unavailable: fall through to existing `object_not_found`. |
+| `skills/utils/__init__.py` | Add `_label_to_en_query(label: str) -> str` helper (CN → EN, strip trailing "的", uses `_normalise_color_keyword` already present for colours). |
 
-### 7.3 ROS2 interfaces
+### 7.3 External dependencies
 
-**No new topics / services / actions.** Existing `/piper/joint_cmd`,
-`/piper/joint_state`, `/piper/gripper_cmd`, `/odom_to_base`, `/way_point`
-are sufficient. This keeps us out of CEO's new-interface gate.
+- `httpx` (already pinned) — Qwen OpenRouter calls.
+- `numpy` (already pinned) — depth math.
+- **No new package dependencies.**
 
-### 7.4 Skill metadata (VGG contract)
+### 7.4 Environment variables (new / reused)
 
-`PickTopDownSkill`, `PlaceTopDownSkill`, `MobilePickSkill`,
-`MobilePlaceSkill` declare `parameters[*].source` with values from:
-- `"world_model.objects.object_id"` — exact id lookup
-- `"world_model.objects.label"` — label lookup (with color normaliser)
-- `"static"` — literal value, no perception needed
-- `"explicit"` — caller provides xyz directly
+| Var | Purpose | Default |
+|---|---|---|
+| `OPENROUTER_API_KEY` | Qwen API key | (existing) |
+| `VECTOR_VLM_URL` | Route Qwen calls to local OpenAI-compatible endpoint | unset (use OpenRouter) |
+| `VECTOR_VLM_MODEL` | Override Qwen model id | `qwen/qwen2.5-vl-72b-instruct` |
+| `VECTOR_PERCEPTION_DRYRUN` | E2E test only: mock Qwen response + synthetic depth | 0 |
 
-VGG decomposer reads these and, if no `source: perception.*` appears,
-skips inserting a `detect_*` pre-step.
+## 8. Test Contracts
 
-### 7.5 `Ros2Runtime` contract
+### 8.1 Unit test contracts (pytest, no ROS2, no MuJoCo)
 
-```python
-class Ros2Runtime:
-    """Process-singleton holder for rclpy executor + nodes."""
+#### QwenVLMDetector
+- [ ] `test_qwen_detect_parses_json_bbox_list` — mock httpx 200 with
+      `[{"label":"bottle","bbox":[10,20,30,40],"confidence":0.9}]`;
+      returns `[Detection(label="bottle", bbox=(10,20,30,40))]`.
+- [ ] `test_qwen_detect_parses_markdown_fenced_json` — mock 200 with
+      ` ```json\n[...]\n``` `; parses correctly (reuse
+      `_parse_json_response` from `vlm_go2.py`).
+- [ ] `test_qwen_detect_empty_response_returns_empty_list` — mock `[]`.
+- [ ] `test_qwen_detect_timeout_retries_then_fails` — two httpx
+      `TimeoutException` → RuntimeError after `_MAX_RETRIES=2`.
+- [ ] `test_qwen_detect_4xx_does_not_retry` — mock 401 → RuntimeError
+      after 1 attempt.
+- [ ] `test_qwen_detect_normalised_bbox_scaled_to_pixels` — mock
+      response with bbox in 0–1 range; scaled to frame WxH.
+- [ ] `test_qwen_detect_cost_tracked` — accumulates on success.
+- [ ] `test_qwen_detect_honours_VECTOR_VLM_URL_env` — local mode, no
+      auth header, model from `VECTOR_VLM_MODEL`.
 
-    def add_node(self, node: rclpy.node.Node) -> None:
-        """Register node with shared executor. Idempotent.
-        Starts the singleton spin thread on first call. Thread-safe."""
+#### Go2Perception
+- [ ] `test_go2_perception_get_color_delegates_to_proxy`
+- [ ] `test_go2_perception_get_depth_delegates_to_proxy`
+- [ ] `test_go2_perception_detect_calls_vlm_with_color_frame` — mock
+      proxy returns fixed RGB; verify `vlm.detect(rgb, query)` called.
+- [ ] `test_go2_perception_track_single_detection_projects_centroid` —
+      synthetic depth frame (all pixels = 1.5 m); bbox (100,80,150,120);
+      intrinsics fx=fy=262, cx=160, cy=120; verify
+      `TrackedObject.pose = Pose3D(x≈-0.206, y≈-0.114, z=1.5)` in
+      camera frame (OpenCV convention).
+- [ ] `test_go2_perception_track_handles_bbox_with_no_valid_depth` —
+      depth all zero; `pose = None`, `bbox_2d` populated.
+- [ ] `test_go2_perception_track_uses_median_depth_in_bbox` — depth =
+      1.0 m in bbox except one outlier at 9 m; median = 1.0 m.
+- [ ] `test_go2_perception_track_ignores_nan_depth_pixels` — bbox
+      contains NaN pixels; they're filtered before median.
+- [ ] `test_go2_perception_track_returns_same_length_as_detections` —
+      len(tracked) == len(detections), one-to-one.
 
-    def remove_node(self, node: rclpy.node.Node) -> None:
-        """Unregister. Does NOT destroy the node (caller owns it)."""
+#### Go2Calibration
+- [ ] `test_calibration_dog_at_origin_facing_x_forward_1m` — dog pose
+      `(0,0,0,0)`, cam point `(0, 0, 1.0)` (1 m forward in camera
+      frame); result ≈ `(1.3, 0, 0.05)` accounting for 0.3 m mount
+      forward + 0.05 m up + -5° pitch.
+- [ ] `test_calibration_respects_heading_90deg` — dog facing +Y (yaw
+      π/2); cam point 1 m forward; result `(0, 1.3, 0.05)`.
+- [ ] `test_calibration_offset_dog_position_adds_to_world` — dog at
+      `(5, 3, 0.28)`; same cam point; result shifted by (5, 3, 0.28+0.05).
+- [ ] `test_calibration_camera_to_base_shape_preserved` — input (3,),
+      output (3,).
 
-    def shutdown(self) -> None:
-        """Stop executor, join spin thread, call rclpy.shutdown().
-        Called at process exit or sim_tool teardown."""
-```
+#### MobilePickSkill (auto-detect retry)
+- [ ] `test_mobile_pick_retries_via_perception_on_world_model_miss` —
+      stub context with `perception.detect` returning 1 detection,
+      `.track` returning 1 tracked with pose; verify `world_model.add_object`
+      called and second `_resolve_target` returns the new object.
+- [ ] `test_mobile_pick_no_retry_when_perception_none` — preserves
+      existing `object_not_found` behavior.
+- [ ] `test_mobile_pick_no_retry_when_calibration_none` — same (can't
+      transform cam→world without calibration).
+- [ ] `test_mobile_pick_surfaces_vlm_error_as_object_not_found` — VLM
+      raises RuntimeError → skill returns `object_not_found`, not crash.
 
-Initialisation:
-- First `add_node()` call invokes `rclpy.init()` if not initialised,
-  creates `MultiThreadedExecutor(num_threads=4)`, starts daemon spin thread.
-- Subsequent `add_node()` calls simply `executor.add_node(node)`.
-- `get_ros2_runtime()` returns the process singleton (lazy construct).
+### 8.2 Integration test contracts (rclpy, no MuJoCo)
 
-### 7.6 `compute_approach_pose` contract
+- [ ] `test_sim_tool_start_go2_with_arm_wires_perception` — mock
+      Go2ROS2Proxy.connect; verify `agent._perception` is
+      `Go2Perception` and `agent._calibration` is `Go2Calibration`.
+- [ ] `test_sim_tool_start_go2_without_arm_leaves_perception_none` —
+      non-manipulation mode; perception stays None.
+- [ ] `test_sim_tool_start_go2_with_arm_no_api_key_skips_perception` —
+      config has no API key; perception None, `_vlm` None; no crash.
 
-```python
-def compute_approach_pose(
-    object_xyz: tuple[float, float, float],
-    dog_pose: tuple[float, float, float],     # (x, y, yaw)
-    clearance: float = 0.55,                   # metres
-    approach_direction: str | None = None,     # "from_dog" | "from_normal" | None=auto
-) -> tuple[float, float, float]:               # (x, y, yaw) world frame
-```
+### 8.3 E2E contract (MuJoCo-optional dry-run)
 
-Algorithm:
-- Compute unit vector `v` from object to dog in world XY plane.
-- Approach pose XY = `object_xyz[:2] + clearance * v`.
-- Approach yaw = `atan2(object_y - approach_y, object_x - approach_x)`
-  (dog faces object).
-- `approach_direction="from_dog"` (default): `v` = dog-to-object direction
-  reversed. Best when dog already roughly faces object.
-- `approach_direction="from_normal"`: not implemented in v2.2 (needs
-  table-normal inference); reserved for v2.3 so caller API is stable.
-
-### 7.7 `MobilePickSkill` contract
-
-Parameters (same VGG metadata pattern as PickTopDownSkill):
-- `object_id` (str, optional, `source: world_model.objects.object_id`)
-- `object_label` (str, optional, `source: world_model.objects.label`)
-- `skip_navigate` (bool, default false, `source: static`) — if dog already
-  reachable, skip nav step (debug use).
-
-Flow:
-1. Resolve target via WorldModel (reuse pick_top_down resolver).
-2. `compute_approach_pose(target_xyz, dog_current_pose, clearance=0.55)`.
-3. Check if already within reach (`distance < 0.6 m` AND `|yaw_err| < 20°`)
-   → skip nav.
-4. `base.navigate_to(ax, ay, timeout=20.0)`; if fail → return nav_failed.
-5. `wait_stable(base, max_speed=0.05, duration=1.0, timeout=5.0)`.
-6. Delegate to `PickTopDownSkill.execute(params, context)`.
-7. Propagate its `SkillResult` to caller; add `mobile_pick.nav_distance`
-   to `result_data`.
-
-Failure modes: `no_base`, `no_arm`, `no_gripper`, `no_world_model`,
-`object_not_found`, `nav_failed`, `wait_stable_timeout`, plus all of
-pick_top_down's failure_modes.
-
-### 7.8 `PlaceTopDownSkill` contract
-
-Parameters:
-- `target_xyz` (tuple, optional, `source: explicit`) — world XYZ for drop
-- `receptacle_id` (str, optional, `source: world_model.objects.object_id`)
-- `drop_height` (float, default 0.05, `source: static`) — Z above surface
-
-Preconditions: `gripper_holding_any`
-Effects: `gripper_state=open`, `held_object=None`
-
-Flow:
-1. Resolve target (explicit xyz OR receptacle object + drop_height).
-2. IK `pre_place = target_xyz + (0, 0, pre_drop_height)`.
-3. IK `place = target_xyz + (0, 0, drop_height)`.
-4. Move pre-place → descend → open → lift (no return-to-home; mirrors
-   pick's rationale for orientation preservation).
-
-Failure modes: `no_arm`, `no_gripper`, `ik_unreachable`, `move_failed`,
-`gripper_empty`, `receptacle_not_found`.
-
-### 7.9 `MobilePlaceSkill` contract
-
-Parameters: `receptacle_id` | `target_xyz` + `target_room`
-
-Flow: compute_approach_pose(target_xyz) → navigate → wait_stable →
-PlaceTopDownSkill.execute.
-
-Failure modes: `no_base`, `gripper_empty`, `receptacle_not_found`,
-`nav_failed`, `wait_stable_timeout` + place_top_down's set.
-
----
-
-## 8. Test Contracts (becomes RED tests in Phase 4)
-
-### 8.1 `Ros2Runtime` (unit)
-
-```python
-def test_ros2_runtime_singleton_returns_same_instance()
-def test_ros2_runtime_add_node_does_not_raise_when_rclpy_uninitialised()
-def test_ros2_runtime_add_then_remove_node_ok()
-def test_ros2_runtime_supports_three_concurrent_nodes()  # key: no "already spinning"
-def test_ros2_runtime_shutdown_joins_thread()
-```
-
-### 8.2 ROS2 proxies (integration, marked @pytest.mark.ros2)
-
-```python
-def test_go2_proxy_uses_shared_runtime()          # monkeypatch, assert add_node called
-def test_piper_proxy_uses_shared_runtime()
-def test_three_proxies_coexist_no_executor_error()  # the actual live-REPL bug reproducer
-```
-
-### 8.3 Color normaliser + label fallback (unit)
-
-```python
-def test_resolve_target_matches_chinese_color_suffix()    # "绿色" → "green bottle"
-def test_resolve_target_matches_english_label_exact()     # "green bottle" → ok (unchanged)
-def test_resolve_target_single_pickable_fallback()        # 1 object + empty label → return it
-def test_resolve_target_none_for_missing_label()          # "紫色" + no purple object → None
-def test_resolve_target_prefers_color_exact_over_substr() # "red" prefers "red can" over "redish bottle"
-```
-
-### 8.4 VGG source metadata (unit)
-
-```python
-def test_decomposer_skips_detect_when_source_is_world_model()
-def test_decomposer_injects_detect_when_source_is_perception()  # existing behaviour unchanged
-def test_decomposer_honours_static_source_no_detect()
-```
-
-### 8.5 `compute_approach_pose` (unit)
-
-```python
-def test_approach_pose_dog_east_of_object_stops_east()
-def test_approach_pose_yaw_faces_object()
-def test_approach_pose_clearance_exact_distance()      # ||approach - object|| == clearance
-def test_approach_pose_zero_dog_offset_raises_or_default()  # degenerate case
-```
-
-### 8.6 `PlaceTopDownSkill` (unit, mocked arm/gripper)
-
-```python
-def test_place_top_down_happy_path_calls_open_after_descent()
-def test_place_top_down_ik_unreachable_returns_failure()
-def test_place_top_down_gripper_empty_precondition_not_enforced_in_mock()  # precondition in VGG layer
-def test_place_top_down_receptacle_id_resolution()
-def test_place_top_down_explicit_xyz_bypasses_receptacle()
-```
-
-### 8.7 `MobilePickSkill` (unit, mocked base+arm)
-
-```python
-def test_mobile_pick_already_reachable_skips_navigate()
-def test_mobile_pick_calls_navigate_then_pick_in_order()
-def test_mobile_pick_propagates_pick_failure()
-def test_mobile_pick_nav_failed_returns_nav_failed()
-def test_mobile_pick_wait_stable_timeout_aborts_before_pick()
-```
-
-### 8.8 `MobilePlaceSkill` (unit)
-
-Same structure as mobile_pick, with receptacle_id / target_xyz resolution.
-
-### 8.9 E2E (subprocess harness, marked @pytest.mark.e2e)
-
-```python
-# scripts/verify_loco_pick_place.py
-# Runs in fresh subprocess per attempt to avoid MuJoCo state pollution.
-
---repeat 3 --mode pick_only      # baseline
---repeat 3 --mode pick_and_place # full loop
-```
-
-Pass criteria:
-- mode=pick_only: 3/3 `mobile_pick('blue bottle')` → `grasped_heuristic=True`
-- mode=pick_and_place: 3/3 `mobile_pick → mobile_place(target_xyz=...)` →
-  bottle z-height within 3 cm of target_z, gripper open at end.
-
-### 8.10 Live REPL smoke (manual)
-
-Yusen-run checklist (documented in `docs/v2.2_live_repl_checklist.md`):
-1. `vector-cli` → `go2sim with_arm=1` → no executor errors in stderr
-2. `抓前面绿色` → success, held
-3. `放下` / `放到 (x, y, z)` → success, released
-4. `去拿红色罐头` → mobile_pick runs end-to-end
-
----
+- [ ] `scripts/verify_perception_pick.py --dry-run` — stubs Qwen HTTP
+      with a synthetic bbox over `pickable_blue_bottle` region; stubs
+      depth with flat 1.1 m plane; verifies full chain
+      `DetectSkill → world_model populate → MobilePickSkill → held=True`.
 
 ## 9. Acceptance Criteria
 
-| # | Criterion | Verify command |
-|---|-----------|----------------|
-| AC-1 | Static pick still passes (no regression) | `pytest tests/hardware/sim/test_mujoco_piper.py tests/skills/test_pick_top_down.py` → 30/30 |
-| AC-2 | New unit tests pass | `pytest tests/hardware/ros2/test_runtime.py tests/skills/test_place_top_down.py tests/skills/test_mobile_pick.py tests/skills/test_mobile_place.py tests/skills/utils/test_approach_pose.py tests/vcli/cognitive/test_decomposer_source.py` → all pass |
-| AC-3 | Three proxies coexist | `pytest tests/hardware/sim/test_ros2_proxies_coexist.py` → pass (reproduces Bug 1 fixed) |
-| AC-4 | Label normaliser unblocks Bug 2 | `pytest tests/skills/test_pick_top_down.py::test_resolve_target_matches_chinese_color_suffix` → pass |
-| AC-5 | VGG source respect unblocks Bug 3 | `pytest tests/vcli/cognitive/test_decomposer_source.py::test_decomposer_skips_detect_when_source_is_world_model` → pass |
-| AC-6 | E2E pick_only 3/3 | `.venv-nano/bin/python scripts/verify_loco_pick_place.py --repeat 3 --mode pick_only` → 3 passes, 0 fails |
-| AC-7 | E2E pick_and_place 3/3 | `.venv-nano/bin/python scripts/verify_loco_pick_place.py --repeat 3 --mode pick_and_place` → 3 passes |
-| AC-8 | Live REPL smoke (Yusen) | Yusen runs the 4-step checklist in `docs/v2.2_live_repl_checklist.md` and reports success |
-| AC-9 | Coverage ≥ 80% on new modules | `pytest --cov=vector_os_nano.skills.mobile_pick --cov=vector_os_nano.skills.mobile_place --cov=vector_os_nano.skills.place_top_down --cov=vector_os_nano.skills.utils.approach_pose --cov=vector_os_nano.hardware.ros2.runtime --cov-report=term-missing` → each ≥ 80 |
-| AC-10 | No new lint warnings | `ruff check vector_os_nano/skills/mobile_pick.py vector_os_nano/skills/mobile_place.py vector_os_nano/skills/place_top_down.py vector_os_nano/skills/utils/approach_pose.py vector_os_nano/hardware/ros2/runtime.py` → 0 errors |
+1. **AC-1 (G1/G4)**: After `go2sim with_arm=1`, `agent._perception` is
+   a `Go2Perception` instance; `agent._calibration` is a `Go2Calibration`.
+2. **AC-2 (G3)**: `QwenVLMDetector.detect(rgb, "blue bottle")` against
+   live OpenRouter returns ≥1 `Detection` with `bbox ⊂ [0,W]×[0,H]`.
+3. **AC-3 (G1)**: `Go2Perception.track([Detection(...)])` returns a
+   list where each element has `pose: Pose3D | None`, `pose.z > 0` when
+   the bbox has valid depth pixels.
+4. **AC-4 (G2)**: `Go2Calibration.camera_to_base(np.array([0,0,1]))`
+   when dog at origin facing +X returns xyz with `x ≈ 1.3 ± 0.05 m`,
+   `y ≈ 0 ± 0.05 m`, `z ≈ 0.05 ± 0.05 m` (mount geometry verified).
+5. **AC-5 (G5)**: After `DetectSkill(query="bottle")` on live Go2 with
+   3 bottles in scene, `world_model.get_objects()` contains ≥1 object
+   with `object_id.startswith("bottle")` or the detected label.
+6. **AC-6 (G6)**: `MobilePickSkill(object_label="blue bottle")` with
+   empty `world_model` but `context.perception` available — skill
+   proceeds past resolve stage (does NOT return `object_not_found`).
+7. **AC-7 (G6)**: Same skill call with `context.perception = None` —
+   returns `diagnosis="object_not_found"` (backward compat).
+8. **AC-8 (S1)**: Unit coverage ≥95 % on `vlm_qwen.py`,
+   `go2_perception.py`, `go2_calibration.py`.
+9. **AC-9 (G7)**: Live-REPL smoke: `go2sim with_arm=1 → 抓起蓝色瓶子`
+   — pick succeeds, `held=True`, total time <30 s.
+10. **AC-10 (test discipline)**: 14 + 3 + 1 = ≥18 new tests (unit +
+    integration + E2E-dry-run); total suite remains green (108 existing
+    + ≥18 new ≥ 126 passing).
 
----
+## 10. Open Questions
 
-## 10. Risks & Mitigations
+None blocking. Recommended defaults below; flag in CEO review if you
+want to override.
 
-| Risk | Likelihood | Impact | Mitigation |
+| # | Question | Recommended default | Reason |
 |---|---|---|---|
-| Shared executor refactor breaks existing nav stack | med | high | Keep old `rclpy.spin` path behind feature flag `VECTOR_SHARED_EXECUTOR=1` during transition; default on after AC-3 passes |
-| VGG `source` metadata change affects other skills that DO want detect | low | med | Only skip detect when ALL required params list `world_model.*` or `static`; ANY `perception.*` keeps old behaviour |
-| `compute_approach_pose` puts dog inside table geometry | med | high | nav stack has safety radius 0.35 m; if approach pose is blocked, nav returns False → mobile_pick returns nav_failed (no crash). Future: bisect clearance |
-| wait_stable timeout on bumpy floor | low | med | 5 s timeout, max_speed threshold 0.05 m/s (generous) |
-| Chinese color normaliser misses edge cases ("浅绿" = light green) | med | low | Unit test suite covers common cases; unknown colors pass through unchanged (existing substring match) |
-| MuJoCo MjModel isolated IK still races under concurrent mobile_pick calls | low | high | Each skill call runs sequentially via VectorEngine; document this invariant in MobilePickSkill docstring |
+| Q1 | Which Qwen model? | `qwen/qwen2.5-vl-72b-instruct` on OpenRouter | Best grounding accuracy, cheap (~$0.001/call at 160-px thumb); local 7B deferred to v2.4 |
+| Q2 | Return TrackedObject.mask? | `None` | No tracker in v2.3; downstream (PickTopDown) only reads pose |
+| Q3 | Depth outlier rejection inside bbox? | IQR on z-axis, fallback to raw median | Matches existing PerceptionPipeline `_remove_depth_outliers`; one-liner |
+| Q4 | Where does VLM query for `MobilePick` come from? | `params["object_label"]` → `_label_to_en_query` (strips 的, applies color normaliser EN→original, lowercases) | CN label like "蓝色瓶子" → "blue bottle"; reuse v2.2 normaliser |
+| Q5 | `world_model` merge policy on re-detect? | upsert-by-label (existing `add_object` behavior) | Simplest; OK for v2.3 since pick is immediate |
+| Q6 | Cost visible to user? | log line only in v2.3 | MAY requirement M1; dashboard integration out of scope |
+| Q7 | Perception retries on failure? | Qwen client: 2 retries on transport; DetectSkill: no retry above that | Same as Go2VLMPerception |
 
 ---
 
-## 11. Open Questions (CEO decisions)
+## CEO Review
 
-### Q1: Skill registration scope
-Should MobilePick/Place be registered ONLY in `with_arm=True` sim mode
-(current PickTopDownSkill pattern), or always-on with a runtime `no_arm`
-error path?
+**Decision Request**: Approve v2.3 spec with defaults above? Two
+explicit CEO choices already made:
+1. VLM = Qwen ✓ (recommended: qwen2.5-vl-72b-instruct via OpenRouter)
+2. MuJoCo sim only, defer sim-to-real ✓
 
-**Recommendation**: only in `with_arm=True`. Keeps prompt small; explicit
-error on missing arm is confusing UX.
-
-### Q2: Color normaliser alphabet
-Which Chinese color words to map?
-
-**Recommendation**: `红/红色 → red`, `绿/绿色 → green`, `蓝/蓝色 → blue`,
-`黄/黄色 → yellow`, `白/白色 → white`, `黑/黑色 → black`. Six colors
-covers current 3 objects + near-future common cases. Unknown colors
-fall through unchanged.
-
-### Q3: Mobile pick clearance distance
-Default approach distance (`clearance=0.55`)?
-
-**Recommendation**: 0.55 m. Piper reach envelope at top-down extends
-~0.45 m in front of dog; 0.55 m gives 0.1 m margin. Configurable via
-`config.skills.mobile_pick.clearance`.
-
-### Q4: wait_stable implementation
-New module or inline helper in MobilePickSkill?
-
-**Recommendation**: inline helper for now; promote to
-`vector_os_nano/skills/utils/stability.py` if mobile_place or future
-skills need it.
-
-### Q5: Where to compose the flow — VGG or direct skill?
-Should "狗走到桌子拿瓶子" decompose via VGG (navigate + pick) or route
-directly to MobilePickSkill?
-
-**Recommendation**: alias MobilePickSkill with `"去拿"/"去抓"` for direct
-routing. Let VGG still handle compound sentences like "先去厨房再拿杯子"
-where two rooms are involved. Demo-quality deterministic path wins now;
-VGG composition is a future improvement.
-
----
-
-## 12. Dependencies on Prior Work
-
-- ✅ v2.1 Phase A (Piper mounted, dual-mode sim) — committed `0bcbc9e`
-- ✅ v2.1 Phase B (MuJoCoPiper + PiperROS2Proxy ArmProtocol) — committed
-- ✅ v2.1 Phase C (PickTopDownSkill + ROS2 bridge) — committed `5a673df`
-- ✅ Go2ROS2Proxy.navigate_to (FAR path) — existing
-- ✅ World model populated via `_populate_pickables_from_mjcf` — existing
-- Branch: `feat/v2.0-vectorengine-unification` (5 commits ahead of origin)
-
----
-
-## 13. Success Metrics
-
-- All 10 acceptance criteria pass
-- Yusen successfully runs full live-REPL demo "去桌子拿蓝瓶 → 送到另一桌"
-  in one session with no manual intervention
-- No regression on static pick (v2.1) or navigate (v1.8) tests
-- progress.md updated; 4 uncommitted v2.1 commits + v2.2 commits ready
-  to push as a single branch merge
+Once approved, Architect proceeds to `plan.md` (Phase 2).
