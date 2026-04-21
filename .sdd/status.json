@@ -2,9 +2,9 @@
   "project": "vector_os_nano",
   "initiative": "v2.4 Perception Overhaul",
   "branch": "feat/v2.0-vectorengine-unification",
-  "current_phase": "spec",
+  "current_phase": "plan",
   "spec_status": "draft",
-  "plan_status": "pending",
+  "plan_status": "draft",
   "tasks_status": "pending",
   "execute_status": "pending",
   "direction_from_ceo": {
@@ -79,6 +79,12 @@
       "action": "spec_draft",
       "agent": "architect (dispatcher acting)",
       "details": "spec.md drafted — 4 new perception modules, 6 modifications, 1 removal (QwenVLMDetector grounding), GSO scene swap. 11 MUST + 7 SHOULD + 4 MAY goals. 8 open questions for CEO resolution (O3 SAM3 vs SAM2.1, O4 object count, O6 Qwen retention prioritised)."
+    },
+    {
+      "timestamp": "2026-04-20T16:40:00Z",
+      "action": "plan_draft",
+      "agent": "architect (dispatcher acting)",
+      "details": "plan.md drafted — 14 technical decisions, 11 module designs, SAM3/YOLOE both via ultralytics >=8.3.237 (single dep), SAM2.1 auto-fallback when sam3.pt missing (HF gate), numpy+scipy pointcloud (no hard open3d), Git-LFS for GSO meshes with script fallback, colour-fraction mask filter for 'blue bottle' subquery disambiguation. 10 risks tabulated. 10-task/6-wave execution sketch. Env probe: torch 2.11+cpu (CPU-only interpreter), ultralytics absent (needs pip add to [perception] extras), open3d + opencv + scipy already in deps."
     }
   ]
 }
