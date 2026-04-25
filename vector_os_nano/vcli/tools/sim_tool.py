@@ -391,27 +391,14 @@ class SimStartTool:
             except Exception as exc:
                 logger.warning("[sim_tool] demo-populate failed: %s", exc)
 
-        # v2.3: perception + calibration wire-up for Go2 with-arm mode
-        if with_arm and api_key:
-            try:
-                from vector_os_nano.perception.vlm_qwen import QwenVLMDetector
-                from vector_os_nano.perception.go2_perception import Go2Perception
-                from vector_os_nano.perception.go2_calibration import Go2Calibration
-                qwen = QwenVLMDetector(config={"api_key": api_key})
-                agent._perception = Go2Perception(camera=base, vlm=qwen)
-                agent._calibration = Go2Calibration(base_proxy=base)
-                logger.info("[sim_tool] Go2 perception + calibration wired (Qwen)")
-            except Exception as exc:
-                logger.warning("[sim_tool] Perception wire-up failed: %s", exc)
-                agent._perception = None
-                agent._calibration = None
-        elif with_arm:
-            logger.warning(
-                "[sim_tool] with_arm=True but no API key — auto-detect disabled. "
-                "Set OPENROUTER_API_KEY or config.llm.api_key to enable "
-                "Qwen VLM perception; MobilePick against empty world_model "
-                "will return object_not_found instead of auto-detecting."
-            )
+        # Go2 perception is sourced from the SysNav sibling workspace via the
+        # sysnav_bridge adapter (vector_os_nano/integrations/sysnav_bridge/).
+        # We do NOT instantiate an in-process VLM detector here; the bridge
+        # populates world_model when SysNav publishes /object_nodes_list.
+        # Until the bridge is wired (v2.4), agent._perception stays None and
+        # MobilePick returns object_not_found against an empty world_model.
+        agent._perception = None
+        agent._calibration = None
 
         # Go2 skills
         from vector_os_nano.skills.go2 import get_go2_skills  # type: ignore[import]

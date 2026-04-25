@@ -1,441 +1,428 @@
-# v2.4 Perception Overhaul — Specification
+# v2.4 SysNav Simulation Integration — Specification
 
-**Status**: DRAFT — awaiting CEO approval
-**Scope**: MuJoCo-sim first; protocol-clean path for real D435 after.
-**Branch**: `feat/v2.0-vectorengine-unification` (continuation; v2.3 archived)
+**Status**: APPROVED (CEO auto-approval 2026-04-25)
+**Scope**: MuJoCo-sim only. Real-robot bringup deferred to v2.5+.
+**Branch**: `feat/v2.0-vectorengine-unification` (continuation;
+v2.4-perception-overhaul archived)
 
 ---
 
 ## 1. Overview
 
-Rebuild the Go2 grounding stack on SOTA perception models — **YOLOE**
-(real-time open-vocabulary detection) + **SAM 3** (concept-prompt
-segmentation) — driven by mask-aware depth projection, and replace the
-toy cylinder pick scene with **Google Scanned Objects** high-fidelity
-meshes. Kills the two structural failure modes exposed by the 2026-04-20
-v2.3 live-REPL smoke:
+Re-route Vector OS Nano's grounding + scene-graph layer to the
+**SysNav** sibling project (CMU Robotics Institute, PolyForm-NC) by
+making MuJoCo publish the ROS2 topics SysNav already knows how to
+consume — `/registered_scan` (Livox PointCloud2),
+`/state_estimation` (Odometry), `/camera/image` and `/camera/depth`
+(360-degree equirectangular). Three new MuJoCo virtual sensors plus
+one launch harness will let SysNav's `semantic_mapping_node` +
+`detection_node` + `vlm_reasoning_node` run unchanged on top of our
+sim. Their `/object_nodes_list` output is already adapted by the
+`sysnav_bridge` package landed in commit `886ec4d`.
 
-1. Qwen-VLM bbox thumbnail/full-resolution coordinate mismatch →
-   catastrophic depth projection errors (6 m phantom "blue bottle").
-2. Low-fidelity capsule objects provide no realistic RGB → sim-to-real
-   gap prevents any grounded detector from generalising.
+This **replaces** the v2.4 perception overhaul (YOLOE + SAM3 +
+hand-rolled pointcloud projection + sanity gates) — that effort was
+duplicating capabilities SysNav already provides (SAM2 + YOLO/RFDETR
++ cloud_image_fusion + voxel voting). Net outcome: less code in this
+repo, more capability via a clean ROS2 contract.
 
 Target user flow after v2.4:
 
 ```
-go2sim with_arm=1
-抓起蓝色瓶子
-  └─ MobilePickSkill._resolve_target miss
-      └─ auto-detect via context.perception (YOLOE+SAM3 backend)
-          ├─ YOLOE detect(RGB, "blue bottle") → bbox (~30 ms)
-          ├─ SAM 3 segment(RGB, bbox) → mask (~80 ms)
-          ├─ mask ∩ depth → pointcloud
-          ├─ sanity gates (distance, height, density, area)
-          ├─ centroid in camera frame
-          └─ calibration.camera_to_world → ObjectState → upsert
-      └─ resolve retry → hit
-  └─ approach_pose / navigate / wait_stable
-  └─ PickTopDownSkill → held=True
+Terminal 1: cd ~/Desktop/SysNav && ./system_real_robot_with_exploration_planner_go2.sh
+Terminal 2: vector-cli sysnav-sim
+              → MuJoCo go2_room.xml + Go2 + Piper
+              → publishes /registered_scan /camera/image /camera/depth /state_estimation
+            SysNav publishes /object_nodes_list
+            sysnav_bridge → world_model populated continuously
+            user> 抓起蓝色瓶子
+              → MobilePickSkill resolves against SysNav-populated world_model
+              → navigate + PickTopDownSkill
 ```
 
 ## 2. Background & Motivation
 
-### Why v2.3 failed live-REPL smoke
+### Why pivot from v2.4 perception overhaul (YOLOE + SAM3) to SysNav
 
-Code inspection confirmed two stacking bugs:
+The previous v2.4 spec (now archived under
+`.sdd/archive-v2.4-perception-overhaul/`) planned to build:
 
-- **Bbox-thumbnail scale (CRITICAL)**: `QwenVLMDetector.detect` resizes
-  the input frame to 160 × 120 (`_VLM_IMAGE_MAX_DIM=160`) before sending
-  to OpenRouter, but `_detection_from_raw` uses the **original**
-  `image.shape[:2]` for bbox normalisation — and only rescales when
-  `max(coord) ≤ 1.0`. Qwen returns pixel coordinates in the 160 × 120
-  thumbnail (e.g. `(50, 40, 80, 100)`) — never normalised — so bboxes get
-  applied **at half-scale** onto the 320 × 240 depth frame, pointing at
-  the upper-left quadrant. Median depth of a distant wall/ceiling
-  (~6 m) is projected as the object location → world_model receives
-  `(16.8, 1.62, 1.37)` for a bottle physically at `(11, 3, 0.25)`.
-- **xmat LEFT/RIGHT flip (G4 from v2.3.1)**: `get_camera_pose`
-  computes `right = (-sin h, cos h, 0)` which at heading=0 is
-  `(0, 1, 0)` — ROS-LEFT under REP-103, not right. Contributes ~1.4 m
-  mirrored lateral error.
+| v2.4 perception module | SysNav already provides |
+|---|---|
+| `YoloeDetector` | `detection_node.py` runs YOLO/YOLOE/RFDETR |
+| `Sam3Segmenter` | SAM2 integrated in `semantic_mapping_node.py` |
+| `pointcloud_projection.py` | `cloud_image_fusion.py` (547 LoC) does mask × depth → world points |
+| `sanity_gates.py` | `VoxelFeatureManager` voxel voting + spatial regularisation |
+| `Go2Perception` (rewrite) | `semantic_mapping_node` + `vlm_reasoning_node` |
 
-### Why patching v2.3 is the wrong answer
+Reimplementing these in vector_os_nano adds ~1500 LoC + 32 tests of
+work that would always lag SysNav's mainline. Ji Zhang's lab (the
+SysNav authors) is the same lab Vector OS Nano develops within;
+keeping the dependency boundary clean (Apache-2.0 ↔ PolyForm-NC via
+ROS2 topics, never source copy) lets us focus engineering on
+manipulation, agent reasoning, and Go2-specific control — not on
+re-implementing scene graphs.
 
-Even a thorough `v2.3.1` hot-fix (bbox rescale + sanity gate + xmat
-swap) still leaves three architectural gaps that every 2025 SOTA mobile-
-manipulation stack addresses:
+### Why v2.3 grounding failed (root cause carried forward)
 
-1. **Qwen-VLM is not a grounding model.** It is trained for chat-style
-   description. Its bbox output is a capability hack — documentation
-   reports robust grounding only between 480 × 480 and 2560 × 2560, and
-   we feed it 160 × 120.
-2. **bbox-centre depth is brittle.** Narrow or off-centre objects, or
-   objects with occlusion, get depth sampled from foreground/background
-   pixels outside the target.
-3. **No mask → no pointcloud → no geometric sanity.** We cannot verify
-   a detection is a plausible object (size, shape, density).
+The 2026-04-20 live REPL smoke produced a +5.8 m phantom-bottle goal
+for `抓起蓝色瓶子`. Root cause was confirmed two-fold:
 
-2025 SOTA (OK-Robot, DynaMem, Grounded-SAM 2/3, SVM, GeFF, LOVMM) all
-follow the same pattern: **open-vocab detect → promptable segment →
-mask-filtered depth → geometric/semantic consensus → persistent memory
-→ close-loop refinement**. v2.4 ports the first three stages and leaves
-persistent voxel memory + close-loop servoing for v3.0.
+1. `QwenVLMDetector` resized frames to 160 × 120 before sending to
+   the API; bbox coordinates returned in that thumbnail space were
+   then applied to the full-resolution depth frame — landing on an
+   upper-left wall pixel ~6 m away (`vlm_qwen.py:148`).
+2. `Go2ROS2Proxy.get_camera_pose` computed `right = (-sin h, cos h, 0)`
+   which is body-LEFT under ROS REP-103 (`go2_ros2_proxy.py:338`);
+   contributes ~1.4 m mirrored lateral error.
 
-### Why realistic assets matter now
-
-The current `pickable_*` bodies are 2.8 cm cylinders with flat RGBA
-colours. Any detector — Qwen, YOLOE, or SAM 3 — is trained on realistic
-object appearance. A "blue bottle" stimulus with zero texture detail
-and uniform colour is an **out-of-distribution** query. Failures at
-the detector stage cannot be separated from failures in the projection
-stage. Replacing the scene with Google Scanned Objects meshes (1030
-real household objects, MJCF-compatible via `kevinzakka/
-mujoco_scanned_objects`) gives the grounding models realistic inputs
-and closes the sim-to-real gap for appearance-dependent perception.
+The v2.4-perception-overhaul branch planned to fix both. With the
+SysNav pivot, bug 1 is moot (Qwen path is deleted in this cycle). Bug
+2 still exists but is contained: SysNav publishes its own SLAM-derived
+poses; our `Go2ROS2Proxy.get_camera_pose` is only consumed by the now-
+obsolete grasp pipeline target-pose computation. We carry the fix
+forward in this cycle as G3 below.
 
 ## 3. Goals
 
 ### MUST (blocking for release)
 
-- **G1** `YoloeDetector` class implementing an `OpenVocabDetector`
-  protocol on top of `ultralytics` YOLOE-S or YOLOE-M weights. Returns
-  `list[Detection]` with pixel-space bboxes in the native RGB resolution
-  (no resize-based bbox corruption).
-- **G2** `Sam3Segmenter` class wrapping Meta SAM 3 / SAM 3.1 inference.
-  Takes RGB + list[bbox prompt] → `list[np.ndarray mask]` at native
-  resolution. Thread-safe single-instance cache.
-- **G3** Replace `Go2Perception.track` implementation: `detect()` runs
-  YOLOE, `track()` runs SAM 3, then mask-filtered depth → pointcloud →
-  centroid. Populates `TrackedObject.mask` (already a field in
-  `core.types.TrackedObject`).
-- **G4** `pointcloud_projection.py` utility: takes `mask`, `depth_frame`,
-  `intrinsics` → `(N,3)` camera-frame pointcloud. RANSAC plane removal
-  option for on-table grasping. Statistical outlier removal.
-- **G5** Sanity gate module: reject detections where
-  `depth_median ∉ [0.15, 5.0]`, `world_z ∉ [-0.2, 1.5]`, mask area
-  `∉ [200, 50_000] px`, or pointcloud density < 50 points. Returns
-  `TrackedObject(pose=None)` on rejection.
-- **G6** Fix `Go2ROS2Proxy.get_camera_pose` xmat convention —
-  `right = (sin h, -cos h, 0)` to match ROS REP-103.
-- **G7** Replace 3 capsule `pickable_*` bodies in `go2_room.xml` with
-  10 Google Scanned Objects meshes (selection: ~4 bottles/cans, 3 mugs,
-  3 miscellaneous small objects — all pickable with 35 mm Piper jaws).
-  Collision submeshes via V-HACD (already provided by the asset repo).
-- **G8** `QwenVLMDetector` removed from grounding path. `QwenVLM`
-  (natural-language describe/visual_query) stays — rewire through
-  `Go2VLMPerception` only.
-- **G9** DetectSkill / MobilePickSkill external behaviour unchanged —
-  tool inputs + `SkillResult.result_data` schema same as v2.3 plus
-  `mask_area_px` and `pointcloud_points` fields on each object summary.
-- **G10** CLI summary: skill output shows `label / world_xyz / mask_area
-  / confidence` per object (fixes v2.3.1 G1 UX gap).
-- **G11** Live-REPL end-to-end: on `go2sim with_arm=1`, `抓起蓝色瓶子`
-  returns a valid world_xyz within 0.1 m of ground truth for at least
-  4 / 5 attempts.
+- **G1** `MuJoCoLivox360` virtual lidar — `mj_ray` × ≥4096 pts/frame
+  at ≥10 Hz, output `sensor_msgs/PointCloud2` already in `map` frame
+  (sim has ground truth, no SLAM step needed). Topic
+  `/registered_scan`.
+- **G2** `MuJoCoPano360` virtual 360-degree RGBD camera — 6 × 90-degree
+  cube-face renders stitched into 1920 × 640 equirectangular at ≥5 Hz.
+  Both RGB and aligned depth. Topics `/camera/image` and
+  `/camera/depth`.
+- **G3** `Go2ROS2Proxy.get_camera_pose` — fix `right` to
+  `(sin h, -cos h, 0)`, recompute `up` accordingly. Update
+  `tests/integration/test_go2_camera_pose.py` expected values.
+- **G4** `GroundTruthOdomPublisher` — derive Odometry from MuJoCo
+  `data.qpos[0:7]` at ≥50 Hz, frame_id `map`, child_frame_id `sensor`,
+  topic `/state_estimation`. Skips SLAM entirely in sim.
+- **G5** `sysnav_sim.launch.py` — bringup launch that starts only
+  `semantic_mapping_node`, `detection_node`, `vlm_reasoning_node`
+  from the SysNav workspace. Skips `arise_slam_mid360`,
+  `livox_ros_driver2`, `tare_planner`, `unitree_webrtc_ros`.
+- **G6** Sysnav-bridge **live ROS2 subscriber** — extend
+  `vector_os_nano/integrations/sysnav_bridge/` with a
+  `LiveSysnavBridge` class that subscribes to
+  `/object_nodes_list` and calls
+  `world_model.add_object(object_node_to_state(...))` per node.
+- **G7** `vector-cli sysnav-sim` end-to-end — single command starts
+  MuJoCo + 3 virtual sensors + bridge subscriber. Pre-flight checks
+  detect whether SysNav workspace is sourced; logs WARNING and falls
+  back to no-perception mode if not.
+- **G8** Cleanup: delete `vlm_qwen.py`, `go2_perception.py`,
+  `go2_calibration.py`, plus tests and `verify_perception_pick.py`.
+  *(landed already this cycle, before spec approval)*
+- **G9** `docs/sysnav_simulation.md` — full bringup guide with topic
+  matrix, performance targets, troubleshooting.
 
 ### SHOULD
 
-- **S1** YOLOE-S ≤ 50 ms per call on RTX 5080 @ 640 × 480.
-- **S2** SAM 3 ≤ 200 ms per call on RTX 5080 @ 640 × 480.
-- **S3** End-to-end detect latency ≤ 400 ms wall-clock.
-- **S4** Unit coverage ≥ 90 % on `yoloe_detector.py`, `sam3_segmenter.py`,
-  `pointcloud_projection.py`, `sanity_gates.py`.
-- **S5** `MobilePickSkill` logs a distance warning when `nav_dist > 3 m`
-  (carry forward v2.3.1 S1).
-- **S6** `DetectSkill` returns `diagnosis="all_3d_invalid"` when every
-  tracked object fails sanity gates (carry forward v2.3.1 S2).
-- **S7** `debug_perception_live.py` script: one-shot capture →
-  YOLOE + SAM 3 + projection trace with per-stage timings and
-  visualisations written to `/tmp/perception_debug/`.
+- **S1** Coverage ≥ 90 % on each new module (`MuJoCoLivox360`,
+  `MuJoCoPano360`, `GroundTruthOdomPublisher`, `LiveSysnavBridge`).
+- **S2** `mj_ray` lidar latency budget ≤ 50 ms / frame on RTX 5080.
+- **S3** Pano camera latency budget ≤ 100 ms / frame at 1920 × 640.
+- **S4** Total sim → SysNav loop latency ≤ 300 ms (frame published →
+  ObjectNodeList received).
+- **S5** End-to-end smoke: place a blue bottle in `go2_room.xml`,
+  start sysnav-sim, within 10 seconds `world_model` contains an entry
+  whose world XYZ is within 0.1 m of the MJCF body pose.
 
 ### MAY
 
-- **M1** IOU-based temporal fusion: same-label detections within 5 cm
-  across frames merge into one `ObjectState` with confidence-weighted
-  position update.
-- **M2** Domain-randomised materials in `go2_room.xml` (lighting /
-  texture variation for training robustness).
-- **M3** FoundationPose 6-DoF pose estimate — **deferred to v2.5**.
-- **M4** Persistent VoxelMap + CLIP memory (OK-Robot style) — **deferred
-  to v3.0**.
+- **M1** SysNav `cloud_image_fusion.CAMERA_PARA` configuration
+  generator — emit a YAML matching our virtual-camera mount.
+- **M2** GSO scene swap (replace 3 capsule cylinders with realistic
+  meshes) — keep optional for v2.4; main blocker is in
+  `pickable_assets/` curation, not perception. **Deferred to v2.5**.
+- **M3** RViz config for joint vector_os_nano + SysNav visualisation.
 
 ## 4. Non-Goals (explicitly out of scope)
 
-- Real RealSense D435 integration — `Go2ROS2Proxy` path only. Real
-  Piper hardware integration.
-- 6-DoF pose estimation (FoundationPose / GenPose). Piper does top-down
-  grasp only; centroid + gripper orientation from task geometry suffices.
-- Voxel map / persistent scene memory across sessions.
-- Close-loop visual servoing during approach.
-- Multi-view fusion across multiple detect calls.
-- SAM 3D single-image reconstruction (deferred v3.0+).
-- Nav-stack tuning.
+- Real Go2 + real Livox + real Ricoh Theta integration. v2.5+.
+- Replacing `vector_navigation_stack` with SysNav's `tare_planner`.
+- VLM reasoning in our process — SysNav's `vlm_reasoning_node` owns
+  it, we publish `/target_object_instruction` to drive it.
+- 6-DoF grasp pose / FoundationPose. Manipulation stays top-down.
+- GSO realistic-mesh scene swap (deferred to v2.5).
+- `arise_slam_mid360` SLAM in sim (we publish ground-truth odom).
+- `tare_planner` C++ exploration — current `vector_navigation_stack`
+  + FAR planner remains authoritative.
 
 ## 5. User Scenarios
 
-### US1 — `抓起蓝色瓶子` from empty world_model
+### US1 — `抓起蓝色瓶子` against SysNav-populated world_model
 
-Dog at home position, no prior perception. User says "抓起蓝色瓶子".
+1. User runs `vector-cli sysnav-sim` (Terminal 2 already has SysNav
+   launched per `docs/sysnav_simulation.md`).
+2. MuJoCo loads `go2_room.xml`; 3 sensor publishers start.
+3. SysNav `detection_node` starts running YOLO on `/camera/image`,
+   `semantic_mapping_node` clusters lidar points and publishes
+   `/object_nodes_list` (~2-3 s after first frames).
+4. `LiveSysnavBridge` callback writes ObjectState entries into
+   `world_model`. Each cylinder body in `go2_room.xml` becomes one
+   `bottle` / `can` ObjectState with reasonable XYZ.
+5. User says `抓起蓝色瓶子`.
+6. `MobilePickSkill._resolve_target` picks the matching ObjectState
+   (existing colour-keyword normaliser in `pick_top_down.py`).
+7. Approach + grasp succeed within 10 s of the user prompt.
 
-1. LLM routes to `mobile_pick_skill(label="blue bottle")` (CN→EN alias).
-2. `_resolve_target` misses — world_model empty.
-3. `run_autodetect_retry` helper fires — calls `DetectSkill(query="blue
-   bottle")`.
-4. `Go2Perception.detect` → YOLOE returns bbox for the blue bottle
-   mesh on the table.
-5. `Go2Perception.track` → SAM 3 returns mask for that bbox.
-6. Mask ∩ depth → pointcloud → centroid `(x_cam, y_cam, z_cam)`.
-7. Sanity gates pass (distance 0.7 m, height 0.25 m, mask area 400 px,
-   pointcloud 150 points).
-8. `Go2Calibration.camera_to_world` → world `(≈11.0, ≈2.85, ≈0.25)`.
-9. `world_model.add_object` → retry `_resolve_target` → hit.
-10. Approach + grasp → `held=True`.
+### US2 — SysNav not running → graceful degrade
 
-### US2 — `检测所有物体` enumerating the table
+1. User runs `vector-cli sysnav-sim` but Terminal 1 SysNav is not
+   started.
+2. `LiveSysnavBridge.start()` discovers no `/object_nodes_list`
+   publisher within 5 s timeout, logs WARNING.
+3. `world_model` remains empty (no auto-detect path on Go2 anymore).
+4. User says `抓起蓝色瓶子` → `object_not_found` with the existing
+   "known pickable objects: []" message — no crash, no phantom.
 
-User asks "检测桌上所有物体". DetectSkill with `query="all objects"`.
-YOLOE returns 3–5 bboxes for bottles/mugs/cans on the pick table.
-SAM 3 masks each. World model gets 3–5 ObjectState entries with valid
-world coordinates. CLI shows per-object summary.
+### US3 — fast-moving object handling
 
-### US3 — no-match case
+1. User pushes a bottle while `sysnav-sim` is running.
+2. SysNav publishes the same `object_id` with updated XYZ;
+   `LiveSysnavBridge` calls `add_object` (which upserts by id).
+3. `world_model` reflects the new pose within one publish cycle
+   (~500 ms).
+4. `MobilePickSkill` retargets next time it is invoked.
 
-`抓起香蕉` when no banana on scene. YOLOE returns empty list. DetectSkill
-returns `diagnosis="no_detections"`. MobilePick reports
-`object_not_found`.
+### US4 — synthetic "moving" status
 
-### US4 — sanity-gate rejection
-
-Camera pointed at far wall. YOLOE false-positive detects "bottle"
-on a poster 6 m away. SAM 3 masks it. Pointcloud median depth > 5 m →
-sanity gate rejects → `TrackedObject.pose=None`. DetectSkill marks
-`has_3d=False` and does **not** seed world_model.
-`diagnosis="all_3d_invalid"`. MobilePick does **not** navigate to
-phantom coords.
+1. SysNav's voxel-voting flags an object as `moving` (status flag
+   `False` in `ObjectNode.status` per `single_object_new.py`).
+2. `object_node_to_state` maps `status=False → state="unknown"`.
+3. `MobilePick` filters objects in `unknown` state when picking
+   (existing behaviour — no change required).
 
 ## 6. Technical Constraints
 
-- **Hardware**: RTX 5080 16 GB VRAM. Dog sim + ROS2 + MuJoCo + Piper +
-  YOLOE + SAM 3 must coexist. Target VRAM budget for perception ≤ 6 GB.
-- **No network calls** in the grounding path — YOLOE + SAM 3 weights
-  local on disk (~1.5 GB + ~2 GB). First-run download acceptable; CI
-  should skip model-dependent tests.
-- **Python 3.12**; **torch 2.x CUDA 13**; must not break existing
-  `vector-cli` boot or ROS2 bridge. No changes to `core.types` public
-  API.
-- **PerceptionProtocol** unchanged — `get_point_cloud(mask)` already in
-  the protocol; previously `NotImplementedError` in Go2Perception, now
-  implemented.
-- **MuJoCo 3.2+** — mesh assets must be MJCF 3.x-compatible; texture
-  maps via `<texture>` + `<material>` elements (no PBR until upstream
-  issue #2674 resolves).
-- **Imports must not cascade into MuJoCo during test collection** —
-  `feedback_no_parallel_agents.md` still applies.
+- **Hardware**: Yusen confirms full hardware available. We optimise
+  for sim first; real-robot scripts unchanged.
+- **GPU budget**: RTX 5080 16 GB shared between MuJoCo render +
+  pano cube renders + lidar ray cast + SysNav's SAM2 + YOLO inference.
+  Target: ≤ 12 GB total, 5 Hz pano OK during heavy SysNav inference.
+- **MuJoCo 3.6+** — `mj_ray` API stable; offscreen GLFW context
+  required for cube-face renders.
+- **No new Python deps in vector_os_nano**. Pano stitching uses
+  numpy + opencv (already in `[perception]` extras).
+- **ROS2 Jazzy** — must coexist with running SysNav workspace. Topic
+  domain ID consistent.
+- Topics published with `RELIABLE` QoS at moderate depth (≥ 5).
+- Sensor publishers must run inside the existing
+  `go2_vnav_bridge.py` subprocess so MuJoCo state is shared with the
+  physics thread; no extra subprocess fan-out.
 
 ## 7. Interface Definitions
 
-### 7.1 New `perception/detectors/base.py`
+### 7.1 New `hardware/sim/sensors/lidar360.py`
 
 ```python
-@runtime_checkable
-class OpenVocabDetector(Protocol):
-    """2D open-vocabulary object detector."""
+class MuJoCoLivox360:
+    def __init__(
+        self,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        body_name: str = "trunk",       # mount on Go2 trunk
+        offset: tuple[float, float, float] = (0.0, 0.0, 0.10),
+        h_resolution: int = 360,         # rays per spin
+        v_layers: int = 16,              # Mid-360 has 59-deg vert
+        max_range: float = 30.0,
+        rate_hz: float = 10.0,
+    ) -> None: ...
 
-    def detect(
-        self, image: np.ndarray, query: str
-    ) -> list[Detection]: ...
+    def step(self) -> np.ndarray:        # (N, 4) xyz + intensity
+        ...
+
+    def to_pointcloud2(
+        self, points: np.ndarray, stamp: builtin_interfaces.Time
+    ) -> sensor_msgs.PointCloud2: ...
 ```
 
-### 7.2 New `perception/detectors/yoloe_detector.py`
+### 7.2 New `hardware/sim/sensors/pano360.py`
 
 ```python
-class YoloeDetector:
-    """Ultralytics YOLOE open-vocabulary detector."""
+class MuJoCoPano360:
+    def __init__(
+        self,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        body_name: str = "trunk",
+        offset: tuple[float, float, float] = (0.0, 0.0, 0.185),
+        out_w: int = 1920,
+        out_h: int = 640,                # 120 deg vfov cropped
+        rate_hz: float = 5.0,
+    ) -> None: ...
+
+    def step(self) -> tuple[np.ndarray, np.ndarray]:    # rgb, depth
+        ...
+```
+
+### 7.3 New `hardware/sim/sensors/gt_odom.py`
+
+```python
+class GroundTruthOdomPublisher:
+    """Reads MuJoCo qpos for the Go2 free-joint body and emits
+    nav_msgs/Odometry directly. Skips SLAM in sim."""
 
     def __init__(
         self,
-        model_name: str = "yoloe-s",      # s | m | l
-        confidence_threshold: float = 0.25,
-        device: str | None = None,          # auto-detect CUDA
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        body_name: str = "trunk",
+        rate_hz: float = 50.0,
+        frame_id: str = "map",
+        child_frame_id: str = "sensor",
     ) -> None: ...
 
-    def detect(
-        self, image: np.ndarray, query: str
-    ) -> list[Detection]: ...
+    def step(self) -> nav_msgs.Odometry: ...
 ```
 
-### 7.3 New `perception/segmenters/sam3_segmenter.py`
+### 7.4 New `integrations/sysnav_bridge/live_bridge.py`
 
 ```python
-class Sam3Segmenter:
-    """Meta SAM 3 / SAM 3.1 promptable segmenter."""
+class LiveSysnavBridge:
+    """rclpy subscriber that fans /object_nodes_list updates into
+    the agent's WorldModel via the existing object_node_to_state
+    adapter. Imports rclpy / tare_planner.msg lazily to keep tests
+    runnable without a sourced SysNav workspace."""
 
     def __init__(
         self,
-        model_name: str = "sam3.1-base",    # base | large
-        device: str | None = None,
+        world_model: WorldModel,
+        node_name: str = "vector_os_nano_sysnav_bridge",
+        topic: str = "/object_nodes_list",
+        on_disconnect_after_s: float = 5.0,
     ) -> None: ...
 
-    def segment(
-        self,
-        image: np.ndarray,
-        prompts: list[tuple[float, float, float, float]],   # bboxes
-    ) -> list[np.ndarray]: ...   # masks, same H×W as image
+    def start(self) -> bool:    # False if rclpy or tare_planner.msg missing
+        ...
+
+    def stop(self) -> None: ...
 ```
 
-### 7.4 New `perception/pointcloud_projection.py`
+### 7.5 New `vcli/tools/sysnav_sim_tool.py`
 
-```python
-def mask_depth_to_pointcloud(
-    mask: np.ndarray,                       # H×W bool
-    depth: np.ndarray,                      # H×W float32 metres
-    intrinsics: CameraIntrinsics,
-    depth_min: float = 0.15,
-    depth_max: float = 5.0,
-    statistical_outlier_k: int = 20,
-    statistical_outlier_std: float = 2.0,
-) -> np.ndarray: ...                        # (N,3) float64, camera frame
+CLI entry that wraps `SimStartTool` plus pre-flight check for the
+SysNav workspace and `LiveSysnavBridge.start()`.
 
-
-def pointcloud_centroid(
-    pointcloud: np.ndarray,                 # (N,3)
-    method: str = "median",                 # median | mean | plane_top
-) -> np.ndarray: ...                         # (3,)
 ```
-
-### 7.5 New `perception/sanity_gates.py`
-
-```python
-@dataclass(frozen=True)
-class SanityGateConfig:
-    depth_range: tuple[float, float] = (0.15, 5.0)
-    height_range: tuple[float, float] = (-0.2, 1.5)
-    mask_area_range: tuple[int, int] = (200, 50_000)
-    min_pointcloud_points: int = 50
-
-
-def apply_sanity_gates(
-    mask_area_px: int,
-    pointcloud: np.ndarray,
-    centroid_camera: np.ndarray,
-    centroid_world: np.ndarray | None,
-    config: SanityGateConfig,
-) -> tuple[bool, str]: ...    # (ok, reason_if_rejected)
+vector> sysnav-sim
+  ├─ MuJoCo subprocess up
+  ├─ /registered_scan /camera/image /camera/depth /state_estimation publishing
+  ├─ Pre-flight: SysNav nodes seen on /object_nodes_list topic? [yes / no]
+  └─ LiveSysnavBridge.start() → continuous WorldModel updates
 ```
-
-### 7.6 Updated `perception/go2_perception.py`
-
-Same `PerceptionProtocol` methods. Internals:
-
-```python
-class Go2Perception:
-    def __init__(
-        self,
-        camera: Any,
-        detector: OpenVocabDetector,
-        segmenter: Sam3Segmenter | None,
-        gates: SanityGateConfig | None = None,
-        intrinsics: CameraIntrinsics | None = None,
-    ) -> None: ...
-
-    def detect(self, query: str) -> list[Detection]: ...
-    def track(self, detections: list[Detection]) -> list[TrackedObject]: ...
-    def get_point_cloud(
-        self, mask: np.ndarray | None = None
-    ) -> np.ndarray: ...
-```
-
-`segmenter=None` falls back to bbox-centre depth (a degraded mode for
-development / low-VRAM smoke).
-
-### 7.7 Scene assets
-
-New directory `vector_os_nano/hardware/sim/mjcf/pickable_assets/`
-containing selected Google Scanned Objects: 10 meshes, each with
-`<object>.xml` (MJCF fragment) + `model.obj` (visual) +
-`model_collision_0..31.obj` (V-HACD convex decomposition) + `texture.png`.
-`go2_room.xml` includes the fragment and instantiates 10 `pickable_*`
-bodies on the pick table (replacing 3 cylinders).
 
 ## 8. Test Contracts
 
-### Unit tests
+A core principle of this cycle: **test breadth over implementation
+breadth**. The new code paths are infrastructure; they must be
+exercised through unit tests with synthetic MuJoCo state and ROS2
+mocks before any GPU smoke is attempted.
 
-- **yoloe_detector**: weight-loading mock, bbox output shape/type,
-  confidence threshold filtering, device fallback, CN→EN query unchanged
-  (not this class's job).
-- **sam3_segmenter**: mock SAM 3 inference, bbox prompt → mask shape
-  matches image, empty prompt list → empty masks.
-- **pointcloud_projection**: synthetic mask + synthetic depth → known
-  centroid; plane removal removes a 1m × 1m plane; statistical filter
-  removes injected outliers.
-- **sanity_gates**: each gate individually (depth too far, height too
-  low, mask too small, pointcloud too sparse), composed cases.
-- **go2_perception**: detect + track end-to-end with mocked detector +
-  segmenter + synthetic frames; pose=None on gate reject; calls
-  `get_point_cloud` correctly.
-- **go2_calibration** (regression): verify xmat fix → right = -Y at
-  heading=0. Update fixture expected values.
-- **go2_ros2_proxy camera pose** (regression): two heading cases
-  verified.
+### 8.1 Unit tests (target ≥ 50 new tests, ≥ 90 % coverage)
 
-### Integration tests
+| File | Tests |
+|---|---|
+| `tests/unit/hardware/sim/sensors/test_lidar360.py` | 12+ |
+| `tests/unit/hardware/sim/sensors/test_pano360.py` | 10+ |
+| `tests/unit/hardware/sim/sensors/test_gt_odom.py` | 8+ |
+| `tests/unit/integrations/sysnav_bridge/test_live_bridge.py` | 12+ |
+| `tests/unit/vcli/test_sysnav_sim_tool.py` | 8+ |
 
-- **sim_tool wire-up**: `_start_go2(with_arm=True)` constructs
-  `Go2Perception(YoloeDetector, Sam3Segmenter)` when weights present,
-  degrades to stubbed fallback on missing weights.
-- **DetectSkill + MobilePick**: mocked detector+segmenter returning
-  crafted bboxes/masks → world_model populated with correct world
-  coords, respect sanity gates.
-- **Scene load**: `go2_room.xml` with new GSO meshes loads without
-  MuJoCo error, pickable bodies present with `pickable_*` naming.
+Mandatory test cases per module:
 
-### E2E dry-run (no GPU model calls)
+- **Lidar360**: ray pattern symmetry; range clipping at `max_range`;
+  intensity defaults to 1.0; PointCloud2 fields layout (`x` `y` `z`
+  `intensity` 32-bit float at correct offsets); empty model degenerate;
+  rate-limit honoured (no double-step within 1/rate); points expressed
+  in `map` frame given known body pose.
+- **Pano360**: 6 cube-face mosaic correctness against synthetic
+  uniform-colour scene; equirectangular pixel <-> spherical angle
+  invariant on a known pole pixel; depth and RGB grid alignment;
+  out-of-range depth clipped; rate-limit honoured.
+- **GT odom**: position == body pose; quaternion normalisation;
+  twist computed via finite difference between successive `step()`
+  calls; first-call twist is zeros (no prior); frame_id correctness.
+- **LiveSysnavBridge**: degrade-to-noop when `rclpy` import fails;
+  degrade when `tare_planner.msg` missing; with both available,
+  callback dispatches one `add_object` per node; status=False object
+  marked unknown; no crash on malformed payload (skip + WARN log);
+  `stop()` is idempotent; `on_disconnect_after_s` triggers WARN log
+  exactly once.
+- **sysnav_sim_tool**: pre-flight discovery of running SysNav nodes;
+  graceful path when SysNav not present; bridge `start()` failure
+  does not abort sim startup; `stop()` cleans up subscribers and
+  shutdowns rclpy.
 
-- `scripts/verify_perception_pick.py --dry-run`: same exit-0 contract
-  as v2.3, updated to use mocked detector/segmenter.
+### 8.2 Integration tests (≥ 5 new)
 
-### Live smoke (GPU required, Yusen-run)
+| File | Test |
+|---|---|
+| `tests/integration/test_lidar360_against_world.py` | Ray-cast hits a known wall body in `go2_room.xml` at expected world XYZ within 5 cm |
+| `tests/integration/test_pano360_against_world.py` | A coloured marker placed at θ = 0° (in front of robot) appears at the expected image column |
+| `tests/integration/test_gt_odom_against_walk.py` | After `MuJoCoGo2.set_velocity(0.5, 0)` for 1 s, odom reports x ≈ 0.5 m forward |
+| `tests/integration/test_sysnav_sim_smoke.py` | Mocked `/object_nodes_list` publisher → bridge → `world_model.get_objects` returns expected entries |
+| `tests/integration/test_xmat_rep103_regression.py` | After G3 fix, `Go2ROS2Proxy.get_camera_pose` returns `right == (0, -1, 0)` and `up == (0, 0, 1)` at heading 0 |
 
-- `go2sim with_arm=1` loads 10 GSO pickables on table.
-- `抓起蓝色瓶子` → world_model populated with valid coords
-  (|err| < 0.1 m), pick succeeds ≥ 4 / 5 runs.
+### 8.3 E2E smoke (Yusen-run, GPU + SysNav workspace required)
+
+`scripts/smoke_sysnav_sim.py`:
+- Starts MuJoCo `go2_room.xml`.
+- Verifies all four topics publishing within 5 s.
+- Asserts `/object_nodes_list` carries ≥ 1 node within 30 s when
+  SysNav workspace is sourced (skipped with `pytest.skip` otherwise).
+- Asserts a known cylinder pose appears in `world_model` within 0.1 m.
+
+### 8.4 Regression contract
+
+Existing 70 tests across `test_pick_top_down.py`,
+`test_mobile_pick.py`, `test_sysnav_bridge_mapping.py` must remain
+green throughout v2.4. CI runs all three plus the new unit tests.
+
+### 8.5 Coverage gate
+
+`pytest --cov=vector_os_nano.hardware.sim.sensors
+--cov=vector_os_nano.integrations.sysnav_bridge
+--cov-fail-under=90` blocks the wave-5 QA gate.
 
 ## 9. Acceptance Criteria
 
-1. All MUST goals G1–G11 satisfied.
-2. `pytest tests/unit tests/integration` passes on a GPU-less dev box
-   using mocked detector+segmenter (real weight load behind
-   `@pytest.mark.gpu`).
-3. Baseline v2.3 test count (194) preserved or replaced; net new ≥ 30
-   unit tests.
-4. Live-REPL smoke signed off by Yusen (5-run pass criterion).
-5. Qwen removed from grounding path (ruff + grep can't find
-   `QwenVLMDetector` references in `skills/` or `perception/go2_*.py`).
-6. Branch pushable to main once CEO approves.
+1. All G1–G9 met.
+2. ≥ 50 new unit tests + ≥ 5 integration tests, all green on CI.
+3. Coverage ≥ 90 % on new modules.
+4. Existing 70 manipulation tests preserved green.
+5. E2E smoke (8.3) passes when SysNav is running, gracefully skips
+   when not.
+6. `ruff check vector_os_nano/ tests/` clean.
+7. Yusen REPL smoke approves.
+8. `progress.md` updated with the v2.4 narrative.
 
 ## 10. Open Questions
 
-| # | Question | Default (if no CEO input) | Alternatives |
-|---|---|---|---|
-| O1 | SAM 3 vs SAM 3.1 base/large? | `sam3.1-base` (balance) | `sam3-base` (stability), `sam3.1-large` (accuracy, +VRAM) |
-| O2 | YOLOE size: S/M/L? | `yoloe-s` (speed) | M/L trade accuracy |
-| O3 | SAM 3 segmentation deferred — use **Arch B** (YOLOE + SAM 2.1) instead? Faster (50–150 ms), battle-tested. | Proceed with SAM 3.1 (Yusen direction); keep SAM 2.1 path documented as fallback if VRAM / speed fails. | Full fallback to SAM 2.1 |
-| O4 | Number of GSO pickable objects? | 10 (balance variety vs scene load time) | 5 (faster), 20 (more tests) |
-| O5 | Keep bbox-centre fallback when SAM unavailable? | Yes — degraded-mode smoke without GPU | No — require mask always |
-| O6 | Delete `QwenVLMDetector` now or keep as archived? | Delete (+20 tests removed, ~500 LoC) — code-review agent will flag unused | Archive under `perception/archive/` |
-| O7 | FoundationPose 6-DoF — v2.5 or inline in v2.4? | v2.5 (Piper is top-down only) | Inline — +5 days, side-grasp capability |
-| O8 | Scene: keep 3 cylinder bottles alongside GSO as regression anchor? | No — replace fully, GSO covers diversity | Yes — hybrid |
+| # | Question | Default |
+|---|---|---|
+| O1 | Pano stitching — 6 cube faces or single fisheye? | 6 cube faces (more robust geometry) |
+| O2 | Lidar ray pattern — uniform polar grid or Mid-360 spinning? | Polar grid (deterministic for tests) |
+| O3 | `/registered_scan` already in `map` frame — do we still need to publish `/aft_mapped_to_init_incremental` for SysNav's bagfile platform? | No — sim platform only |
+| O4 | Pano camera mount offset — match SysNav `cloud_image_fusion` defaults (z=0.265 m, x=-0.12 m, y=-0.075 m for "go2 4090") or pick a Vector OS Nano-specific tuple? | Match SysNav defaults; emit YAML override (M1) if mismatch |
+| O5 | LiveSysnavBridge — single-threaded `rclpy.spin_once` polled from MuJoCo step thread, or its own `MultiThreadedExecutor`? | Own executor (matches Go2ROS2Proxy v2.3 fix) |
+| O6 | M2 GSO scene swap — keep deferred to v2.5? | Yes — focus this cycle on infrastructure |
 
-Yusen to resolve O3, O4, O6 at minimum before `/sdd plan`.
+CEO has authorised proceeding with all defaults unless a change is
+flagged at /sdd plan time.
 
-## 11. Known debt carried forward
+## 11. Carry-forward debt
 
-- `VECTOR_SHARED_EXECUTOR=0` spin-thread leak (v2.3 LOW, legacy path).
-- `coverage` package / `numpy 2.4` C-tracer conflict — workaround via
-  `sys.settrace`.
-- `_normalise_color_keyword` still in private API (H3 v2.3 review).
-- VGG `last_seen('blue bottle')['room']` literal-string goal bug
-  (decomposer strategy whitelist needed).
-- `_wait_stable` duplicated between `pick_top_down` and `mobile_pick`
-  (should extract to `skills/utils/mobile_helpers.py`).
+- `_normalise_color_keyword` private API (since v2.3 H3) — deferred.
+- `_wait_stable` extract → `mobile_helpers.py` — deferred.
+- `VECTOR_SHARED_EXECUTOR=0` rollback path — deferred.
+- `coverage` × `numpy 2.4` C-tracer conflict — settrace workaround
+  persists in `test_lidar360.py`; document.
+- Real-robot bringup path — v2.5.
+- Replacing `vector_navigation_stack` with SysNav's `tare_planner` —
+  v3.0 architectural decision.

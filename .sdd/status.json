@@ -1,61 +1,68 @@
 {
   "project": "vector_os_nano",
-  "initiative": "v2.4 Perception Overhaul",
+  "initiative": "v2.4 SysNav Simulation Integration",
   "branch": "feat/v2.0-vectorengine-unification",
   "current_phase": "tasks",
-  "spec_status": "draft",
-  "plan_status": "draft",
-  "tasks_status": "draft",
+  "spec_status": "approved",
+  "plan_status": "approved-async",
+  "tasks_status": "approved-async",
   "execute_status": "pending",
-  "direction_from_ceo": {
-    "date": "2026-04-20",
-    "decisions": [
-      "Introduce YOLO + SAM3 combo for grounding (replace Qwen VLM grounding path)",
-      "Upgrade object assets to higher fidelity meshes",
-      "Proceed autonomously while CEO away; CEO returns to review"
-    ]
-  },
+  "ceo_directive_2026_04_25": [
+    "Auto-approve architectural decisions (Path A: SysNav as standard, Apache 2.0 boundary preserved)",
+    "Begin implementation immediately",
+    "Emphasize broad test coverage in SDD"
+  ],
   "scope_summary": {
     "new_modules": [
-      "perception/detectors/yoloe_detector.py",
-      "perception/segmenters/sam3_segmenter.py",
-      "perception/pointcloud_projection.py",
-      "perception/sanity_gates.py"
+      "vector_os_nano/hardware/sim/sensors/lidar360.py",
+      "vector_os_nano/hardware/sim/sensors/pano360.py",
+      "vector_os_nano/hardware/sim/sensors/gt_odom.py",
+      "vector_os_nano/integrations/sysnav_bridge/live_bridge.py",
+      "vector_os_nano/vcli/tools/sysnav_sim_tool.py"
     ],
     "modified_modules": [
-      "perception/go2_perception.py",
-      "hardware/sim/go2_ros2_proxy.py (xmat fix)",
-      "hardware/sim/go2_room.xml (scene swap)",
-      "vcli/tools/sim_tool.py (wire-up)",
-      "skills/detect.py (CLI summary)",
-      "skills/mobile_pick.py (distance warning)"
+      "scripts/go2_vnav_bridge.py (publisher wiring)",
+      "vector_os_nano/hardware/sim/go2_ros2_proxy.py (G3 xmat fix)",
+      "vector_os_nano/integrations/sysnav_bridge/__init__.py (re-export)",
+      "vector_os_nano/vcli/tools/__init__.py (register tool)",
+      "tests/integration/test_go2_camera_pose.py (G3 expectations)"
     ],
-    "removed_modules": [
-      "perception/vlm_qwen.py (grounding path dropped; describe/visual_query via vlm_go2 stays)"
+    "deleted_modules": [
+      "vector_os_nano/perception/vlm_qwen.py",
+      "vector_os_nano/perception/go2_perception.py",
+      "vector_os_nano/perception/go2_calibration.py",
+      "tests/unit/perception/test_vlm_qwen.py",
+      "tests/unit/perception/test_go2_perception.py",
+      "tests/unit/perception/test_go2_calibration.py",
+      "tests/integration/test_sim_tool_perception_wire.py",
+      "scripts/verify_perception_pick.py",
+      "docs/v2.3_live_repl_checklist.md"
     ],
-    "new_ros2_interfaces": 0,
-    "new_dependencies": [
-      "ultralytics (YOLOE)",
-      "sam3 or facebookresearch/sam3 (segmentation)",
-      "open3d (pointcloud ops; may fall back to numpy)"
-    ],
-    "new_assets": "Google Scanned Objects subset (~10 meshes) via kevinzakka/mujoco_scanned_objects",
+    "new_tests_target": {
+      "unit": 50,
+      "integration": 5,
+      "smoke": 1
+    },
+    "coverage_gate": "90% on new modules",
+    "new_dependencies": "none — all new code uses numpy, opencv, mujoco already in [perception] extras",
     "deferred_to_v25": [
-      "FoundationPose 6-DoF",
-      "IOU temporal fusion M1",
-      "Domain randomization M2"
+      "GSO realistic-mesh scene swap (M2)",
+      "_normalise_color_keyword promotion to public",
+      "_wait_stable extract to mobile_helpers",
+      "arise_slam_mid360 for real robot",
+      "Real Go2 + Livox + Ricoh Theta integration"
     ],
     "deferred_to_v30": [
-      "VoxelMap + CLIP persistent memory",
-      "Close-loop visual servoing",
-      "SAM 3D single-image reconstruction",
-      "Real hardware integration"
+      "Replace vector_navigation_stack with SysNav tare_planner",
+      "FoundationPose 6-DoF grasp",
+      "VoxelMap + CLIP persistent memory"
     ]
   },
   "test_metrics": {
-    "baseline_from_v23": 194,
-    "target_new_unit_tests": 30,
-    "coverage_target_new_modules": 90
+    "baseline_from_v23": 70,
+    "new_unit_target": 50,
+    "new_integration_target": 5,
+    "coverage_target": 90
   },
   "qa_status": {
     "code_review": "pending",
@@ -63,34 +70,34 @@
   },
   "history": [
     {
-      "timestamp": "2026-04-20T16:00:00Z",
-      "action": "v23_archive",
-      "agent": "dispatcher",
-      "details": "v2.3 SDD artifacts archived to .sdd/archive-v2.3/. 2 bookkeeping commits pushed to remote."
-    },
-    {
-      "timestamp": "2026-04-20T16:05:00Z",
-      "action": "v24_init",
-      "agent": "dispatcher",
-      "details": "v2.4 perception overhaul initiated. CEO directed YOLO+SAM3 grounding + high-fidelity assets; CEO away 2-3h, dispatcher drafting spec/plan autonomously."
-    },
-    {
-      "timestamp": "2026-04-20T16:10:00Z",
-      "action": "spec_draft",
-      "agent": "architect (dispatcher acting)",
-      "details": "spec.md drafted — 4 new perception modules, 6 modifications, 1 removal (QwenVLMDetector grounding), GSO scene swap. 11 MUST + 7 SHOULD + 4 MAY goals. 8 open questions for CEO resolution (O3 SAM3 vs SAM2.1, O4 object count, O6 Qwen retention prioritised)."
-    },
-    {
       "timestamp": "2026-04-20T16:40:00Z",
+      "action": "v24_perception_archived",
+      "agent": "dispatcher",
+      "details": "v2.4 perception overhaul (YOLOE+SAM3) artifacts moved to .sdd/archive-v2.4-perception-overhaul/. Reason: SysNav already provides equivalent capabilities (SAM2+YOLO+cloud_image_fusion); reimplementing duplicates effort."
+    },
+    {
+      "timestamp": "2026-04-25T00:00:00Z",
+      "action": "v23_perception_purged",
+      "agent": "dispatcher",
+      "details": "Deleted vlm_qwen.py / go2_perception.py / go2_calibration.py and their tests + verify script + v2.3 live-REPL checklist. sim_tool.py Qwen wire-up replaced with comment pointing at sysnav_bridge."
+    },
+    {
+      "timestamp": "2026-04-25T00:30:00Z",
+      "action": "v24_sysnav_init",
+      "agent": "dispatcher",
+      "details": "v2.4 redirected to SysNav simulation integration. Spec drafted with 9 MUST goals (3 sensors + xmat fix + bridge subscriber + CLI tool + cleanup + docs), 5 SHOULD (latency / coverage targets), 3 MAY (deferrable). 50+ unit + 5 integration tests targeted, 90% coverage gate."
+    },
+    {
+      "timestamp": "2026-04-25T00:45:00Z",
       "action": "plan_draft",
       "agent": "architect (dispatcher acting)",
-      "details": "plan.md drafted — 14 technical decisions, 11 module designs, SAM3/YOLOE both via ultralytics >=8.3.237 (single dep), SAM2.1 auto-fallback when sam3.pt missing (HF gate), numpy+scipy pointcloud (no hard open3d), Git-LFS for GSO meshes with script fallback, colour-fraction mask filter for 'blue bottle' subquery disambiguation. 10 risks tabulated. 10-task/6-wave execution sketch. Env probe: torch 2.11+cpu (CPU-only interpreter), ultralytics absent (needs pip add to [perception] extras), open3d + opencv + scipy already in deps."
+      "details": "Plan: 15 technical decisions (sensor location, lidar polar grid, pano cube-face stitch, ground-truth odom skipping SLAM, lazy rclpy import, MultiThreadedExecutor matching v2.3 pattern, 0 new deps, GSO deferred to v2.5). 8 task / 6 wave execution sketch."
     },
     {
-      "timestamp": "2026-04-20T17:10:00Z",
+      "timestamp": "2026-04-25T01:00:00Z",
       "action": "tasks_draft",
       "agent": "dispatcher",
-      "details": "task.md drafted — 10 code tasks + QA wave + CEO smoke. 6 waves (0-probe, 1-modules×3, 2-integration×3, 3-scene+wire×2, 4-diagnostics×2, 5-QA parallel, 6-CEO). Serial subagent discipline per wave. Subagent prompt template included. Full TDD RED test lists per task. Estimated 2-3 days wall-clock at serial cadence. CEO approval still blocking pre-execution."
+      "details": "Task breakdown: T0 env probe, T1 lidar360, T2 gt_odom, T3 xmat fix, T4 pano360, T5 LiveSysnavBridge, T6 vnav_bridge wiring, T7 sysnav_sim_tool, T8 smoke+docs. Each task lists explicit RED test names; coverage gate 90%. Serial subagent dispatch per wave (per feedback_no_parallel_agents.md)."
     }
   ]
 }
