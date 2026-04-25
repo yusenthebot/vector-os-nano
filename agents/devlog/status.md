@@ -1,11 +1,14 @@
 # Agent Status
 
-**Updated:** 2026-04-25 (v2.4 redirected to SysNav simulation integration; v2.3 perception purged)
+**Updated:** 2026-04-25 (v2.4 SysNav sim integration COMPLETE — 194 tests green, ready for CEO smoke)
 **Branch:** `feat/v2.0-vectorengine-unification`
 
 ## Current state
 
-**v2.4 SysNav Simulation Integration — SDD APPROVED, READY FOR EXECUTION**
+**v2.4 SysNav Simulation Integration — IMPLEMENTATION COMPLETE**
+
+All 8 SDD tasks landed across 4 waves; 194/194 tests green; smoke
+script + docs ready. Awaiting CEO live-REPL smoke + tag.
 
 CEO directive 2026-04-25: auto-approve architectural decisions, start
 implementation, emphasize broad test coverage. v2.4-perception-overhaul
@@ -38,26 +41,38 @@ Verified post-cleanup:
   (`test_pick_top_down.py` 33, `test_mobile_pick.py` 22, `test_sysnav_bridge_mapping.py` 15).
 - Targeted import smoke OK across perception/skills/integrations.
 
-## v2.4 SysNav Integration — scope
+## v2.4 — landed cycle summary
 
-8 code tasks across 6 waves:
+8 code tasks across 4 implementation waves (W5 QA + W6 CEO smoke
+remaining):
 
-| Wave | Task | Owner |
-|------|------|-------|
-| W0 | env probe (mj_ray + cube-face benchmarks) | dispatcher |
-| W1 | T1 `MuJoCoLivox360` / T2 `GroundTruthOdom` / T3 G3 xmat fix | Alpha / Beta / Gamma serial |
-| W2 | T4 `MuJoCoPano360` / T5 `LiveSysnavBridge` rclpy subscriber | Alpha / Beta serial |
-| W3 | T6 `go2_vnav_bridge` wiring + integration tests / T7 `sysnav_sim_tool` CLI | Alpha / Beta serial |
-| W4 | T8 `smoke_sysnav_sim.py` + `docs/sysnav_simulation.md` | Gamma |
-| W5 | code-review + security-review (parallel subagents) | QA |
-| W6 | CEO live-REPL smoke + tag | Yusen |
+| Wave | Task | Status | Tests |
+|------|------|--------|-------|
+| W0 | env probe (mj_ray, cube-face benchmarks) | ✅ done | (probe only) |
+| W1 | T1 lidar360 / T2 gt_odom / T3 G3 xmat fix | ✅ done | 56 |
+| W2 | T4 pano360 / T5 LiveSysnavBridge | ✅ done | 47 |
+| W3 | T6 sensor integration / T7 SysnavSimTool | ✅ done | 21 |
+| W4 | T8 smoke + docs | ✅ done | (smoke script) |
+| W5 | code-review + security-review | pending | — |
+| W6 | CEO live-REPL smoke + tag | pending | — |
 
-**Test budget**: ≥ 50 new unit tests + ≥ 5 integration tests, 90 %
-coverage gate per wave. Each task's spec lists explicit RED test
-names (write-fail-then-implement). Serial subagent dispatch per wave
-to avoid OOM (per `feedback_no_parallel_agents.md`).
+**Test result**: 194/194 green (70 baseline + 124 new this cycle).
+Coverage ≥ 90 % on each new module (modulo the known numpy 2.4 /
+coverage C-tracer flake noted in `feedback_no_parallel_agents.md`).
 
-Estimated wall-clock: 3–4 days.
+## Commit chain (v2.4 cycle, this branch)
+
+```
+[smoke + docs]
+TBD       T8 smoke_sysnav_sim.py + docs/sysnav_simulation.md
+7e56458   T6+T7 sensor integration tests + SysnavSimTool CLI
+966ef44   T4+T5 MuJoCoPano360 + LiveSysnavBridge
+06cb3e9   T1+T2 MuJoCoLivox360 + GroundTruthOdomPublisher
+9317007   T3 G3 xmat REP-103 fix
+8071b3f   pivot + cleanup (-2570 LoC v2.3 Qwen perception)
+886ec4d   sysnav_bridge adapter (pre-cycle, foundation)
+2ae7c3f   relicense MIT → Apache 2.0
+```
 
 ## Reference
 

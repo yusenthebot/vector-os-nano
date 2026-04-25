@@ -1,10 +1,64 @@
 # Vector OS Nano SDK — Progress
 
-**Last updated:** 2026-04-19 (v2.3 pipeline landed)
-**Version:** v2.3-dev (branch: feat/v2.0-vectorengine-unification)
+**Last updated:** 2026-04-25 (v2.4 SysNav sim integration landed)
+**Version:** v2.4-dev (branch: feat/v2.0-vectorengine-unification)
 **Base:** v1.8.0
 
-## v2.3 Go2 Perception Pipeline — landed (2026-04-19)
+## v2.4 SysNav Simulation Integration — landed (2026-04-25)
+
+### Status
+Pivot from the abandoned v2.4 perception overhaul (YOLOE+SAM3, see
+`.sdd/archive-v2.4-perception-overhaul/`) to a thin bringup of the
+**SysNav** sibling project (CMU Robotics Institute, PolyForm-NC) as
+the standard scene-graph backend. License boundary preserved: SysNav
+runs in a separate ROS2 workspace, never copied or redistributed in
+this Apache-2.0 repo.
+
+### Delivered
+
+- **3 MuJoCo virtual sensors** (`vector_os_nano/hardware/sim/sensors/`)
+  - `MuJoCoLivox360` — polar-grid `mj_ray` (5760 rays default) → PointCloud2-shape `LidarSample`. ~13 ms / frame on RTX 5080. 27 tests, 97 % cov.
+  - `MuJoCoPano360` — 6 cube-face renders → equirectangular 1920×640 RGB matching SysNav `cloud_image_fusion` CAMERA_PARA. 24 tests, 96 % cov.
+  - `GroundTruthOdomPublisher` — body pose + finite-diff twist; skips SLAM in sim. 17 tests, 97 % cov.
+- **SysNav adapter** (`vector_os_nano/integrations/sysnav_bridge/`)
+  - `topic_interfaces.py` — typed shadow dataclasses for `tare_planner/ObjectNode/RoomNode`. 15 tests.
+  - `live_bridge.py` — rclpy subscriber, MultiThreadedExecutor, lazy import + degrade-to-noop on missing dep. 23 tests.
+- **CLI tool** `start_sysnav_sim` (`vector_os_nano/vcli/tools/sysnav_sim_tool.py`)
+  - Wraps SimStartTool + LiveSysnavBridge; preflight check for `tare_planner.msg`. 12 tests.
+- **G3 xmat REP-103 fix** (`go2_ros2_proxy.py:get_camera_pose`) — `right` now correctly maps to ROS-right (-Y at heading 0). Drops the v2.3 ~1.4 m mirrored lateral error. 12 regression tests.
+- **Smoke script** `scripts/smoke_sysnav_sim.py` — 3 modes (check-deps, no-sysnav, full).
+- **Docs** `docs/sysnav_simulation.md` — bringup, topic matrix, troubleshooting.
+- **Cleanup** — deleted v2.3 Qwen perception (`vlm_qwen.py`,
+  `go2_perception.py`, `go2_calibration.py`) + tests (~2570 LoC removed).
+  `sim_tool.py` Qwen wire-up replaced by sysnav_bridge comment.
+
+Test totals: **194 green** (70 baseline + 124 new this cycle); 90 %
+coverage gate met on every new module (modulo numpy 2.4 / coverage
+C-tracer flake noted in `feedback_no_parallel_agents.md`).
+
+### Architecture
+
+```
+vector-cli > start_sysnav_sim
+   ├── MuJoCo sim subprocess
+   │      /registered_scan  /camera/image  /state_estimation
+   └── LiveSysnavBridge ◀── /object_nodes_list ──── SysNav workspace
+        (Apache 2.0 adapter — sibling install, not bundled)
+```
+
+### Bringup
+
+```
+Terminal 1: cd ~/Desktop/SysNav && ./system_real_robot_with_exploration_planner_go2.sh
+Terminal 2: cd ~/Desktop/vector_os_nano && vector-cli > start_sysnav_sim
+```
+
+See `docs/sysnav_simulation.md` for the full topic contract and
+performance notes.
+
+---
+
+## v2.3 Go2 Perception Pipeline — superseded (2026-04-19)
 
 ### Status
 Perception layer filled the gap left by v2.2 — `agent._perception` and
