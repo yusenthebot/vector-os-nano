@@ -307,12 +307,13 @@ class Go2ROS2Proxy:
             pos="0.25 0 0.1" quat="0.999054 0 0.0434863 0"
         which is 0.25 m forward, 0.1 m up above base_link, pitched -5° down.
 
-        xmat cols convention: [camera_right, camera_up, -camera_forward].
-        For a level camera facing +X, camera_up must point to world +Z
-        (so that OpenCV y-down pixels project below the camera in world).
-        We therefore take ``up = cross(forward, right)`` — the opposite
-        order to a naive cross-product. Validated against
-        depth_projection.camera_to_world and the dry-run regression.
+        Frame convention (REP-103):
+            World X = forward, Y = left, Z = up.
+            For a robot heading 0 (facing +X), body-right is world -Y
+            so ``right = (sin(h), -cos(h), 0)``.
+        xmat columns are [camera_right, camera_up, -camera_forward].
+        ``up = cross(right, forward)`` keeps the basis right-handed and
+        gives world +Z for a level, +X-facing camera. v2.4 G3 fix.
         """
         import numpy as np
 
@@ -335,11 +336,11 @@ class Go2ROS2Proxy:
         cam_xpos = np.array([cam_x, cam_y, cam_z])
 
         # Body frame: forward = (cos_h·cos_p, sin_h·cos_p, sin_p),
-        #             right   = (-sin_h, cos_h, 0)
-        # up = cross(forward, right) → world +Z for a level, +X-facing camera.
+        #             right   = (sin_h, -cos_h, 0)   ← REP-103 right
+        # up = cross(right, forward) → world +Z for a level, +X-facing camera.
         fwd = np.array([cos_h * cos_p, sin_h * cos_p, sin_p])
-        right = np.array([-sin_h, cos_h, 0.0])
-        up = np.cross(fwd, right)
+        right = np.array([sin_h, -cos_h, 0.0])
+        up = np.cross(right, fwd)
 
         # MuJoCo xmat: columns = [right, up, -forward]
         cam_xmat = np.column_stack([right, up, -fwd]).flatten()

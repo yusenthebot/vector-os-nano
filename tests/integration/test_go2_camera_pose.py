@@ -3,10 +3,13 @@
 
 """Regression tests for Go2ROS2Proxy.get_camera_pose geometry.
 
-The v2.3 live REPL smoke (2026-04-20) surfaced a sign-convention bug:
-``up = cross(right, forward)`` produced a world-DOWN vector for a level
-``+X``-facing camera, which flipped the Y projection of perception
-detections and yielded world z values below the floor.
+History:
+- v2.3 live REPL smoke (2026-04-20) flagged a sign-convention bug:
+  ``up = cross(forward, right)`` plus ``right = (-sin h, cos h, 0)``
+  yielded a world-LEFT "right" axis (R2 in the v2.3 risk register).
+- v2.4 G3 (2026-04-25) fixed both: now ``right = (sin h, -cos h, 0)``
+  matches REP-103 (right is world -Y at heading 0) and
+  ``up = cross(right, forward)`` keeps the basis right-handed.
 
 These tests instantiate Go2ROS2Proxy without connecting — they only
 exercise ``get_camera_pose`` pure math — and assert:
@@ -14,7 +17,7 @@ exercise ``get_camera_pose`` pure math — and assert:
   2. The ``up`` xmat column points world +Z for a level camera
   3. A pixel below image centre projects to below the camera in world
   4. A pixel right of image centre projects to the camera's right
-     in world (world -Y for a +X-facing dog)
+     in world — world -Y for a +X-facing dog (REP-103)
 """
 from __future__ import annotations
 
@@ -105,15 +108,13 @@ def test_right_pixel_projects_to_dog_right_side() -> None:
         + (-y_cam) * xmat[:, 1]
         + z_cam * (-xmat[:, 2])
     )
-    # NOTE: the ``right`` column in get_camera_pose is (-sin_h, cos_h, 0),
-    # which is +Y for heading=0 — i.e. dog's LEFT in ROS. This is a
-    # separate latent inconsistency (the column labelled "right" is body-
-    # left) flagged in v2.3 risk register R2; self-consistent with
-    # depth_projection.camera_to_world so left/right reads flip together.
-    # We verify the CURRENT convention: right-of-centre pixel → world +Y.
-    assert world[1] > cam_xpos[1] + 0.05, (
+    # v2.4 G3: ``right = (sin h, -cos h, 0)`` is world -Y at heading 0,
+    # matching ROS REP-103 (dog's right side is world -Y). A pixel
+    # right-of-centre therefore projects to a world Y value LESS than
+    # the camera's Y.
+    assert world[1] < cam_xpos[1] - 0.05, (
         f"right-of-centre pixel mapped to y={world[1]:.3f}, "
-        f"expected > cam y={cam_xpos[1]:.3f} under current (right=+Y) convention"
+        f"expected < cam y={cam_xpos[1]:.3f} under REP-103 (right=-Y)"
     )
 
 
