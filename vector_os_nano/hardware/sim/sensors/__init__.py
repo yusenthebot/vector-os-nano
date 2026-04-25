@@ -25,10 +25,16 @@ from vector_os_nano.hardware.sim.sensors.lidar360 import (
     LidarSample,
     MuJoCoLivox360,
 )
+from vector_os_nano.hardware.sim.sensors.pano360 import (
+    MuJoCoPano360,
+    PanoSample,
+)
 
 __all__ = [
     "GroundTruthOdomPublisher",
     "LidarSample",
     "MuJoCoLivox360",
+    "MuJoCoPano360",
     "OdomSample",
+    "PanoSample",
 ]
