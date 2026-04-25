@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Dynamic system prompt that refreshes robot context on each LLM turn.
 
 VectorEngine accesses system_prompt as a list. This subclass overrides

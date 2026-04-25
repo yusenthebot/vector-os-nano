@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for IntentRouter — keyword-based tool category routing."""
 from vector_os_nano.vcli.intent_router import IntentRouter
 

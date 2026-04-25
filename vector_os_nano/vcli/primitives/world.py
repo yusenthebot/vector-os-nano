@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """World primitives — wrap SceneGraph for querying room/door/object state.
 
 All functions are module-level and read from the module-global _ctx.

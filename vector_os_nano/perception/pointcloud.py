@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Point cloud utilities — pure numpy, no open3d required for fast paths.
 
 Ported from vector_ws/src/vector_perception_utils/vector_perception_utils/pointcloud_utils.py.

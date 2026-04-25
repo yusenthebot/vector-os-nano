@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """PickSkill — pick up an object from the workspace.
 
 Full port of skill_node_v2._execute_pick() + _single_pick_attempt().

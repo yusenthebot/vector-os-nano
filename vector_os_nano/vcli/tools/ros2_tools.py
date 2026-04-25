@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """ROS2 diagnostic tools for Vector CLI.
 
 Three tools for LLM-driven robot diagnostics:

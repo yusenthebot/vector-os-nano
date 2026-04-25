@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 57 — ObjectMemory TDD tests.
 
 All tests use mocked SceneGraph — no MuJoCo instances needed.

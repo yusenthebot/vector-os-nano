@@ -1,0 +1,42 @@
+Vector OS Nano
+Copyright 2024-2026 Vector Robotics
+
+This product includes software developed at Vector Robotics
+(https://github.com/VectorRobotics/vector-os-nano).
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+------------------------------------------------------------------------
+Third-party components
+------------------------------------------------------------------------
+
+This product bundles or depends on the following third-party software,
+each under its own license. The corresponding licenses can be obtained
+from the upstream projects.
+
+Runtime dependencies (PyPI):
+  - numpy            (BSD 3-Clause)
+  - pyserial         (BSD 3-Clause)
+  - httpx            (BSD 3-Clause)
+  - pyyaml           (MIT)
+  - anthropic        (MIT)
+  - openai           (Apache-2.0)
+  - opencv-python    (Apache-2.0)
+  - open3d           (MIT)
+  - pyrealsense2     (Apache-2.0)
+  - pinocchio        (BSD 2-Clause)
+  - mujoco           (Apache-2.0)
+  - ultralytics      (AGPL-3.0)            -- optional, perception extra
+
+Hardware / firmware integrations referenced under their original licenses:
+  - Unitree Go2 SDK (unitree_sdk2)         -- BSD-3-Clause (Unitree)
+  - AgileX Piper assets via mujoco_menagerie (Apache-2.0)
+  - LeRobot SO-ARM100 assets               (Apache-2.0)
+
+Some third-party assets (e.g. MuJoCo Menagerie meshes) ship under their
+own attribution requirements. Their original LICENSE files are kept
+alongside the assets in this repository.

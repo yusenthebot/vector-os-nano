@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for vcli.tools discovery functions — Task 9 (Tool Discovery Update).
 
 TDD RED phase: these tests are written before the implementation is updated.

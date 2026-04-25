@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """ROS2 perception bridge — wraps PerceptionPipeline as a ROS2 node.
 
 Ported from vector_ws/src/track_anything/track_anything/track_3d.py structure.

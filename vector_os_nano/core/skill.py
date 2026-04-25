@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Skill protocol, @skill decorator, registry, and execution context.
 
 The @skill decorator replaces hard-coded routing. Each skill declares:

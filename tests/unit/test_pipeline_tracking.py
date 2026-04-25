@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Unit tests for PerceptionPipeline continuous background tracking.
 
 Tests the start/stop/loop mechanics added in feat/beta-continuous-tracking.

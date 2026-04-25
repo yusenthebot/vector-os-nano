@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for FoxgloveTool — Foxglove Bridge management.
 
 All subprocess calls are mocked — no real foxglove_bridge is invoked.

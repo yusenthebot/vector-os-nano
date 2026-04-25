@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """MuJoCo-backed simulated gripper.
 
 Implements GripperProtocol. Uses weld constraints for reliable grasping —

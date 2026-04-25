@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Persistent world state for Vector OS Nano SDK.
 
 Tracks objects, robot state, and spatial relations across a session.

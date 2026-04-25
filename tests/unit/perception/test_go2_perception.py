@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Unit tests for Go2Perception.
 
 TDD RED phase — all tests written before go2_perception.py exists.

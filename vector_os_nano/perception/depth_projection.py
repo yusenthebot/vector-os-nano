@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Depth-to-world projection for RealSense D435 (sim and real).
 
 Converts pixel coordinates + depth value to world (x, y, z) using

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for MCP resource handlers (vector_os_nano/mcp/resources.py)."""
 
 from __future__ import annotations

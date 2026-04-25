@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """State prediction based on SceneGraph room topology.
 
 Pure functions — no side effects, no hardware, no LLM.

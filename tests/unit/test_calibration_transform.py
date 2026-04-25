@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for calibration transform accuracy using real calibration data.
 
 Validates that the transform_matrix in workspace_calibration.yaml correctly

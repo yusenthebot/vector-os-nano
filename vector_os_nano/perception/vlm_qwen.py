@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Qwen2.5-VL grounded object detection via OpenRouter.
 
 Calls ``qwen/qwen2.5-vl-72b-instruct`` to detect objects in a camera frame

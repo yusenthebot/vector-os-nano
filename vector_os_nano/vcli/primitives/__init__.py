@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Primitives package — module-level function wrappers for hardware and world state.
 
 All primitives read from a module-global PrimitiveContext, matching the CaP-X

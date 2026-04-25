@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Pinocchio-based FK/IK solver for the SO-101 arm.
 
 Ported from vector_ws/src/so101_skills/so101_skills/pinocchio_ik.py.

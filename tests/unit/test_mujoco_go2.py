@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for MuJoCoGo2 — Go2 quadruped in MuJoCo simulation."""
 import pytest
 

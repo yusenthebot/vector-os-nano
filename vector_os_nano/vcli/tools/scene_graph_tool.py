@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """SceneGraphQueryTool — LLM interface for querying the robot's spatial memory.
 
 Allows the LLM agent to inspect the SceneGraph without modifying it.

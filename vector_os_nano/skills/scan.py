@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """ScanSkill — move arm to scan position.
 
 Ported from skill_node_v2._execute_scan(). For SO-101, scan pose == home

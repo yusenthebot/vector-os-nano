@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """StrategyStats — persistent strategy success rate tracking for data-driven selection.
 
 Tracks per-(strategy, sub_goal_pattern) execution outcomes across sessions.

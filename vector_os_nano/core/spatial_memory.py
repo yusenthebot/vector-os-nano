@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Persistent spatial memory for Vector OS Nano SDK.
 
 Tracks rooms visited, objects observed per room, and a bounded navigation

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """End-to-end verification for the Piper top-down grasp pipeline.
 
 Runs a headless MuJoCo Go2+Piper sim, picks each of the three pickable_*

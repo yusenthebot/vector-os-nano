@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """VisualVerifier — VLM-based verification fallback for VGG steps.
 
 Called when GoalVerifier.verify() returns False. Takes a photo via the robot's

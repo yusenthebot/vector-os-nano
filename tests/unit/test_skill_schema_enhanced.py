@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Enhanced skill schema tests — TDD for failure_modes in Skill protocol + to_schemas()."""
 from __future__ import annotations
 

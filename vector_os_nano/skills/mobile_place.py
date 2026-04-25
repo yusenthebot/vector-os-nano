@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Walk the dog to an approach pose, then delegate to PlaceTopDownSkill.
 
 Phase C mobile variant of the manipulation stack (v2.2 Wave 3, Task T9).

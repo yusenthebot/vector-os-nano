@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 41 — VGG Phase 1: types.py + goal_verifier.py
 
 TDD tests for:

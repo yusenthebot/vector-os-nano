@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """T4 — StrategySelector tests.
 
 AC-21: Explicit strategy in sub_goal.strategy is honoured.

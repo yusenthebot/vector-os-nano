@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """ExploreSkill -- non-blocking autonomous exploration.
 
 Launches exploration in a background thread and returns IMMEDIATELY so the

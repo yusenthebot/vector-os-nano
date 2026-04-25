@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Unit tests for PlaceSkill diagnostic result_data — TDD RED phase.
 
 Covers every return path in PlaceSkill.execute():

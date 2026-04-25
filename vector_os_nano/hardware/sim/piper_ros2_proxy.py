@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """ROS2 proxies for Piper arm + gripper (main-process side).
 
 The Piper MuJoCo actuators live inside the bridge subprocess (where

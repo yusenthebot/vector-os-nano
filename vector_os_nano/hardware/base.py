@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """BaseProtocol — abstract interface for any mobile base.
 
 All mobile base implementations (MuJoCoGo2, UnitreeRealGo2, DiffDriveBase, etc.)

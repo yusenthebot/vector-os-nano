@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """End-to-end integration tests for the Vector CLI tool_use agent loop.
 
 These tests exercise the full path from user message → VectorEngine →

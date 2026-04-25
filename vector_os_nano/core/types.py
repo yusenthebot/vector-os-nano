@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Shared data types for Vector OS Nano SDK.
 
 All types are frozen dataclasses (immutable). Types that cross module

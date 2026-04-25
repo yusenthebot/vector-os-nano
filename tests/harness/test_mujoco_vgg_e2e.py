@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """VGG end-to-end tests with real MuJoCo physics.
 
 Validates the full pipeline: user input -> VGG decompose -> skill execution ->

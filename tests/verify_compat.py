@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Post-install compatibility verification.
 
 Run after installing torch + transformers to ensure ALL existing

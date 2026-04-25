@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for NavStackClient Nav2 action mode.
 
 Tests run WITHOUT rclpy / nav2_msgs installed by patching every ROS2 import

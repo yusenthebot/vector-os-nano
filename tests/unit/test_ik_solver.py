@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Unit tests for vector_os_nano.hardware.so101.ik_solver — TDD RED phase.
 
 Tests require pinocchio. If not installed, entire module is skipped.

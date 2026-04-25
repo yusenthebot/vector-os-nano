@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Unit tests for perception.pointcloud — pure numpy, no real camera needed."""
 from __future__ import annotations
 

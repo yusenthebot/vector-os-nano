@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Canonical LLM response types shared by all backends.
 
 These frozen dataclasses are the interface between backends and the engine.

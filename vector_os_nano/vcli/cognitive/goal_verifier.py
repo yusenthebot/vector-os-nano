@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """GoalVerifier — safe sandbox for evaluating SubGoal verify expressions.
 
 Security model:

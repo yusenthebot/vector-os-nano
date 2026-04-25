@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """VGG cognitive layer — types, verifier, decomposer, strategy selector, executor, stats, sandbox, experience, and object memory.
 
 Public surface::

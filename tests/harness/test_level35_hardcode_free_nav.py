@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """L35: Navigation works without hardcoded coordinates.
 
 Verifies that navigate.py uses SceneGraph exclusively for room/door data

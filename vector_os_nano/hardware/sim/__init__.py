@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """vector_os_nano.hardware.sim — simulation backends.
 
 Provides drop-in replacements for hardware arm and gripper,

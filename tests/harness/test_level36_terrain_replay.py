@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """L36: Terrain replay publishes to /registered_scan only.
 
 Tests verify the bridge's terrain replay configuration by static source

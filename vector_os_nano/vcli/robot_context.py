@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Robot state context provider for LLM system prompt.
 
 Collects real-time robot state (position, room, SceneGraph, nav state)

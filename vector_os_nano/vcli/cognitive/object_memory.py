@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """ObjectMemory — time-aware object tracking with exponential confidence decay.
 
 Wraps SceneGraph.ObjectNode with decay-based confidence so the robot can

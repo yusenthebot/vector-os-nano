@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """WalkSkill — move the Go2 quadruped in a given direction.
 
 Maps direction + distance + speed to a timed velocity command sent via

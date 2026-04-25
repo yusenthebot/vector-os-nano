@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Approach pose utility for mobile manipulation.
 
 Given an object's world XYZ and the dog's current world pose, compute an

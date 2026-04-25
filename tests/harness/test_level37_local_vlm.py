@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """L37: Local VLM (Ollama) backend integration tests.
 
 Tests that the VLM perception layer works with a local Ollama backend

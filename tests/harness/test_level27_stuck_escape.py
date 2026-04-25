@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 27: Stuck escape debug harness — P0 (dog stuck in tight spaces).
 
 Root cause: TARE sends waypoint in tight space → localPlanner can't path →

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """HomeSkill — move arm to home position and open gripper.
 
 Ported from skill_node_v2._execute_home(). No ROS2 imports.

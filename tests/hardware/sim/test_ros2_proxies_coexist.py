@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Integration tests for Ros2Runtime with REAL rclpy (no mocks).
 
 Regression guard for live-REPL Bug 1: "Executor is already spinning".

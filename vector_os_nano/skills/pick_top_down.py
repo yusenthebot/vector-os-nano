@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Pick up an object with the Piper arm using a top-down grasp.
 
 Phase C of the v2.1 manipulation stack. DEMO-QUALITY — this skill assumes

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 1 — Camera-to-VLM pipeline verification.
 
 Tests verify that MuJoCo renders a valid camera frame, the frame can be

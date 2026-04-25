@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Unit tests for SO101Arm protocol compliance and basic properties.
 
 Tests that SO101Arm satisfies the ArmProtocol interface contract:

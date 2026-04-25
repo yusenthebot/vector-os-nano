@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 0 — VLM API connectivity verification.
 
 Tests at this level verify that GPT-4o vision can be reached via OpenRouter

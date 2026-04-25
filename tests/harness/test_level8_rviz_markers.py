@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 8 — RViz MarkerArray: scene graph visualisation markers.
 
 Tests ``build_scene_graph_markers()`` from

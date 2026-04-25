@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """OAuth2 Authorization Code + PKCE flow for Anthropic/Claude subscription.
 
 Implements the same OAuth flow as Claude Code to authenticate with

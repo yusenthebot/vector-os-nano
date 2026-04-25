@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Vector OS Nano Agent — the main entry point.
 
 This is the ONE class users interact with. It wires together:

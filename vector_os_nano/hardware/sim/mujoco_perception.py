@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """MuJoCo-based simulated perception.
 
 Provides ground-truth object detection and tracking using MuJoCo's

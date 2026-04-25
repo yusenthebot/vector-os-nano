@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """DescribeSkill — capture current frame and ask VLM to describe the scene.
 
 Unlike DetectSkill (which returns bounding boxes for a specific query),

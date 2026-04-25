@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """GoalExecutor — executes GoalTrees by verifying each step and handling fallbacks.
 
 Execution flow per sub_goal:

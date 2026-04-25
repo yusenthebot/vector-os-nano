@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Ground-truth depth projection tests for BUG-1 (RGB/depth timing mismatch).
 
 Two classes of tests:

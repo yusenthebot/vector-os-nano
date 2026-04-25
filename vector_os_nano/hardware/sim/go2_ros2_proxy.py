@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Go2 ROS2 Proxy — controls Go2 via ROS2 topics instead of direct MuJoCo.
 
 Used when the MuJoCo simulation is managed by an external process

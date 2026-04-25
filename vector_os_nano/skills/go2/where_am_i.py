@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """WhereAmISkill -- report the robot's current position and room.
 
 Reads position and heading from context.base and uses the room map from

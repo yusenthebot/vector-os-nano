@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Go2 MuJoCo ↔ ROS2 Navigation Stack Bridge.
 
 Three functions in one node:

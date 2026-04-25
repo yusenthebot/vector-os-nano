@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """RViz MarkerArray publisher for the three-layer scene graph.
 
 Publishes to /scene_graph_markers (visualization_msgs/MarkerArray) at 1 Hz.

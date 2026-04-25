@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Unit tests for SimulatedArm and SimulatedGripper.
 
 These tests do NOT require pybullet to be installed.

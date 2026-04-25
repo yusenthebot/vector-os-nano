@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for ActionRecord and GoalResult types in core/types.py."""
 import pytest
 from vector_os_nano.core.types import ActionRecord, GoalResult

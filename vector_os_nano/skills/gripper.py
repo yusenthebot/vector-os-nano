@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Gripper skills — open and close as proper @skill classes.
 
 Replaces hard-coded gripper routing in Agent._try_direct().

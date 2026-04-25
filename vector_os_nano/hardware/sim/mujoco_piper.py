@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """MuJoCo-based AgileX Piper 6-DoF arm.
 
 Implements ArmProtocol. The Piper is a nested body tree inside the combined

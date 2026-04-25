@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 58 — predict module TDD tests.
 
 Pure rule-based state prediction using SceneGraph room topology.

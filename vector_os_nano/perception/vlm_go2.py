@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """GPT-4o Vision-Language Model perception for the Go2 quadruped robot.
 
 Calls the OpenRouter API (https://openrouter.ai/api/v1) with model

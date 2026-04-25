@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """GoalDecomposer — LLM-backed natural language task decomposition.
 
 Converts a natural language task string into a structured GoalTree by:

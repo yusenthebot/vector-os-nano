@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level-25 nav integration tests — source-inspection harness.
 
 These tests verify the structural contract between Go2ROS2Proxy and

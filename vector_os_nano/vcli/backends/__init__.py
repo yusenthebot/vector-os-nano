@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """vcli.backends — unified LLM backend abstraction.
 
 Supports Anthropic API, OpenRouter, and any OpenAI-compatible endpoint

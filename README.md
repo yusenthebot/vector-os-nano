@@ -310,6 +310,31 @@ Without the nav stack, basic Go2 skills (walk, turn, stand, dead-reckoning navig
 
 ---
 
+## License
+
+Copyright 2024-2026 Vector Robotics.
+
+Licensed under the **Apache License, Version 2.0** (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at
+
+> http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an **"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND**, either express or implied. See the [LICENSE](LICENSE) file and the [NOTICE](NOTICE) file for the specific language governing permissions and limitations, including attribution and patent-grant terms, and a list of bundled third-party components.
+
+### Contributing
+
+By submitting a pull request, you agree that your contribution is licensed under the same Apache License 2.0 terms (Section 5 of the License). Any code you contribute must include the SPDX header:
+
+```python
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+```
+
+### Trademarks
+
+"Vector Robotics" and "Vector OS Nano" are trademarks of Vector Robotics. The Apache License does not grant permission to use these names except as required for describing the origin of the Work and reproducing the contents of the NOTICE file.
+
+---
+
 <p align="center">
   <i>CMU Robotics Institute. Star this repo and stay tuned.</i>
 </p>

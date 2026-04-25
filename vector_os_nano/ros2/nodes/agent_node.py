@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """ROS2 agent node — wraps the Agent class as a ROS2 node.
 
 Services:

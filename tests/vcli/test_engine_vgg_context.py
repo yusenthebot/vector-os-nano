@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Regression: VGG's _build_context must propagate arm / gripper / world_model.
 
 Prior to the 2026-04-19 fix, engine._build_context only wired `base` +

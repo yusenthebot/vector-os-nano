@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """ROS2 hardware bridge — wraps SO101Arm/SO101Gripper as a ROS2 node.
 
 Ported from vector_ws/src/so101_hardware/so101_hardware/hardware_bridge.py.

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """VGG Harness — feedback loop wrapper around the VGG pipeline.
 
 Three layers of retry/recovery:

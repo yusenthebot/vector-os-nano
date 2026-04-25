@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 62 — Phase 3 Active World Model: MuJoCo integration tests.
 
 Tests Phase 3 components with a real MuJoCo Go2 simulation:

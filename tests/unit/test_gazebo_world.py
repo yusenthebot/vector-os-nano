@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for Gazebo Harmonic world files: empty_room.sdf and apartment.sdf.
 
 Validates that world SDF files exist, are valid XML, and contain all required

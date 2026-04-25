@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Isaac Sim Arm Proxy — controls a 6-DOF arm in Isaac Sim Docker via ROS2 topics.
 
 Implements ArmProtocol for an arm running inside an Isaac Sim Docker container.

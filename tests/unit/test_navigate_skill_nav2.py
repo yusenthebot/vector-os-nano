@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for NavigateSkill when backed by Nav2 NavStackClient.
 
 Verifies that NavigateSkill correctly delegates to NavStackClient regardless

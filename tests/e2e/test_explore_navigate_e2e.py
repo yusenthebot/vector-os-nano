@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """E2E pipeline test: MuJoCo → explore → SceneGraph → navigate.
 
 Headless MuJoCo (no GUI, no ROS2, no nav stack). Tests the core

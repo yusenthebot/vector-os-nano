@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 9 — Go2ROS2Proxy → LookSkill end-to-end pipeline.
 
 Tests verify the full VLM look pipeline when the robot base is a real

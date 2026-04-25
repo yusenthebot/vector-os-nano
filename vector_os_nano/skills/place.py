@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """PlaceSkill — place a held object at a target position.
 
 Full port of skill_node_v2._execute_place(). The target position is

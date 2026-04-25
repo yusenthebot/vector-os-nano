@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for MCP run_goal tool — build_run_goal_tool, schema, list, handler.
 
 TDD: RED phase — written before implementation.

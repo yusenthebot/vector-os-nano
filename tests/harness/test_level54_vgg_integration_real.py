@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """VGG Integration Harness — tests with real Agent + Skills, mocked hardware only.
 
 Tests the full pipeline: should_use_vgg, GoalDecomposer, StrategySelector,

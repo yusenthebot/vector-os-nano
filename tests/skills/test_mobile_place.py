@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Unit tests for MobilePlaceSkill — TDD Wave 3, Task T9.
 
 7 tests covering:

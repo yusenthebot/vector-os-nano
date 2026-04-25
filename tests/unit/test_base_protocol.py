@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for BaseProtocol — mobile base abstraction."""
 from typing import runtime_checkable
 from vector_os_nano.hardware.base import BaseProtocol

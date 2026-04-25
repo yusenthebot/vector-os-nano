@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """MuJoCo Piper parallel-jaw gripper.
 
 Implements GripperProtocol. Piper's gripper is a single-actuator parallel

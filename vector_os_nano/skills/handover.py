@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """HandoverSkill — hand an object to the user.
 
 Rotates the arm 90 degrees toward the user and releases the gripper.

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Deterministic task execution engine for Vector OS Nano SDK.
 
 The TaskExecutor runs a TaskPlan step-by-step in dependency order.

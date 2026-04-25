@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for gazebo/launch/go2_sim.launch.py structure.
 
 Validates the ROS2 launch file for Gazebo Harmonic Go2 simulation:

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Gazebo Harmonic Go2 proxy — velocity-controlled Go2 in Gz Sim.
 
 Uses Go2ROS2Proxy's /cmd_vel_nav (Twist) interface directly.

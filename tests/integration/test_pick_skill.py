@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Integration tests for PickSkill with mock hardware.
 
 Tests verify the full pick sequence without requiring real hardware or ROS2.

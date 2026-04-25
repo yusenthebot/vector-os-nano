@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """VectorEngine — core tool_use agent loop for Vector CLI.
 
 Mirrors Claude Code's query.ts / toolOrchestration.ts pattern.

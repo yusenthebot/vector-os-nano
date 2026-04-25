@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for unitree_guide_controller ros2_control integration.
 
 Validates that gazebo/models/go2/ros2_control.yaml exists, is valid YAML,

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 48 harness tests — StrategyStats persistent strategy success rate tracking.
 
 TDD: Tests written before implementation (RED → GREEN → REFACTOR).

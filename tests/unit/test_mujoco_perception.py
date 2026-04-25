@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for MuJoCoPerception — ground-truth simulated perception."""
 from __future__ import annotations
 

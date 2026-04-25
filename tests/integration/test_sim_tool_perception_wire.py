@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Integration tests for SimStartTool._start_go2 perception + calibration wire-up.
 
 These tests verify that T4 (sim_tool wire-up) correctly assigns agent._perception

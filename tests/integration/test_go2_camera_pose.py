@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Regression tests for Go2ROS2Proxy.get_camera_pose geometry.
 
 The v2.3 live REPL smoke (2026-04-20) surfaced a sign-convention bug:

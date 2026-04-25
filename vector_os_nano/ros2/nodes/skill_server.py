@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """ROS2 skill server — exposes SDK skills as ROS2 Trigger services.
 
 Each registered skill is exposed as a /skill/<name> Trigger service.

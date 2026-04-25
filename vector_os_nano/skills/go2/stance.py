@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Stance skills for the Go2 quadruped: stand, sit, lie down.
 
 All three are direct skills (no LLM planning needed). Each validates that

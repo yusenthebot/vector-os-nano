@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Global abort signal for VGG task interruption.
 
 All blocking loops (VGGHarness, GoalExecutor, navigate, explore)

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Unit tests for Gazebo backend registration in SimStartTool.
 
 TDD — RED phase: these tests define the expected behaviour before

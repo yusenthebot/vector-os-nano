@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Unit tests for vector_os_nano.core.types — TDD RED phase.
 
 Tests are written before implementation and must cover:

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 43: V-Graph cross-room edge formation — live ROS2 integration (opt-in).
 
 Requires a full nav stack bringup (scripts/launch_nav_only.sh) plus a

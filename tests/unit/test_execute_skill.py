@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for Agent.execute_skill() — the MCP tool call entry point.
 
 execute_skill() bypasses string parsing and alias matching. It builds a

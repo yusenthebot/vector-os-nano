@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """CLI scenario harness — full VGG pipeline with real Agent + Skills.
 
 Simulates real user interactions: sim start -> explore -> navigate -> complex tasks.

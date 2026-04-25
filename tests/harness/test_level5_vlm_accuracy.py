@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 5 — VLM room identification accuracy benchmark.
 
 Navigates the Go2 to each of the 8 rooms in the house, captures a camera

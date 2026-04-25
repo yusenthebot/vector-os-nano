@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 3 — Velocity tracking verification.
 
 Tests verify that set_velocity() produces robot motion in the commanded

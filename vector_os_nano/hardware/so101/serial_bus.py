@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Low-level serial communication with Feetech STS3215 servos.
 
 Extracted from vector_ws/src/so101_hardware/so101_hardware/hardware_bridge.py.

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Integration tests for vector_os_nano.core.agent.Agent.
 
 Tests cover all public Agent methods with mock hardware/LLM objects.

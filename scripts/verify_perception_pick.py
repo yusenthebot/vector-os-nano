@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """End-to-end verification for v2.3 Go2 perception pipeline (dry-run).
 
 Exercises the full chain:

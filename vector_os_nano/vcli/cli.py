@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Vector CLI — interactive REPL entry point.
 
 Ties together VectorEngine, Session, PermissionContext, and all tools

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Three-layer scene graph for spatial memory (SysNav-inspired).
 
 Replaces flat SpatialMemory with a hierarchical representation:

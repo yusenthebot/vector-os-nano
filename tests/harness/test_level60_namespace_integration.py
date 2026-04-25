@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Test Phase 3 namespace extension — GoalVerifier can use new functions."""
 import time
 import pytest

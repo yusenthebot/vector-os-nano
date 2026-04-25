@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level-49 harness tests: ExperienceCompiler + TemplateLibrary (AC-16 to AC-23).
 
 TDD — tests written first, implementation follows.

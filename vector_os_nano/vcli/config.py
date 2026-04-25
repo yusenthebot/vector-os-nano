@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Persistent configuration for Vector CLI.
 
 Stores API keys, default model, provider preferences in ~/.vector/config.yaml.

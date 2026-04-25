@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 59 — VisualVerifier TDD tests.
 
 VLM-based visual verification fallback for VGG goal steps.

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Unit tests for T4: Ros2Runtime wiring into Go2/Piper ROS2 proxies.
 
 Strategy

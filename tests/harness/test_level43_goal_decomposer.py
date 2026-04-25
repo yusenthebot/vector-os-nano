@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 43 — VGG Phase 1: GoalDecomposer
 
 TDD tests for:

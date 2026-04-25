@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Integration test: verify the full navigation data flow chain.
 
 Tests that all critical ROS2 topics are flowing correctly between:

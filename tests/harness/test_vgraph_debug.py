@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """V-Graph Debug Harness — Level 70: FAR visibility graph edge formation.
 
 Diagnoses why FAR planner's V-Graph doesn't build edges through doorways.

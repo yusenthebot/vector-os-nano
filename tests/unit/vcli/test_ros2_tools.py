@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for ROS2 diagnostic tools.
 
 TDD RED phase — tests written before implementation exists.

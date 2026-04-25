@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """StopSkill -- emergency stop, immediately halts all movement.
 
 Calls set_velocity(0, 0, 0) on the base and publishes a zero-velocity

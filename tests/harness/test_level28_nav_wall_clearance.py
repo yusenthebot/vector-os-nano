@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 28: Wall clearance debug harness — P1 (wall brushing during navigate).
 
 Root cause: searchRadius=0.45m (hardcoded in localPlanner.cpp) minus

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for unified NavigateSkill -- hardware-agnostic navigation."""
 import pytest
 from unittest.mock import MagicMock

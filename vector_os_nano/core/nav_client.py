@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """NavStackClient -- unified navigation client for CMU nav stack and Nav2.
 
 Supports two navigation back-ends selectable at construction time:

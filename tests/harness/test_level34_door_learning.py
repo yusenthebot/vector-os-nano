@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 34: SceneGraph Door Learning harness.
 
 Tests verify door storage, bidirectionality, running-average positions,

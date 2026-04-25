@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """PyBullet-based simulated SO-101 arm.
 
 Implements ArmProtocol — drop-in replacement for SO101Arm.

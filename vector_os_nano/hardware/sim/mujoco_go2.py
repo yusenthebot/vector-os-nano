@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """MuJoCo-based simulated Unitree Go2 quadruped.
 
 Lifecycle: MuJoCoGo2(gui=False) -> connect() -> stand/sit/lie_down -> disconnect().

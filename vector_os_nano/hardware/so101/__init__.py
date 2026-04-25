@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """SO-101 robot arm implementation.
 
 Exports (when Task 2 is complete):

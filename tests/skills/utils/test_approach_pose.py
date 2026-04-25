@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for compute_approach_pose utility.
 
 TDD RED phase: written before implementation exists.

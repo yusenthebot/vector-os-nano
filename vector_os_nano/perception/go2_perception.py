@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Go2Perception — PerceptionProtocol implementation for Go2 robot.
 
 Composes a duck-typed camera (get_camera_frame / get_depth_frame) and a

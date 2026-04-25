@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Single source of truth for SO-101 joint configuration.
 
 All encoder-to-radian mappings, joint names, and motor IDs live here.

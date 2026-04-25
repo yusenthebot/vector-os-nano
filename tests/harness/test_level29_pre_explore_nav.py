@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 29: Pre-explore navigation debug harness — P2 (FAR routing before explore).
 
 Root cause: FAR planner silently rejects /goal_point when is_graph_init_=false.

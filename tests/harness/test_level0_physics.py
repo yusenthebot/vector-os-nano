@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 0 — MuJoCo physics verification.
 
 Tests at this level use mujoco directly (no MuJoCoGo2 wrapper, no convex_mpc).

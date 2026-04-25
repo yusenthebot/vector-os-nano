@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for ToolHookRegistry — pre/post tool execution hooks."""
 from vector_os_nano.vcli.hooks import ToolHookContext, ToolHookRegistry
 from vector_os_nano.vcli.tools.base import ToolResult

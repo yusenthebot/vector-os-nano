@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """L41: Bridge cleanup — /terrain_map and /terrain_map_ext must be removed.
 
 RED phase: these tests assert the ABSENCE of bad code that still exists in

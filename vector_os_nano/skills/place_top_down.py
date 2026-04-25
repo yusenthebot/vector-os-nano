@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Release a held object at a target location using a top-down drop.
 
 Phase C (place counterpart) of the v2.1 manipulation stack.

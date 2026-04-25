@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Integration tests for PyBullet-backed SimulatedArm and SimulatedGripper.
 
 All tests skip if pybullet is not installed.

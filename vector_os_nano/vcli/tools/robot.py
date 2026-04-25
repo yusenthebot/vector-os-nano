@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Robot tools for the Vector CLI agentic harness.
 
 WorldQueryTool  — read-only view into the agent's world model (objects + robot pose).

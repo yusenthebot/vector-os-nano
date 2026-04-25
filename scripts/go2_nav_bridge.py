@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Go2 MuJoCo ↔ ROS2 Nav2 bridge.
 
 Runs MuJoCoGo2 (MPC backend) and publishes ROS2 topics for Nav2:

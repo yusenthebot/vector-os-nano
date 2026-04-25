@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Hot reload tool for robot skills.
 
 Reloads a skill's Python module and re-registers the skill in the

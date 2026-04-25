@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """WaveSkill — wave the arm to greet the user.
 
 Raises the arm to an upright position, oscillates the base joint

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for NavStackClient -- navigation stack interface wrapper."""
 from __future__ import annotations
 

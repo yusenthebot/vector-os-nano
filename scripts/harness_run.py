@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Go2 Locomotion Harness Runner.
 
 Runs the 5-level locomotion benchmark (L0–L4) and reports a summary table.

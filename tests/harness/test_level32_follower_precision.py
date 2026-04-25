@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 32: Path follower precision harness.
 
 Tests verify the Python path follower matches C++ pathFollower behavior:

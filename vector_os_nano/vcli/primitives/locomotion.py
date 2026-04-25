@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Locomotion primitives — wrap BaseProtocol for CaP-X generated code.
 
 All functions are module-level and read from the module-global _ctx.

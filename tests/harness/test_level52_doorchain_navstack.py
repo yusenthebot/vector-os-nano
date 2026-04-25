@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """L52: Door-chain navigation uses nav stack (obstacle avoidance), not dead-reckoning.
 
 When the FAR V-Graph is unavailable, NavigateSkill falls back to door-chain mode.

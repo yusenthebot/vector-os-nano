@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Session persistence for vcli — JSONL format.
 
 Each session is stored as a file of newline-delimited JSON objects:

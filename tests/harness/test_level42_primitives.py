@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """T2 — Primitives API tests (AC-13 to AC-20 + additional).
 
 TDD: write tests first, run RED, then implement GREEN.

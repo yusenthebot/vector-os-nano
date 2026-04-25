@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Built-in robot skills — all use @skill decorator for routing metadata."""
 from __future__ import annotations
 

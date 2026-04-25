@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for the Go2 SDF model for Gazebo Harmonic.
 
 Validates that gazebo/models/go2/model.sdf and model.config exist, are valid,

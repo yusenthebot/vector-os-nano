@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Multi-layer permission system for Vector CLI's agentic harness.
 
 Public exports:

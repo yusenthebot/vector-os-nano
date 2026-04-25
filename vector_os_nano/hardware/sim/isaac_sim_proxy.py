@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Isaac Sim Go2 proxy — controls Go2 in Isaac Sim Docker via ROS2 topics.
 
 Inherits from Go2ROS2Proxy since Isaac Sim publishes identical ROS2 topics.

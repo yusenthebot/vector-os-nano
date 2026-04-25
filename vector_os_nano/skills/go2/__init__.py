@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Go2 quadruped skill package.
 
 Exports all Go2 skills and the get_go2_skills() factory.

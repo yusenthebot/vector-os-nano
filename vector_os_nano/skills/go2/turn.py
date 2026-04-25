@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """TurnSkill — rotate the Go2 quadruped by a given angle.
 
 Maps direction + angle to a timed yaw velocity command via

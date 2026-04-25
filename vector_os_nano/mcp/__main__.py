@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Entry point: python -m vector_os_nano.mcp
 
 Runs the MCP server with stdio transport so Claude Code can communicate

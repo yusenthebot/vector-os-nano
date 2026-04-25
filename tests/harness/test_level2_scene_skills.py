@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Level 2 — Scene understanding skills with mock VLM.
 
 Tests verify LookSkill and DescribeSceneSkill behaviour using mock

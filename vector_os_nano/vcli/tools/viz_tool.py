@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """FoxgloveTool — start/stop Foxglove Bridge for web visualization."""
 from __future__ import annotations
 

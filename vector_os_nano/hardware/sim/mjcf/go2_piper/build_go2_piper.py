@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Build combined Go2 + Piper MJCF via MuJoCo MjSpec attach API.
 
 Regenerate when mount pose (xyz / orientation) needs tuning, or when

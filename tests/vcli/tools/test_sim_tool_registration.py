@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for Wave 2/3 skill registration wiring in sim_tool.py.
 
 Test strategy: The full behavioural test (calling _start_go2 end-to-end with

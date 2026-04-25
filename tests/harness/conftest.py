@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Shared fixtures for the Go2 locomotion harness.
 
 All harness tests require mujoco. convex_mpc is intentionally excluded.

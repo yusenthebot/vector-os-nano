@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """L38: Room layout loading + position-based room detection (sim mode).
 
 Tests that SceneGraph.load_layout() properly seeds rooms and doors from

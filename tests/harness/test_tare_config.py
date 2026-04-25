@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Validate TARE config values for Go2 indoor exploration."""
 import yaml
 import os

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """SkillWrapperTool — wraps Vector OS Nano @skill instances as vcli Tool objects.
 
 Any class that implements the Skill protocol (name, description, parameters,

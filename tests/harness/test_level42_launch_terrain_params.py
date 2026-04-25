@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """L42: launch scripts pass terrain_analysis params for Go2.
 
 Scripts that launch terrainAnalysis / terrainAnalysisExt via `ros2 run`

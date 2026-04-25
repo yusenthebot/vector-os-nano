@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Tests for gait-stable quadruped path follower.
 
 The Go2 MPC gait is stable when:

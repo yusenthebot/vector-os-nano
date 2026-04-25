@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """L35b: Proxy door-chain uses SceneGraph instead of hardcoded."""
 import inspect
 

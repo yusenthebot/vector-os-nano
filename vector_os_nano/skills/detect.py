@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """DetectSkill — detect objects in workspace using perception backend.
 
 Uses VLM for 2D detection, then tracker + depth for 3D position.

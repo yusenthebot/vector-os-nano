@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """EdgeTAM video segmentation tracker — pure Python, no ROS2.
 
 Ported from:

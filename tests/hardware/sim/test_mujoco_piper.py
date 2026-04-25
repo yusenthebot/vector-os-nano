@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Unit tests for MuJoCoPiper + MuJoCoPiperGripper.
 
 Runs a single MuJoCoGo2+Piper sim for the whole session (module-scope

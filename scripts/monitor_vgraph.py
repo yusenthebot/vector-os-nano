@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) 2024-2026 Vector Robotics
+
 """Monitor FAR V-Graph state in real-time.
 
 Subscribes to FAR's output topics and prints V-Graph metrics.
